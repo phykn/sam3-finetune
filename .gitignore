@@ -1,0 +1,12 @@
+# Local environment
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Generated outputs
+outputs/
+
+# Reference source and local model artifacts: never upload these.
+sam3-main/
+weight/
