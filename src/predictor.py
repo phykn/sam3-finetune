@@ -124,7 +124,7 @@ class Sam3Predictor:
             sparse_prompt_embeddings=sparse_embeddings,
             dense_prompt_embeddings=dense_embeddings,
             multimask_output=multimask_output,
-            repeat_image=False,
+            repeat_image=True,
             high_res_features=self._features["high_res_features"],
         )
         masks = self.transforms.postprocess_masks(

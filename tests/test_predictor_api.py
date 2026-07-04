@@ -29,6 +29,7 @@ class FakeMaskDecoder(torch.nn.Module):
         repeat_image,
         high_res_features,
     ):
+        self.last_repeat_image = repeat_image
         return (
             torch.ones(1, 1, 288, 288),
             torch.tensor([[0.9]]),
@@ -64,6 +65,7 @@ def test_predictor_accepts_box_and_returns_numpy_outputs():
     assert masks.shape == (1, 10, 20)
     np.testing.assert_allclose(scores, np.array([0.9], dtype=np.float32))
     assert low_res.shape == (1, 288, 288)
+    assert predictor.model.mask_decoder.last_repeat_image is True
 
 
 def test_predictor_adds_dummy_negative_point_for_mask_only_prompt():
