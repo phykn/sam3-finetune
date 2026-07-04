@@ -7,6 +7,7 @@ from collections.abc import Sequence
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from PIL import Image
 
 from .checkpoint import LoadReport
@@ -81,8 +82,11 @@ class Sam3MemoryPredictor:
     ) -> Sam3MemoryPrediction:
         prepared = self.prepare_references(references)
         images = [item.reference.image for item in prepared] + [target_image]
-        frame_tensor, orig_hw = self._preprocess_image_sequence(images)
         target_frame_index = len(prepared)
+        frame_tensor, orig_hw, frame_hws = self._preprocess_image_sequence(
+            images,
+            output_image_index=target_frame_index,
+        )
 
         inference_state = self.model.init_state(
             video_height=orig_hw[0],
@@ -103,7 +107,11 @@ class Sam3MemoryPredictor:
         )
         with autocast_context:
             for item in prepared:
-                mask = self._mask_to_tensor(item.reference.mask, orig_hw)
+                mask = self._mask_to_tensor(
+                    item.reference.mask,
+                    source_hw=frame_hws[item.frame_index],
+                    target_hw=orig_hw,
+                )
                 self.model.add_new_masks(
                     inference_state,
                     frame_idx=item.frame_index,
@@ -145,13 +153,17 @@ class Sam3MemoryPredictor:
     def _preprocess_image_sequence(
         self,
         images: Sequence[Image.Image | np.ndarray],
-    ) -> tuple[torch.Tensor, tuple[int, int]]:
+        output_image_index: int = -1,
+    ) -> tuple[torch.Tensor, tuple[int, int], list[tuple[int, int]]]:
         pil_images = [self._to_pil(image) for image in images]
-        widths = {image.width for image in pil_images}
-        heights = {image.height for image in pil_images}
-        if len(widths) != 1 or len(heights) != 1:
-            raise ValueError("all reference and target images must share one size")
-        orig_hw = (pil_images[0].height, pil_images[0].width)
+        if not pil_images:
+            raise ValueError("images must be non-empty")
+        if output_image_index < 0:
+            output_image_index = len(pil_images) + output_image_index
+        if output_image_index < 0 or output_image_index >= len(pil_images):
+            raise IndexError("output_image_index is out of range")
+        frame_hws = [(image.height, image.width) for image in pil_images]
+        orig_hw = frame_hws[output_image_index]
 
         tensors = []
         mean = torch.tensor((0.5, 0.5, 0.5), dtype=torch.float16)[:, None, None]
@@ -161,12 +173,13 @@ class Sam3MemoryPredictor:
             array = np.asarray(resized, dtype=np.float32) / 255.0
             tensor = torch.from_numpy(array).permute(2, 0, 1).to(torch.float16)
             tensors.append((tensor - mean) / std)
-        return torch.stack(tensors, dim=0), orig_hw
+        return torch.stack(tensors, dim=0), orig_hw, frame_hws
 
     def _mask_to_tensor(
         self,
         mask: np.ndarray | torch.Tensor,
-        orig_hw: tuple[int, int],
+        source_hw: tuple[int, int],
+        target_hw: tuple[int, int],
     ) -> torch.Tensor:
         if isinstance(mask, torch.Tensor):
             mask_tensor = mask.detach().to(dtype=torch.float32)
@@ -176,8 +189,14 @@ class Sam3MemoryPredictor:
             mask_tensor = mask_tensor.unsqueeze(0)
         if mask_tensor.ndim != 3 or mask_tensor.shape[0] != 1:
             raise ValueError("reference mask must have shape HxW or 1xHxW")
-        if tuple(mask_tensor.shape[-2:]) != orig_hw:
+        if tuple(mask_tensor.shape[-2:]) != source_hw:
             raise ValueError("reference mask size must match image size")
+        if source_hw != target_hw:
+            mask_tensor = F.interpolate(
+                mask_tensor.unsqueeze(0),
+                size=target_hw,
+                mode="nearest",
+            )[0]
         return mask_tensor
 
     @staticmethod

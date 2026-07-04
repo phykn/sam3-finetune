@@ -25,8 +25,19 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--image",
-        default="asset/sample.jpg",
-        help="Image used as reference and target pseudo-video frames.",
+        default=None,
+        help="Legacy image used as both reference and target when explicit paths are omitted.",
+    )
+    parser.add_argument(
+        "--reference-image",
+        action="append",
+        default=None,
+        help="Reference image path. Repeat to provide multiple reference frames.",
+    )
+    parser.add_argument(
+        "--target-image",
+        default=None,
+        help="Target image path. Defaults to asset/frog_target.jpg.",
     )
     parser.add_argument(
         "--reference-count",
@@ -79,11 +90,29 @@ def make_box_mask(image: Image.Image, box: list[int] | None) -> np.ndarray:
     return mask
 
 
-def overlay_mask(image: Image.Image, mask: np.ndarray) -> Image.Image:
+def mask_edges(mask: np.ndarray) -> np.ndarray:
+    mask = mask.astype(bool)
+    padded = np.pad(mask, 1, mode="constant", constant_values=False)
+    center = padded[1:-1, 1:-1]
+    interior = (
+        padded[:-2, 1:-1]
+        & padded[2:, 1:-1]
+        & padded[1:-1, :-2]
+        & padded[1:-1, 2:]
+    )
+    return center & ~interior
+
+
+def overlay_mask(
+    image: Image.Image,
+    mask: np.ndarray,
+    color: tuple[int, int, int] = (255, 0, 180),
+) -> Image.Image:
     rgb = np.asarray(image.convert("RGB"), dtype=np.float32)
-    color = np.array([0, 210, 120], dtype=np.float32)
-    alpha = 0.45
-    rgb[mask] = rgb[mask] * (1.0 - alpha) + color * alpha
+    color_arr = np.asarray(color, dtype=np.float32)
+    alpha = 0.50
+    rgb[mask] = rgb[mask] * (1.0 - alpha) + color_arr * alpha
+    rgb[mask_edges(mask)] = np.array([255, 255, 255], dtype=np.float32)
     return Image.fromarray(np.clip(rgb, 0, 255).astype(np.uint8))
 
 
@@ -92,23 +121,34 @@ def main() -> None:
     if args.reference_count <= 0:
         raise ValueError("--reference-count must be positive")
 
-    image = Image.open(args.image).convert("RGB")
-    mask = make_box_mask(image, args.mask_box)
+    default_reference = "asset/frog_reference.jpg"
+    default_target = "asset/frog_target.jpg"
+    if args.reference_image is not None:
+        reference_paths = args.reference_image
+    else:
+        reference_paths = [args.image or default_reference]
+    if len(reference_paths) == 1 and args.reference_count > 1:
+        reference_paths = reference_paths * args.reference_count
+    target_path = args.target_image or args.image or default_target
+
+    reference_images = [Image.open(path).convert("RGB") for path in reference_paths]
+    target_image = Image.open(target_path).convert("RGB")
+    mask = make_box_mask(reference_images[0], args.mask_box)
     references = [
         Sam3MemoryReference(image=image, mask=mask, obj_id=args.obj_id)
-        for _ in range(args.reference_count)
+        for image in reference_images
     ]
 
     predictor = Sam3MemoryPredictor.from_checkpoint(
         args.checkpoint,
         device=args.device,
     )
-    prediction = predictor.predict(target_image=image, references=references)
+    prediction = predictor.predict(target_image=target_image, references=references)
 
     if prediction.masks.size == 0:
         raise RuntimeError("video memory smoke produced no masks")
     target_mask = prediction.masks[0, 0].astype(bool)
-    output = overlay_mask(image, target_mask)
+    output = overlay_mask(target_image, target_mask)
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output.save(output_path)

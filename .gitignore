@@ -6,6 +6,7 @@ __pycache__/
 
 # Generated outputs
 outputs/
+.codex-remote-attachments/
 
 # Reference source and local model artifacts: never upload these.
 sam3-main/

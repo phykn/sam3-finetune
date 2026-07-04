@@ -80,3 +80,39 @@ def test_memory_references_preserve_order_for_same_object_id() -> None:
 
     assert [item.frame_index for item in prepared] == [0, 1, 2]
     assert [item.reference.obj_id for item in prepared] == [3, 3, 9]
+
+
+def test_preprocess_sequence_uses_target_size_for_mixed_image_sizes() -> None:
+    from src.memory_predictor import Sam3MemoryPredictor
+
+    predictor = object.__new__(Sam3MemoryPredictor)
+    predictor.image_size = 16
+    reference = Image.fromarray(np.zeros((8, 10, 3), dtype=np.uint8))
+    target = Image.fromarray(np.zeros((12, 20, 3), dtype=np.uint8))
+
+    batch, orig_hw, frame_hws = predictor._preprocess_image_sequence(
+        [reference, target],
+        output_image_index=1,
+    )
+
+    assert tuple(batch.shape) == (2, 3, 16, 16)
+    assert orig_hw == (12, 20)
+    assert frame_hws == [(8, 10), (12, 20)]
+
+
+def test_mask_to_tensor_resizes_reference_mask_to_target_size() -> None:
+    from src.memory_predictor import Sam3MemoryPredictor
+
+    predictor = object.__new__(Sam3MemoryPredictor)
+    mask = np.zeros((8, 10), dtype=bool)
+    mask[2:6, 3:7] = True
+
+    resized = predictor._mask_to_tensor(
+        mask,
+        source_hw=(8, 10),
+        target_hw=(12, 20),
+    )
+
+    assert tuple(resized.shape) == (1, 12, 20)
+    assert resized.dtype == torch.float32
+    assert resized.sum() > mask.sum()
