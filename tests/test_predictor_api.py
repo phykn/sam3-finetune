@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from src.predictor import Sam3Predictor
+from src.predictor import Sam3ImageEmbedding, Sam3Predictor
 
 
 class FakePromptEncoder(torch.nn.Module):
@@ -47,11 +47,16 @@ class FakeModel(torch.nn.Module):
         self.mask_decoder = FakeMaskDecoder()
 
     def encode_image(self, images):
+        self.last_encoded_shape = tuple(images.shape)
+        batch_size = images.shape[0]
         return {
-            "image_embed": torch.zeros(1, 256, 72, 72),
+            "image_embed": torch.arange(
+                batch_size * 256 * 72 * 72,
+                dtype=torch.float32,
+            ).reshape(batch_size, 256, 72, 72),
             "high_res_features": [
-                torch.zeros(1, 32, 288, 288),
-                torch.zeros(1, 64, 144, 144),
+                torch.zeros(batch_size, 32, 288, 288),
+                torch.zeros(batch_size, 64, 144, 144),
             ],
         }
 
@@ -103,3 +108,63 @@ def test_predictor_accepts_batched_boxes():
     assert masks.shape == (2, 1, 10, 20)
     assert scores.shape == (2, 1)
     assert low_res.shape == (2, 1, 288, 288)
+
+
+def test_encode_image_tensor_batch_returns_one_embedding_per_tensor():
+    model = FakeModel()
+    predictor = Sam3Predictor(model, device=torch.device("cpu"))
+    input_tensor = torch.zeros(2, 3, 1008, 1008)
+
+    embeddings = predictor.encode_image_tensor_batch(
+        input_tensor,
+        [(10, 20), (30, 40)],
+    )
+
+    assert len(embeddings) == 2
+    assert isinstance(embeddings[0], Sam3ImageEmbedding)
+    assert embeddings[0].image_embed.shape[0] == 1
+    assert embeddings[0].orig_hw == (10, 20)
+    assert embeddings[1].orig_hw == (30, 40)
+    assert model.last_encoded_shape == (2, 3, 1008, 1008)
+
+
+def test_encode_image_tensor_batch_rejects_empty_batch():
+    predictor = Sam3Predictor(FakeModel(), device=torch.device("cpu"))
+
+    try:
+        predictor.encode_image_tensor_batch(torch.zeros(0, 3, 1008, 1008), [])
+    except ValueError as exc:
+        assert "batch" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+
+def test_encode_image_batch_stacks_preprocessed_images():
+    model = FakeModel()
+    predictor = Sam3Predictor(model, device=torch.device("cpu"))
+
+    embeddings = predictor.encode_image_batch(
+        [
+            Image.new("RGB", (20, 10), color=(0, 0, 0)),
+            Image.new("RGB", (40, 30), color=(0, 0, 0)),
+        ]
+    )
+
+    assert len(embeddings) == 2
+    assert model.last_encoded_shape == (2, 3, 1008, 1008)
+    assert [embedding.orig_hw for embedding in embeddings] == [(10, 20), (30, 40)]
+
+
+def test_predict_from_embedding_does_not_require_set_image():
+    predictor = Sam3Predictor(FakeModel(), device=torch.device("cpu"))
+    embedding = predictor.encode_image(Image.new("RGB", (20, 10), color=(0, 0, 0)))
+
+    masks, scores, low_res = predictor.predict_from_embedding(
+        embedding,
+        point_coords=np.array([[[10, 5]]], dtype=np.float32),
+        point_labels=np.array([[1]], dtype=np.int64),
+    )
+
+    assert masks.shape == (1, 10, 20)
+    assert scores.shape == (1,)
+    assert low_res.shape == (1, 288, 288)
