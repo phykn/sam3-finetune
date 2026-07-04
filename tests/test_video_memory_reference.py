@@ -1,0 +1,61 @@
+from __future__ import annotations
+
+import numpy as np
+from PIL import Image
+
+from scripts.video_memory_reference import (
+    build_reference_mask,
+    resolve_box,
+    select_best_mask,
+)
+
+
+def test_select_best_mask_uses_highest_score_candidate() -> None:
+    masks = np.zeros((1, 3, 2, 3), dtype=bool)
+    masks[0, 0, 0, 0] = True
+    masks[0, 1, 0:2, 1] = True
+    masks[0, 2, 1, 2] = True
+    scores = np.array([[0.2, 0.9, 0.4]], dtype=np.float32)
+
+    selected, score, index = select_best_mask(masks, scores)
+
+    assert index == 1
+    assert score == np.float32(0.9)
+    np.testing.assert_array_equal(selected, masks[0, 1])
+
+
+def test_select_best_mask_rejects_score_count_mismatch() -> None:
+    masks = np.zeros((2, 3, 4), dtype=bool)
+    scores = np.array([0.1], dtype=np.float32)
+
+    try:
+        select_best_mask(masks, scores)
+    except ValueError as exc:
+        assert "score" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+
+def test_build_reference_mask_box_source_clips_to_image_bounds() -> None:
+    image = Image.new("RGB", (6, 4), color=(0, 0, 0))
+
+    result = build_reference_mask(
+        image=image,
+        box=[-2, 1, 4, 8],
+        source="box",
+        checkpoint=None,
+        device="cpu",
+    )
+
+    assert result.source == "box"
+    assert result.score is None
+    assert result.selected_index is None
+    assert result.mask.shape == (4, 6)
+    assert int(result.mask.sum()) == 12
+    assert result.mask[:, 4:].sum() == 0
+
+
+def test_resolve_box_defaults_to_center_region() -> None:
+    image = Image.new("RGB", (100, 80), color=(0, 0, 0))
+
+    assert resolve_box(image, None) == [25, 16, 75, 68]

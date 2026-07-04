@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.memory_predictor import Sam3MemoryPredictor, Sam3MemoryReference
+from scripts.video_memory_reference import ReferenceMaskResult, build_reference_mask
 
 
 def parse_args() -> argparse.Namespace:
@@ -57,7 +58,18 @@ def parse_args() -> argparse.Namespace:
         nargs=4,
         metavar=("X0", "Y0", "X1", "Y1"),
         default=None,
-        help="Reference mask box in original image pixels. Defaults to center box.",
+        help="Reference prompt box in original image pixels. Defaults to center box.",
+    )
+    parser.add_argument(
+        "--reference-mask-source",
+        choices=("sam", "box"),
+        default="sam",
+        help="Use a predicted SAM mask from --mask-box or the raw box mask as reference.",
+    )
+    parser.add_argument(
+        "--reference-overlay",
+        default=None,
+        help="Optional path for a reference mask overlay.",
     )
     parser.add_argument(
         "--output",
@@ -70,24 +82,6 @@ def parse_args() -> argparse.Namespace:
         help="Torch device. The tracker path expects CUDA for real inference.",
     )
     return parser.parse_args()
-
-
-def make_box_mask(image: Image.Image, box: list[int] | None) -> np.ndarray:
-    width, height = image.size
-    if box is None:
-        x0 = int(width * 0.25)
-        y0 = int(height * 0.20)
-        x1 = int(width * 0.75)
-        y1 = int(height * 0.85)
-    else:
-        x0, y0, x1, y1 = box
-    x0 = max(0, min(width, x0))
-    x1 = max(0, min(width, x1))
-    y0 = max(0, min(height, y0))
-    y1 = max(0, min(height, y1))
-    mask = np.zeros((height, width), dtype=bool)
-    mask[y0:y1, x0:x1] = True
-    return mask
 
 
 def mask_edges(mask: np.ndarray) -> np.ndarray:
@@ -133,10 +127,32 @@ def main() -> None:
 
     reference_images = [Image.open(path).convert("RGB") for path in reference_paths]
     target_image = Image.open(target_path).convert("RGB")
-    mask = make_box_mask(reference_images[0], args.mask_box)
+
+    mask_results = []
+    mask_cache: dict[tuple[str, tuple[int, int]], ReferenceMaskResult] = {}
+    for path, image in zip(reference_paths, reference_images):
+        cache_key = (str(Path(path).resolve()), image.size)
+        if cache_key not in mask_cache:
+            mask_cache[cache_key] = build_reference_mask(
+                image=image,
+                box=args.mask_box,
+                source=args.reference_mask_source,
+                checkpoint=args.checkpoint,
+                device=args.device,
+            )
+        mask_results.append(mask_cache[cache_key])
+
+    first_mask = mask_results[0].mask
+    if args.reference_overlay is not None:
+        reference_overlay_path = Path(args.reference_overlay)
+        reference_overlay_path.parent.mkdir(parents=True, exist_ok=True)
+        overlay_mask(reference_images[0], first_mask).save(reference_overlay_path)
+    else:
+        reference_overlay_path = None
+
     references = [
-        Sam3MemoryReference(image=image, mask=mask, obj_id=args.obj_id)
-        for image in reference_images
+        Sam3MemoryReference(image=image, mask=result.mask, obj_id=args.obj_id)
+        for image, result in zip(reference_images, mask_results)
     ]
 
     predictor = Sam3MemoryPredictor.from_checkpoint(
@@ -160,6 +176,14 @@ def main() -> None:
             "mask_shape": list(prediction.masks.shape),
             "scores": prediction.scores.tolist(),
             "output": str(output_path),
+            "reference_mask_source": mask_results[0].source,
+            "reference_mask_area": int(first_mask.sum()),
+            "reference_score": mask_results[0].score,
+            "reference_refined_score": mask_results[0].refined_score,
+            "reference_selected_index": mask_results[0].selected_index,
+            "reference_overlay": str(reference_overlay_path)
+            if reference_overlay_path is not None
+            else None,
             "loaded_keys": predictor.load_report.loaded_keys
             if predictor.load_report
             else None,

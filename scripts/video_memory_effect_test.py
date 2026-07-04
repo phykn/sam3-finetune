@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.memory_predictor import Sam3MemoryPredictor, Sam3MemoryReference
+from scripts.video_memory_reference import build_reference_mask, make_box_mask
 
 
 def parse_args() -> argparse.Namespace:
@@ -31,6 +32,12 @@ def parse_args() -> argparse.Namespace:
         default=[245, 420, 650, 890],
         metavar=("X0", "Y0", "X1", "Y1"),
         help="Reference frog mask box in reference-image pixels.",
+    )
+    parser.add_argument(
+        "--reference-mask-source",
+        choices=("sam", "box"),
+        default="sam",
+        help="Use a predicted SAM mask from --frog-box or the raw box mask as the correct reference.",
     )
     parser.add_argument(
         "--control-box",
@@ -56,18 +63,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output-dir", default="outputs/video_memory_effect")
     return parser.parse_args()
-
-
-def make_box_mask(image: Image.Image, box: list[int]) -> np.ndarray:
-    width, height = image.size
-    x0, y0, x1, y1 = box
-    x0 = max(0, min(width, x0))
-    x1 = max(0, min(width, x1))
-    y0 = max(0, min(height, y0))
-    y1 = max(0, min(height, y1))
-    mask = np.zeros((height, width), dtype=bool)
-    mask[y0:y1, x0:x1] = True
-    return mask
 
 
 def box_mask(size: tuple[int, int], box: list[int]) -> np.ndarray:
@@ -162,12 +157,28 @@ def main() -> None:
     target_box_overlay = overlay_mask(target_image, target_box, color=(255, 190, 0))
     target_box_overlay.save(output_dir / "weak_target_box.png")
 
+    correct_mask_result = build_reference_mask(
+        image=reference_image,
+        box=args.frog_box,
+        source=args.reference_mask_source,
+        checkpoint=args.checkpoint,
+        device=args.device,
+    )
+    correct_mask = correct_mask_result.mask
+    control_mask = make_box_mask(reference_image, args.control_box)
+    correct_reference_overlay_path = output_dir / "correct_reference_mask.png"
+    control_reference_overlay_path = output_dir / "control_reference_mask.png"
+    overlay_mask(reference_image, correct_mask, color=(255, 0, 180)).save(
+        correct_reference_overlay_path
+    )
+    overlay_mask(reference_image, control_mask, color=(0, 180, 255)).save(
+        control_reference_overlay_path
+    )
+
     predictor = Sam3MemoryPredictor.from_checkpoint(
         args.checkpoint,
         device=args.device,
     )
-    correct_mask = make_box_mask(reference_image, args.frog_box)
-    control_mask = make_box_mask(reference_image, args.control_box)
     correct_result, correct_pred_mask = run_case(
         predictor,
         "correct_reference",
@@ -201,6 +212,13 @@ def main() -> None:
         "reference_image": args.reference_image,
         "target_image": args.target_image,
         "reference_repeat": args.reference_repeat,
+        "reference_mask_source": correct_mask_result.source,
+        "reference_selected_index": correct_mask_result.selected_index,
+        "reference_score": correct_mask_result.score,
+        "reference_refined_score": correct_mask_result.refined_score,
+        "reference_mask_area": int(correct_mask.sum()),
+        "correct_reference_mask_overlay": str(correct_reference_overlay_path),
+        "control_reference_mask_overlay": str(control_reference_overlay_path),
         "frog_box": args.frog_box,
         "control_box": args.control_box,
         "target_frog_box": args.target_frog_box,
