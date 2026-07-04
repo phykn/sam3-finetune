@@ -18,6 +18,7 @@ from src.masks.proposals import (
     save_proposal_grid,
     save_proposal_overlay,
 )
+from src.masks.types import MaskInstance
 
 
 def test_mask_generator_lives_under_masks_package() -> None:
@@ -287,6 +288,33 @@ def test_generator_batches_grid_points_and_returns_sorted_proposals():
     assert first.image_size == (8, 8)
     assert proposal_to_full_mask(first).shape == (8, 8)
     assert proposals[0].crop_box == (0, 0, 8, 8)
+
+
+def test_generator_can_return_mask_instances_with_concept_and_object_ids():
+    predictor = FakePredictor()
+    generator = AutomaticMaskGenerator(
+        predictor,
+        points_per_side=2,
+        points_per_batch=4,
+        pred_iou_thresh=0.0,
+        stability_score_thresh=0.0,
+        box_nms_thresh=1.0,
+        max_masks=2,
+    )
+
+    instances = generator.generate_instances(
+        Image.new("RGB", (8, 8), color=(0, 0, 0)),
+        concept_id=5,
+        object_id_start=20,
+    )
+
+    assert len(instances) == 2
+    assert all(isinstance(instance, MaskInstance) for instance in instances)
+    assert [instance.concept_id for instance in instances] == [5, 5]
+    assert [instance.object_id for instance in instances] == [20, 21]
+    assert [instance.source for instance in instances] == ["auto", "auto"]
+    assert instances[0].score >= instances[1].score
+    assert instances[0].to_full_mask().shape == (8, 8)
 
 
 def test_generator_filters_by_score_stability_area_and_max_masks():

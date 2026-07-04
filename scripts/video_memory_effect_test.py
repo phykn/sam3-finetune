@@ -76,10 +76,7 @@ def mask_edges(mask: np.ndarray) -> np.ndarray:
     padded = np.pad(mask, 1, mode="constant", constant_values=False)
     center = padded[1:-1, 1:-1]
     interior = (
-        padded[:-2, 1:-1]
-        & padded[2:, 1:-1]
-        & padded[1:-1, :-2]
-        & padded[1:-1, 2:]
+        padded[:-2, 1:-1] & padded[2:, 1:-1] & padded[1:-1, :-2] & padded[1:-1, 2:]
     )
     return center & ~interior
 

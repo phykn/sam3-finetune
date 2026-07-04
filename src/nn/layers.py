@@ -51,11 +51,7 @@ class MLP(nn.Module):
     def forward(self, x):
         orig_x = x
         for index, layer in enumerate(self.layers):
-            x = (
-                self.drop(F.relu(layer(x)))
-                if index < self.num_layers - 1
-                else layer(x)
-            )
+            x = self.drop(F.relu(layer(x))) if index < self.num_layers - 1 else layer(x)
         if self.residual:
             x = x + orig_x
         return self.out_norm(x)

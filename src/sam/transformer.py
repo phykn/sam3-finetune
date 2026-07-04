@@ -181,7 +181,9 @@ class Attention(nn.Module):
 
         dropout_p = self.dropout_p if self.training else 0.0
         if self.use_fa3:
-            raise RuntimeError("FA3 attention is not included in the minimal src runtime.")
+            raise RuntimeError(
+                "FA3 attention is not included in the minimal src runtime."
+            )
         else:
             torch.backends.cuda.enable_flash_sdp(True)
             torch.backends.cuda.enable_math_sdp(True)
@@ -256,7 +258,9 @@ class RoPEAttention(Attention):
 
         dropout_p = self.dropout_p if self.training else 0.0
         if self.use_fa3:
-            raise RuntimeError("FA3 attention is not included in the minimal src runtime.")
+            raise RuntimeError(
+                "FA3 attention is not included in the minimal src runtime."
+            )
         else:
             torch.backends.cuda.enable_flash_sdp(True)
             torch.backends.cuda.enable_math_sdp(True)

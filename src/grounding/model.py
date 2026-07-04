@@ -334,7 +334,9 @@ class GroundingImageModel(torch.nn.Module):
             if key in self.segmentation_head.instance_keys:
                 _update_out(out, key, value[:, :num_o2o], auxiliary=aux_masks)
                 if self.o2m_mask_predict and num_o2m > 0:
-                    _update_out(out, f"{key}_o2m", value[:, num_o2o:], auxiliary=aux_masks)
+                    _update_out(
+                        out, f"{key}_o2m", value[:, num_o2o:], auxiliary=aux_masks
+                    )
             else:
                 out[key] = value
 
@@ -369,7 +371,9 @@ class GroundingImageModel(torch.nn.Module):
                 prompt_mask=prompt_mask,
                 encoder_out=encoder_out,
             )
-        with torch.profiler.record_function("GroundingImageModel._run_segmentation_heads"):
+        with torch.profiler.record_function(
+            "GroundingImageModel._run_segmentation_heads"
+        ):
             seg_img_ids = find_input.img_ids
             if "id_mapping" in backbone_out and backbone_out["id_mapping"] is not None:
                 seg_img_ids = backbone_out["id_mapping"][seg_img_ids]

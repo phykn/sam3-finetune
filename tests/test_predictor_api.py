@@ -38,7 +38,9 @@ class FakeMaskDecoder(torch.nn.Module):
         self.forward_calls += 1
         self.last_repeat_image = repeat_image
         self.last_image_embeddings_shape = tuple(image_embeddings.shape)
-        self.last_high_res_shapes = [tuple(feature.shape) for feature in high_res_features]
+        self.last_high_res_shapes = [
+            tuple(feature.shape) for feature in high_res_features
+        ]
         batch_size = sparse_prompt_embeddings.shape[0]
         return (
             torch.ones(batch_size, 1, 288, 288),

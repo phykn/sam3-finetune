@@ -88,9 +88,7 @@ def test_video_checkpoint_remap_keeps_tracker_memory_and_backbone_keys() -> None
 
     remapped, ignored = filter_and_remap_video_state_dict(checkpoint)
 
-    assert (
-        "maskmem_backbone.mask_downsampler.encoder.0.weight" in remapped
-    )
+    assert "maskmem_backbone.mask_downsampler.encoder.0.weight" in remapped
     assert "sam_mask_decoder.iou_token.weight" in remapped
     assert "transformer.encoder.layers.0.self_attn_q_proj.weight" in remapped
     assert "interactive_sam_prompt_encoder.no_mask_embed.weight" in remapped

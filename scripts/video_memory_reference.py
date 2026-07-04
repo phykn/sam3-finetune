@@ -1,4 +1,3 @@
-
 import gc
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -133,7 +132,9 @@ def predict_sam_mask_from_prompts(
         positive_points=positive_points,
         negative_points=negative_points,
     )
-    box_array = None if box is None else np.asarray(resolve_box(image, box), dtype=np.float32)
+    box_array = (
+        None if box is None else np.asarray(resolve_box(image, box), dtype=np.float32)
+    )
     if point_coords is None and box_array is None:
         raise ValueError("at least one point or box prompt is required")
 

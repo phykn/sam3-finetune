@@ -228,6 +228,7 @@ class MaskDecoder(nn.Module):
         )
         return mask_logits_out, iou_scores_out
 
+
 class MLP(nn.Module):
     def __init__(
         self,

@@ -1,4 +1,3 @@
-
 import argparse
 import json
 import sys
@@ -127,7 +126,9 @@ def parse_feature_layer(value: str) -> str | int:
         raise ValueError("--feature-layer must be 'image_embed' or an integer") from exc
 
 
-def load_reference_mask_image(path: Path, *, expected_size: tuple[int, int]) -> np.ndarray:
+def load_reference_mask_image(
+    path: Path, *, expected_size: tuple[int, int]
+) -> np.ndarray:
     mask_image = Image.open(path).convert("L")
     if mask_image.size != expected_size:
         raise ValueError(
@@ -265,7 +266,9 @@ def main() -> None:
     elapsed = time.perf_counter() - started_at
 
     overlay_reference(reference_image, reference_mask.mask, reference_overlay_path)
-    overlay_predictions(target_image, predictions, output_path, max_masks=args.max_masks)
+    overlay_predictions(
+        target_image, predictions, output_path, max_masks=args.max_masks
+    )
 
     print(
         json.dumps(

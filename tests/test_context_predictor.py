@@ -44,7 +44,12 @@ class FakeContextPredictor:
             x1 = min(x + 3, 40)
             y1 = min(y + 3, 40)
             masks[index, 0, y0:y1, x0:x1] = True
-            low_res[index, 0, y0 // 5 : max(y1 // 5, y0 // 5 + 1), x0 // 5 : max(x1 // 5, x0 // 5 + 1)] = 2.0
+            low_res[
+                index,
+                0,
+                y0 // 5 : max(y1 // 5, y0 // 5 + 1),
+                x0 // 5 : max(x1 // 5, x0 // 5 + 1),
+            ] = 2.0
             scores[index, 0] = 0.8 - index * 0.01
         return masks, scores, low_res
 
@@ -87,7 +92,9 @@ def test_context_predictor_selects_target_points_from_reference_mask_similarity(
     assert fake.decode_batches[0].shape == (2, 1, 2)
     np.testing.assert_allclose(fake.decode_batches[0][0, 0], np.array([25.0, 15.0]))
     selected = next(
-        prediction for prediction in predictions if prediction.point_coords == (25.0, 15.0)
+        prediction
+        for prediction in predictions
+        if prediction.point_coords == (25.0, 15.0)
     )
     assert selected.bbox == (22, 12, 28, 18)
     assert selected.segmentation.shape == (6, 6)
@@ -152,10 +159,14 @@ def test_contrastive_context_penalizes_reference_background_like_candidates():
     )
 
     part_like = next(
-        prediction for prediction in predictions if prediction.point_coords == (25.0, 15.0)
+        prediction
+        for prediction in predictions
+        if prediction.point_coords == (25.0, 15.0)
     )
     background_like = next(
-        prediction for prediction in predictions if prediction.point_coords == (5.0, 35.0)
+        prediction
+        for prediction in predictions
+        if prediction.point_coords == (5.0, 35.0)
     )
     assert part_like.context_score > background_like.context_score
     assert background_like.context_score < 0.0

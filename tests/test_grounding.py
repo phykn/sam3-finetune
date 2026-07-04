@@ -23,7 +23,9 @@ def test_filter_and_remap_grounding_state_dict_drops_language_backbone_only():
 
     assert "backbone.vision_backbone.trunk.patch_embed.proj.weight" in remapped
     assert "transformer.decoder.layers.0.ca_text.in_proj_weight" in remapped
-    assert "detector.backbone.language_backbone.encoder.token_embedding.weight" in ignored
+    assert (
+        "detector.backbone.language_backbone.encoder.token_embedding.weight" in ignored
+    )
     assert "tracker.model.interactive_sam_mask_decoder.iou_token.weight" in ignored
 
 

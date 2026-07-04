@@ -233,7 +233,10 @@ def build_video_memory_model(
     max_num_objects: int = 16,
     use_fa3: bool = False,
     use_rope_real: bool = False,
-) -> tuple[Sam3VideoTrackingMultiplexDemo, LoadReport | None] | Sam3VideoTrackingMultiplexDemo:
+) -> (
+    tuple[Sam3VideoTrackingMultiplexDemo, LoadReport | None]
+    | Sam3VideoTrackingMultiplexDemo
+):
     maskmem_backbone = _create_multiplex_maskmem_backbone(
         multiplex_count=multiplex_count
     )

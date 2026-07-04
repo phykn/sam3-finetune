@@ -1,4 +1,3 @@
-
 import argparse
 import sys
 import time
@@ -17,7 +16,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.masks.generator import AutomaticMaskGenerator
-from src.masks.geometry import build_point_grid, crop_image, generate_crop_boxes, image_size
+from src.masks.geometry import (
+    build_point_grid,
+    crop_image,
+    generate_crop_boxes,
+    image_size,
+)
 from src.masks.proposals import count_proposals_by_crop_grid
 
 
@@ -279,7 +283,9 @@ def install_timed_predict_masks(profiler: StageProfiler, mask_decoder: Any) -> N
     mask_decoder.predict_masks = MethodType(timed_predict_masks, mask_decoder)
 
 
-def instrument_mask_decoder_internals(profiler: StageProfiler, mask_decoder: Any) -> None:
+def instrument_mask_decoder_internals(
+    profiler: StageProfiler, mask_decoder: Any
+) -> None:
     install_timed_predict_masks(profiler, mask_decoder)
 
     for layer in mask_decoder.transformer.layers:

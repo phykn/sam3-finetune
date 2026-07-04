@@ -1,4 +1,3 @@
-
 from pathlib import Path
 
 import numpy as np
@@ -68,7 +67,9 @@ class Sam3Transforms:
         orig_hw: tuple[int, int],
         return_logits: bool = False,
     ) -> torch.Tensor:
-        masks = F.interpolate(masks.float(), orig_hw, mode="bilinear", align_corners=False)
+        masks = F.interpolate(
+            masks.float(), orig_hw, mode="bilinear", align_corners=False
+        )
         if return_logits:
             return masks
         return masks > self.mask_threshold

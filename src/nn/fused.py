@@ -1,5 +1,3 @@
-
-
 import torch
 
 addmm_act_op = torch.ops.aten._addmm_activation

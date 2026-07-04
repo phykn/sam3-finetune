@@ -68,7 +68,9 @@ class ContextMatcher:
         if candidate_score_mode not in {"point", "shape"}:
             raise ValueError("candidate_score_mode must be 'point' or 'shape'")
         if negative_context_mode not in {"none", "image", "local"}:
-            raise ValueError("negative_context_mode must be 'none', 'image', or 'local'")
+            raise ValueError(
+                "negative_context_mode must be 'none', 'image', or 'local'"
+            )
         if negative_context_weight < 0:
             raise ValueError("negative_context_weight must be non-negative")
         if negative_context_scale <= 1.0:
@@ -145,7 +147,9 @@ class ContextMatcher:
                 target_embedding.orig_hw,
             )
         else:
-            point_coords = _target_points_array(target_point_coords, target_embedding.orig_hw)
+            point_coords = _target_points_array(
+                target_point_coords, target_embedding.orig_hw
+            )
         if len(point_coords) == 0:
             return []
 
@@ -283,7 +287,9 @@ class ContextMatcher:
         for index in indices.detach().cpu().tolist():
             y = int(index // width)
             x = int(index % width)
-            if all((x - sx) ** 2 + (y - sy) ** 2 >= min_distance_sq for sx, sy in selected):
+            if all(
+                (x - sx) ** 2 + (y - sy) ** 2 >= min_distance_sq for sx, sy in selected
+            ):
                 selected.append((x, y))
             if len(selected) >= self.candidate_count:
                 break
@@ -376,12 +382,13 @@ class ContextMatcher:
                 if bbox is None:
                     continue
                 context_score = _mean_score_over_mask(similarity_full, mask)
-                if (
-                    self.min_context_score is not None
-                    and context_score < float(self.min_context_score)
+                if self.min_context_score is not None and context_score < float(
+                    self.min_context_score
                 ):
                     continue
-                stability = calculate_stability_score(low_res_masks[point_index, mask_index])
+                stability = calculate_stability_score(
+                    low_res_masks[point_index, mask_index]
+                )
                 predicted_iou = float(scores[point_index, mask_index])
                 area_score = area_ratio_score(
                     candidate_ratio=area / float(image_size[0] * image_size[1]),
@@ -447,7 +454,9 @@ def _negative_feature_mean(
         return None
     if features.ndim != 3:
         raise ValueError("features must have shape CxHxW")
-    mask_array = np.asarray(mask.detach().cpu() if isinstance(mask, torch.Tensor) else mask)
+    mask_array = np.asarray(
+        mask.detach().cpu() if isinstance(mask, torch.Tensor) else mask
+    )
     if mask_array.ndim != 2:
         raise ValueError("reference mask must have shape HxW")
     if tuple(mask_array.shape) != tuple(orig_hw):
@@ -469,7 +478,9 @@ def _negative_feature_mean(
     if not bool(negative_mask.any()):
         return None
     mask_weights = F.interpolate(
-        torch.as_tensor(negative_mask, dtype=torch.float32, device=features.device)[None, None],
+        torch.as_tensor(negative_mask, dtype=torch.float32, device=features.device)[
+            None, None
+        ],
         size=features.shape[-2:],
         mode="area",
     )[0, 0]
@@ -521,7 +532,9 @@ def _target_points_array(
     orig_hw: tuple[int, int],
 ) -> np.ndarray:
     points = np.asarray(
-        point_coords.detach().cpu() if isinstance(point_coords, torch.Tensor) else point_coords,
+        point_coords.detach().cpu()
+        if isinstance(point_coords, torch.Tensor)
+        else point_coords,
         dtype=np.float32,
     )
     if points.ndim != 2 or points.shape[1] != 2:
@@ -549,8 +562,12 @@ def _shape_anchor_score_map(
         raise ValueError("similarity_map must have shape HxW")
     feature_h, feature_w = similarity_map.shape
     target_h, target_w = target_hw
-    kernel_w = max(1, int(round(shape_prior.width_ratio * target_w * feature_w / target_w)))
-    kernel_h = max(1, int(round(shape_prior.height_ratio * target_h * feature_h / target_h)))
+    kernel_w = max(
+        1, int(round(shape_prior.width_ratio * target_w * feature_w / target_w))
+    )
+    kernel_h = max(
+        1, int(round(shape_prior.height_ratio * target_h * feature_h / target_h))
+    )
     kernel = Image.fromarray(shape_prior.roi_mask.astype(np.uint8) * 255).resize(
         (kernel_w, kernel_h),
         resample=Image.Resampling.BILINEAR,
@@ -608,8 +625,12 @@ def _mean_score_over_mask(scores: np.ndarray, mask: np.ndarray) -> float:
     return float(values.mean())
 
 
-def _mask_area_ratio(mask: np.ndarray | torch.Tensor, orig_hw: tuple[int, int]) -> float:
-    mask_array = np.asarray(mask.detach().cpu() if isinstance(mask, torch.Tensor) else mask)
+def _mask_area_ratio(
+    mask: np.ndarray | torch.Tensor, orig_hw: tuple[int, int]
+) -> float:
+    mask_array = np.asarray(
+        mask.detach().cpu() if isinstance(mask, torch.Tensor) else mask
+    )
     if mask_array.ndim != 2:
         raise ValueError("reference mask must have shape HxW")
     if tuple(mask_array.shape) != tuple(orig_hw):
@@ -631,7 +652,9 @@ def _reference_shape_prior(
     reference = references[reference_index]
     embedding = reference_embeddings[reference_index]
     mask_array = np.asarray(
-        reference.mask.detach().cpu() if isinstance(reference.mask, torch.Tensor) else reference.mask
+        reference.mask.detach().cpu()
+        if isinstance(reference.mask, torch.Tensor)
+        else reference.mask
     ).astype(bool)
     if mask_array.ndim != 2:
         raise ValueError("reference mask must have shape HxW")
@@ -694,5 +717,3 @@ def _make_mask_prior_batch(
             float(background),
         )
     return batch
-
-

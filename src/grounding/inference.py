@@ -135,9 +135,7 @@ class GroundingInference:
         prompt = self.model.get_dummy_prompt()
         if boxes_xyxy is not None:
             boxes = self._boxes_xyxy_to_norm_cxcywh(boxes_xyxy, original_hw)
-            labels = (
-                [True] * boxes.shape[0] if box_labels is None else list(box_labels)
-            )
+            labels = [True] * boxes.shape[0] if box_labels is None else list(box_labels)
             if len(labels) != boxes.shape[0]:
                 raise ValueError("box_labels length must match boxes_xyxy")
             prompt.append_boxes(

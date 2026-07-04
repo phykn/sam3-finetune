@@ -1,4 +1,3 @@
-
 import argparse
 import json
 import sys
@@ -181,7 +180,9 @@ def main() -> None:
     print(f"mask_count: {len(prediction.scores)}")
     print(f"concept_id: {args.concept_id}")
     print(f"object_ids: {labeled.object_ids.tolist()}")
-    print(f"scores_top: {prediction.scores[np.argsort(-prediction.scores)[:10]].tolist()}")
+    print(
+        f"scores_top: {prediction.scores[np.argsort(-prediction.scores)[:10]].tolist()}"
+    )
     print(f"output: {output}")
     if json_output is not None:
         print(f"json_output: {json_output}")

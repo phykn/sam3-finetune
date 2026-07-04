@@ -1,4 +1,3 @@
-
 from contextlib import nullcontext
 from pathlib import Path
 from collections.abc import Sequence
@@ -278,9 +277,9 @@ class Sam3Predictor:
         if point_coords is not None:
             if point_labels is None:
                 raise ValueError("point_labels must be supplied with point_coords")
-            coords = self.transforms.transform_coords(point_coords, embedding.orig_hw).to(
-                self.device
-            )
+            coords = self.transforms.transform_coords(
+                point_coords, embedding.orig_hw
+            ).to(self.device)
             labels = torch.as_tensor(point_labels, dtype=torch.int, device=self.device)
             if coords.ndim == 2:
                 coords = coords[None, ...]

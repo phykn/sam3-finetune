@@ -19,6 +19,7 @@ from .geometry import (
 )
 from ..ops.box import nms_boxes_xyxy
 from .proposals import MaskProposal
+from .types import MaskInstance, mask_instances_from_proposals
 
 
 class AutomaticMaskGenerator:
@@ -150,6 +151,22 @@ class AutomaticMaskGenerator:
             proposals = proposals[: self.max_masks]
         return proposals
 
+    def generate_instances(
+        self,
+        image: Image.Image | np.ndarray,
+        *,
+        concept_id: int | None = None,
+        object_id_start: int | None = None,
+        source: str = "auto",
+    ) -> list[MaskInstance]:
+        proposals = self.generate(image)
+        return mask_instances_from_proposals(
+            proposals,
+            concept_id=concept_id,
+            object_id_start=object_id_start,
+            source=source,
+        )
+
     def _crop_grid_config(self) -> list[tuple[int, int]]:
         if self.crop_grids is None:
             return [(1, self.points_per_side)]
@@ -197,19 +214,18 @@ class AutomaticMaskGenerator:
                 )
                 continue
 
-            can_batch_decode = (
-                self.prompt_decode_batch_size > 1
-                and hasattr(self.predictor, "predict_from_embedding_batches")
+            can_batch_decode = self.prompt_decode_batch_size > 1 and hasattr(
+                self.predictor, "predict_from_embedding_batches"
             )
             if not can_batch_decode:
-                for (crop_index, crop_box, crop_image), embedding in zip(
+                for (crop_index, crop_box, crop_input), embedding in zip(
                     crop_batch,
                     embeddings,
                 ):
                     proposals.extend(
                         self._generate_for_crop_embedding(
                             embedding,
-                            crop_image,
+                            crop_input,
                             crop_box,
                             crop_grid,
                             crop_index,
@@ -232,14 +248,14 @@ class AutomaticMaskGenerator:
             except torch.cuda.OutOfMemoryError:
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
-                for (crop_index, crop_box, crop_image), embedding in zip(
+                for (crop_index, crop_box, crop_input), embedding in zip(
                     crop_batch,
                     embeddings,
                 ):
                     proposals.extend(
                         self._generate_for_crop_embedding(
                             embedding,
-                            crop_image,
+                            crop_input,
                             crop_box,
                             crop_grid,
                             crop_index,
@@ -259,10 +275,10 @@ class AutomaticMaskGenerator:
         full_size: tuple[int, int],
     ) -> list[MaskProposal]:
         proposals: list[MaskProposal] = []
-        for crop_index, crop_box, crop_image in crop_jobs:
+        for crop_index, crop_box, crop_input in crop_jobs:
             proposals.extend(
                 self._generate_for_crop(
-                    crop_image,
+                    crop_input,
                     crop_box,
                     crop_grid,
                     crop_index,
@@ -274,15 +290,15 @@ class AutomaticMaskGenerator:
 
     def _generate_for_crop(
         self,
-        crop_image: Image.Image | np.ndarray,
+        crop_input: Image.Image | np.ndarray,
         crop_box: tuple[int, int, int, int],
         crop_grid: int,
         crop_index: int,
         normalized_grid: np.ndarray,
         full_size: tuple[int, int],
     ) -> list[MaskProposal]:
-        crop_width, crop_height = image_size(crop_image)
-        self.predictor.set_image(crop_image)
+        crop_width, crop_height = image_size(crop_input)
+        self.predictor.set_image(crop_input)
         pixel_grid = normalized_grid.copy()
         pixel_grid[:, 0] *= float(crop_width)
         pixel_grid[:, 1] *= float(crop_height)
@@ -315,14 +331,14 @@ class AutomaticMaskGenerator:
     def _generate_for_crop_embedding(
         self,
         embedding,
-        crop_image: Image.Image | np.ndarray,
+        crop_input: Image.Image | np.ndarray,
         crop_box: tuple[int, int, int, int],
         crop_grid: int,
         crop_index: int,
         normalized_grid: np.ndarray,
         full_size: tuple[int, int],
     ) -> list[MaskProposal]:
-        crop_width, crop_height = image_size(crop_image)
+        crop_width, crop_height = image_size(crop_input)
         pixel_grid = normalized_grid.copy()
         pixel_grid[:, 0] *= float(crop_width)
         pixel_grid[:, 1] *= float(crop_height)
@@ -355,7 +371,9 @@ class AutomaticMaskGenerator:
 
     def _generate_for_crop_embeddings_batched(
         self,
-        crop_batch: list[tuple[int, tuple[int, int, int, int], Image.Image | np.ndarray]],
+        crop_batch: list[
+            tuple[int, tuple[int, int, int, int], Image.Image | np.ndarray]
+        ],
         embeddings,
         crop_grid: int,
         normalized_grid: np.ndarray,
@@ -363,10 +381,10 @@ class AutomaticMaskGenerator:
     ) -> list[MaskProposal]:
         crop_proposals: list[list[MaskProposal]] = [[] for _ in crop_batch]
         all_decode_jobs = []
-        for crop_slot, ((crop_index, crop_box, crop_image), embedding) in enumerate(
+        for crop_slot, ((crop_index, crop_box, crop_input), embedding) in enumerate(
             zip(crop_batch, embeddings)
         ):
-            crop_width, crop_height = image_size(crop_image)
+            crop_width, crop_height = image_size(crop_input)
             pixel_grid = normalized_grid.copy()
             pixel_grid[:, 0] *= float(crop_width)
             pixel_grid[:, 1] *= float(crop_height)
