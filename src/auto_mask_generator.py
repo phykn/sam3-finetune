@@ -300,7 +300,7 @@ class Sam3AutomaticMaskGenerator:
         full_size: tuple[int, int],
     ) -> list[MaskProposal]:
         proposals: list[MaskProposal] = []
-        crop_x0, crop_y0, crop_x1, crop_y1 = crop_box
+        crop_x0, crop_y0, _crop_x1, _crop_y1 = crop_box
         full_width, full_height = full_size
         for point_index, point in enumerate(points):
             for mask_index in range(masks.shape[1]):
@@ -332,11 +332,11 @@ class Sam3AutomaticMaskGenerator:
                     local_bbox[2] + crop_x0,
                     local_bbox[3] + crop_y0,
                 )
-                full_mask = np.zeros((full_height, full_width), dtype=bool)
-                full_mask[crop_y0:crop_y1, crop_x0:crop_x1] = mask
+                lx0, ly0, lx1, ly1 = local_bbox
+                roi_mask = mask[ly0:ly1, lx0:lx1].copy()
                 proposals.append(
                     MaskProposal(
-                        segmentation=full_mask,
+                        segmentation=roi_mask,
                         bbox=bbox,
                         area=area,
                         predicted_iou=predicted_iou,
@@ -348,6 +348,7 @@ class Sam3AutomaticMaskGenerator:
                         crop_box=crop_box,
                         crop_grid=crop_grid,
                         crop_index=crop_index,
+                        image_size=(full_width, full_height),
                     )
                 )
         return proposals

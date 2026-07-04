@@ -264,7 +264,12 @@ def test_generator_batches_grid_points_and_returns_sorted_proposals():
     assert [batch[0].shape[0] for batch in predictor.predict_batches] == [3, 1]
     assert len(proposals) == 4
     assert proposals[0].predicted_iou >= proposals[-1].predicted_iou
-    assert proposals[0].segmentation.shape == (8, 8)
+    first = proposals[0]
+    x0, y0, x1, y1 = first.bbox
+    assert first.segmentation.shape == (y1 - y0, x1 - x0)
+    assert first.segmentation.sum() == first.area
+    assert first.image_size == (8, 8)
+    assert proposal_to_full_mask(first).shape == (8, 8)
     assert proposals[0].crop_box == (0, 0, 8, 8)
 
 
@@ -382,7 +387,12 @@ def test_generator_runs_explicit_crop_grids_and_maps_to_full_image():
     assert sorted(
         proposal.crop_index for proposal in proposals if proposal.crop_grid == 2
     ) == [0, 1, 2, 3]
-    assert all(proposal.segmentation.shape == (8, 8) for proposal in proposals)
+    for proposal in proposals:
+        x0, y0, x1, y1 = proposal.bbox
+        assert proposal.segmentation.shape == (y1 - y0, x1 - x0)
+        assert proposal.segmentation.sum() == proposal.area
+        assert proposal.image_size == (8, 8)
+        assert proposal_to_full_mask(proposal).shape == (8, 8)
     assert any(proposal.crop_box == (4, 4, 8, 8) for proposal in proposals)
     assert all(0.0 <= proposal.point_coords[0] <= 8.0 for proposal in proposals)
     assert all(0.0 <= proposal.point_coords[1] <= 8.0 for proposal in proposals)
