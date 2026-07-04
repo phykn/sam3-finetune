@@ -83,7 +83,12 @@ class Sam3MemoryPredictor:
         target_point_labels: np.ndarray | torch.Tensor | None = None,
         target_obj_id: int | None = None,
     ) -> Sam3MemoryPrediction:
-        prepared = self.prepare_references(references)
+        if references:
+            prepared = self.prepare_references(references)
+        elif target_point_coords is not None:
+            prepared = []
+        else:
+            raise ValueError("references must be non-empty")
         images = [item.reference.image for item in prepared] + [target_image]
         target_frame_index = len(prepared)
         frame_tensor, orig_hw, frame_hws = self._preprocess_image_sequence(
@@ -127,11 +132,12 @@ class Sam3MemoryPredictor:
                     raise ValueError(
                         "target_point_labels must be supplied with target_point_coords"
                     )
-                point_obj_id = (
-                    int(target_obj_id)
-                    if target_obj_id is not None
-                    else int(prepared[0].reference.obj_id)
-                )
+                if target_obj_id is not None:
+                    point_obj_id = int(target_obj_id)
+                elif prepared:
+                    point_obj_id = int(prepared[0].reference.obj_id)
+                else:
+                    point_obj_id = 1
                 point_coords, point_labels = self._target_points_to_tensors(
                     target_point_coords,
                     target_point_labels,

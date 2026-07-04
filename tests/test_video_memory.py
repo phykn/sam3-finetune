@@ -180,3 +180,57 @@ def test_memory_predictor_adds_target_points_after_reference_masks() -> None:
         model.added_points["labels"],
         torch.tensor([[1]], dtype=torch.int64),
     )
+
+
+def test_memory_predictor_allows_target_points_without_references() -> None:
+    from src.memory_predictor import Sam3MemoryPredictor
+
+    class FakeVideoModel:
+        image_size = 16
+
+        def __init__(self) -> None:
+            self.added_masks = 0
+            self.added_points = None
+
+        def init_state(self, **kwargs):
+            return {"device": torch.device("cpu"), **kwargs}
+
+        def add_new_masks(self, *args, **kwargs) -> None:
+            self.added_masks += 1
+
+        def add_new_points(self, *args, **kwargs) -> None:
+            self.added_points = kwargs
+
+        def propagate_in_video_preflight(self, *args, **kwargs) -> None:
+            pass
+
+        def propagate_in_video(self, *args, **kwargs):
+            yield (
+                0,
+                [5],
+                None,
+                torch.ones(1, 1, 12, 20),
+                torch.tensor([[0.75]]),
+            )
+
+    model = FakeVideoModel()
+    predictor = object.__new__(Sam3MemoryPredictor)
+    predictor.model = model
+    predictor.device = torch.device("cpu")
+    predictor.image_size = 16
+    predictor.load_report = None
+    target = Image.fromarray(np.zeros((12, 20, 3), dtype=np.uint8))
+
+    prediction = predictor.predict(
+        target_image=target,
+        references=[],
+        target_point_coords=np.array([[10, 6]], dtype=np.float32),
+        target_point_labels=np.array([1], dtype=np.int64),
+        target_obj_id=5,
+    )
+
+    assert model.added_masks == 0
+    assert model.added_points["frame_idx"] == 0
+    assert model.added_points["obj_id"] == 5
+    assert prediction.frame_index == 0
+    assert prediction.obj_ids == [5]
