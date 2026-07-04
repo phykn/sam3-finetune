@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from src.predictor import Sam3ImageEmbedding, Sam3Predictor
+from src.predictor import Sam3ImageEmbedding, Sam3Predictor, Sam3PromptBatch
 
 
 class FakePromptEncoder(torch.nn.Module):
@@ -20,6 +20,10 @@ class FakePromptEncoder(torch.nn.Module):
 
 
 class FakeMaskDecoder(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.forward_calls = 0
+
     def forward(
         self,
         image_embeddings,
@@ -30,7 +34,10 @@ class FakeMaskDecoder(torch.nn.Module):
         repeat_image,
         high_res_features,
     ):
+        self.forward_calls += 1
         self.last_repeat_image = repeat_image
+        self.last_image_embeddings_shape = tuple(image_embeddings.shape)
+        self.last_high_res_shapes = [tuple(feature.shape) for feature in high_res_features]
         batch_size = sparse_prompt_embeddings.shape[0]
         return (
             torch.ones(batch_size, 1, 288, 288),
@@ -168,3 +175,73 @@ def test_predict_from_embedding_does_not_require_set_image():
     assert masks.shape == (1, 10, 20)
     assert scores.shape == (1,)
     assert low_res.shape == (1, 288, 288)
+
+
+def test_predict_from_embedding_batches_decodes_multiple_prompt_batches_once():
+    model = FakeModel()
+    predictor = Sam3Predictor(model, device=torch.device("cpu"))
+    embedding_a = predictor.encode_image(Image.new("RGB", (20, 10), color=(0, 0, 0)))
+    embedding_b = predictor.encode_image(Image.new("RGB", (40, 30), color=(0, 0, 0)))
+
+    results = predictor.predict_from_embedding_batches(
+        [
+            Sam3PromptBatch(
+                embedding=embedding_a,
+                point_coords=np.array(
+                    [
+                        [[10, 5]],
+                        [[12, 6]],
+                    ],
+                    dtype=np.float32,
+                ),
+                point_labels=np.ones((2, 1), dtype=np.int64),
+            ),
+            Sam3PromptBatch(
+                embedding=embedding_b,
+                point_coords=np.array([[[20, 15]]], dtype=np.float32),
+                point_labels=np.ones((1, 1), dtype=np.int64),
+            ),
+        ],
+        multimask_output=True,
+    )
+
+    assert model.mask_decoder.forward_calls == 1
+    assert model.mask_decoder.last_repeat_image is False
+    assert model.mask_decoder.last_image_embeddings_shape[0] == 3
+    assert model.mask_decoder.last_high_res_shapes[0][0] == 3
+    assert len(results) == 2
+    masks_a, scores_a, low_res_a = results[0]
+    masks_b, scores_b, low_res_b = results[1]
+    assert masks_a.shape == (2, 1, 10, 20)
+    assert scores_a.shape == (2, 1)
+    assert low_res_a.shape == (2, 1, 288, 288)
+    assert masks_b.shape == (1, 1, 30, 40)
+    assert scores_b.shape == (1, 1)
+    assert low_res_b.shape == (1, 1, 288, 288)
+
+
+def test_predict_from_embedding_batches_reuses_features_for_same_embedding():
+    model = FakeModel()
+    predictor = Sam3Predictor(model, device=torch.device("cpu"))
+    embedding = predictor.encode_image(Image.new("RGB", (20, 10), color=(0, 0, 0)))
+
+    predictor.predict_from_embedding_batches(
+        [
+            Sam3PromptBatch(
+                embedding=embedding,
+                point_coords=np.array([[[10, 5]], [[12, 6]]], dtype=np.float32),
+                point_labels=np.ones((2, 1), dtype=np.int64),
+            ),
+            Sam3PromptBatch(
+                embedding=embedding,
+                point_coords=np.array([[[14, 7]]], dtype=np.float32),
+                point_labels=np.ones((1, 1), dtype=np.int64),
+            ),
+        ],
+        multimask_output=True,
+    )
+
+    assert model.mask_decoder.forward_calls == 1
+    assert model.mask_decoder.last_repeat_image is True
+    assert model.mask_decoder.last_image_embeddings_shape[0] == 1
+    assert model.mask_decoder.last_high_res_shapes[0][0] == 1

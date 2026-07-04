@@ -31,6 +31,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-masks-per-crop", type=int, default=None)
     parser.add_argument("--keep-crop-edge-masks", action="store_true")
     parser.add_argument("--crop-encode-batch-size", type=int, default=1)
+    parser.add_argument("--prompt-decode-batch-size", type=int, default=1)
+    parser.add_argument("--image-batch-size", type=int, default=None)
+    parser.add_argument("--prompt-batch-size", type=int, default=None)
+    parser.add_argument("--allow-cross-crop-prompt-decode", action="store_true")
     return parser.parse_args()
 
 
@@ -50,6 +54,16 @@ def main() -> None:
     )
 
     image = Image.open(image_path).convert("RGB")
+    image_batch_size = (
+        args.crop_encode_batch_size
+        if args.image_batch_size is None
+        else args.image_batch_size
+    )
+    prompt_batch_size = (
+        args.prompt_decode_batch_size
+        if args.prompt_batch_size is None
+        else args.prompt_batch_size
+    )
     generator = Sam3AutomaticMaskGenerator.from_checkpoint(
         checkpoint_path,
         device="cuda",
@@ -64,7 +78,9 @@ def main() -> None:
         crop_overlap_ratio=args.crop_overlap_ratio,
         max_masks_per_crop=args.max_masks_per_crop,
         filter_crop_edge_masks=not args.keep_crop_edge_masks,
-        crop_encode_batch_size=args.crop_encode_batch_size,
+        image_batch_size=image_batch_size,
+        prompt_batch_size=prompt_batch_size,
+        allow_cross_crop_prompt_decode=args.allow_cross_crop_prompt_decode,
     )
     started_at = time.perf_counter()
     with torch.autocast(device_type="cuda", dtype=torch.float16):
@@ -80,7 +96,9 @@ def main() -> None:
     print(f"device: {torch.cuda.get_device_name(0)}")
     print(f"crop_grids: {crop_grids}")
     print(f"crop_points_per_side: {crop_points_per_side}")
-    print(f"crop_encode_batch_size: {args.crop_encode_batch_size}")
+    print(f"image_batch_size: {image_batch_size}")
+    print(f"prompt_batch_size: {prompt_batch_size}")
+    print(f"allow_cross_crop_prompt_decode: {args.allow_cross_crop_prompt_decode}")
     print(f"elapsed_sec: {elapsed:.2f}")
     print(f"proposal_count: {len(proposals)}")
     print(f"proposal_count_by_crop_grid: {count_proposals_by_crop_grid(proposals)}")

@@ -355,6 +355,37 @@ class CropAwareFakePredictor:
         return masks, scores, low_res
 
 
+class BatchDecodeCropAwareFakePredictor(CropAwareFakePredictor):
+    def __init__(self):
+        super().__init__()
+        self.prompt_decode_batches = []
+
+    def predict_from_embedding_batches(
+        self,
+        prompt_batches,
+        multimask_output=True,
+        return_logits=False,
+    ):
+        self.prompt_decode_batches.append(
+            [
+                (batch.embedding["size"], batch.point_coords.shape[0])
+                for batch in prompt_batches
+            ]
+        )
+        results = []
+        for batch in prompt_batches:
+            self.images.append(batch.embedding["size"])
+            results.append(
+                self.predict(
+                    point_coords=batch.point_coords,
+                    point_labels=batch.point_labels,
+                    multimask_output=multimask_output,
+                    return_logits=return_logits,
+                )
+            )
+        return results
+
+
 class EdgeTouchingFakePredictor:
     def __init__(self):
         self.images = []
@@ -465,7 +496,7 @@ def test_generator_batches_crop_encoding_without_changing_outputs():
         crop_points_per_side=[1],
         crop_overlap_ratio=0.0,
         filter_crop_edge_masks=False,
-        crop_encode_batch_size=2,
+        image_batch_size=2,
     )
 
     proposals = generator.generate(Image.new("RGB", (8, 8), color=(0, 0, 0)))
@@ -473,6 +504,63 @@ def test_generator_batches_crop_encoding_without_changing_outputs():
     assert predictor.encoded_batches == [[(4, 4), (4, 4)], [(4, 4), (4, 4)]]
     assert len(proposals) == 4
     assert sorted(proposal.crop_index for proposal in proposals) == [0, 1, 2, 3]
+
+
+def test_generator_batches_prompt_decoding_without_changing_outputs():
+    predictor = BatchDecodeCropAwareFakePredictor()
+    generator = Sam3AutomaticMaskGenerator(
+        predictor,
+        points_per_batch=2,
+        pred_iou_thresh=0.0,
+        stability_score_thresh=0.0,
+        box_nms_thresh=1.0,
+        crop_grids=[2],
+        crop_points_per_side=[2],
+        crop_overlap_ratio=0.0,
+        filter_crop_edge_masks=False,
+        image_batch_size=2,
+        prompt_batch_size=3,
+    )
+
+    proposals = generator.generate(Image.new("RGB", (8, 8), color=(0, 0, 0)))
+
+    assert predictor.encoded_batches == [[(4, 4), (4, 4)], [(4, 4), (4, 4)]]
+    assert predictor.prompt_decode_batches == [
+        [((4, 4), 2), ((4, 4), 2)],
+        [((4, 4), 2), ((4, 4), 2)],
+        [((4, 4), 2), ((4, 4), 2)],
+        [((4, 4), 2), ((4, 4), 2)],
+    ]
+    assert len(proposals) == 16
+    assert sorted({proposal.crop_index for proposal in proposals}) == [0, 1, 2, 3]
+
+
+def test_generator_can_cross_crop_prompt_decode_when_enabled():
+    predictor = BatchDecodeCropAwareFakePredictor()
+    generator = Sam3AutomaticMaskGenerator(
+        predictor,
+        points_per_batch=2,
+        pred_iou_thresh=0.0,
+        stability_score_thresh=0.0,
+        box_nms_thresh=1.0,
+        crop_grids=[2],
+        crop_points_per_side=[2],
+        crop_overlap_ratio=0.0,
+        filter_crop_edge_masks=False,
+        image_batch_size=2,
+        prompt_batch_size=3,
+        allow_cross_crop_prompt_decode=True,
+    )
+
+    proposals = generator.generate(Image.new("RGB", (8, 8), color=(0, 0, 0)))
+
+    assert predictor.prompt_decode_batches == [
+        [((4, 4), 2), ((4, 4), 2), ((4, 4), 2)],
+        [((4, 4), 2)],
+        [((4, 4), 2), ((4, 4), 2), ((4, 4), 2)],
+        [((4, 4), 2)],
+    ]
+    assert len(proposals) == 16
 
 
 def test_count_proposals_by_crop_grid():

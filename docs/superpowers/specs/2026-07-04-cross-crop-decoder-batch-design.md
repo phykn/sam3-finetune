@@ -39,12 +39,27 @@ The automatic mask generator will:
 - fall back to the existing per-crop decode path if the predictor does not
   expose the batch API or if CUDA OOM occurs during batched decoding.
 
+The public tuning knobs are:
+
+- `image_batch_size`: how many crop images to encode together;
+- `prompt_batch_size`: how many point-batch decode jobs to merge into one mask
+  decoder call;
+- `allow_cross_crop_prompt_decode`: disabled by default. When enabled, prompt
+  decode jobs may cross crop boundaries, which can be faster on large-memory
+  GPUs but requires repeating high-resolution crop features across prompt rows.
+
 ## Data Optimization
 
 The main data optimization is batching prompt embeddings before the decoder, not
-changing the model. This reduces Python/model call overhead and lets the decoder
-process a larger batch per call. CPU conversion remains at the split result
-boundary for now so proposal filtering can stay unchanged and low risk.
+changing the model. For small-memory GPUs, prompt jobs are batched only within
+the same crop embedding so the decoder can keep using `repeat_image=True` and
+avoid copying high-resolution feature maps. Cross-crop batching remains
+available as an opt-in path for larger GPUs.
+
+CPU conversion remains at the split result boundary for now so proposal
+filtering can stay unchanged and low risk. Profiling should separately report
+output formatting and CPU copy time so a later pass can decide whether to move
+stability-score calculation onto tensors.
 
 The implementation must avoid changing model weights, mask decoder code,
 threshold semantics, or returned ROI mask geometry.
@@ -63,7 +78,7 @@ Unit tests will cover:
 Runtime verification will use the sample image and local checkpoint:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\auto_mask_smoke_test.py --crop-grids 1 2 --crop-points-per-side 32 32 --max-masks 200 --crop-encode-batch-size 2
+.\.venv\Scripts\python.exe scripts\auto_mask_smoke_test.py --crop-grids 1 2 --crop-points-per-side 32 32 --max-masks 200 --image-batch-size 2 --prompt-batch-size 1
 ```
 
 The expected quality invariant is the same proposal count by crop grid as the

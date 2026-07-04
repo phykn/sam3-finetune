@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from PIL import Image, ImageDraw
 
-from .predictor import Sam3Predictor
+from .predictor import Sam3Predictor, Sam3PromptBatch
 
 
 @dataclass(frozen=True)
@@ -151,7 +151,15 @@ class Sam3AutomaticMaskGenerator:
         max_masks_per_crop: int | None = None,
         filter_crop_edge_masks: bool = True,
         crop_encode_batch_size: int = 1,
+        prompt_decode_batch_size: int = 1,
+        image_batch_size: int | None = None,
+        prompt_batch_size: int | None = None,
+        allow_cross_crop_prompt_decode: bool = False,
     ) -> None:
+        if image_batch_size is not None:
+            crop_encode_batch_size = image_batch_size
+        if prompt_batch_size is not None:
+            prompt_decode_batch_size = prompt_batch_size
         if points_per_side <= 0:
             raise ValueError("points_per_side must be a positive integer")
         if points_per_batch <= 0:
@@ -175,6 +183,8 @@ class Sam3AutomaticMaskGenerator:
             raise ValueError("crop_overlap_ratio must be in [0.0, 0.5)")
         if crop_encode_batch_size <= 0:
             raise ValueError("crop_encode_batch_size must be a positive integer")
+        if prompt_decode_batch_size <= 0:
+            raise ValueError("prompt_decode_batch_size must be a positive integer")
         self.predictor = predictor
         self.points_per_side = points_per_side
         self.points_per_batch = points_per_batch
@@ -194,7 +204,11 @@ class Sam3AutomaticMaskGenerator:
         )
         self.max_masks_per_crop = max_masks_per_crop
         self.filter_crop_edge_masks = filter_crop_edge_masks
-        self.crop_encode_batch_size = crop_encode_batch_size
+        self.image_batch_size = crop_encode_batch_size
+        self.prompt_batch_size = prompt_decode_batch_size
+        self.crop_encode_batch_size = self.image_batch_size
+        self.prompt_decode_batch_size = self.prompt_batch_size
+        self.allow_cross_crop_prompt_decode = allow_cross_crop_prompt_decode
 
     @classmethod
     def from_checkpoint(
@@ -294,21 +308,56 @@ class Sam3AutomaticMaskGenerator:
                 )
                 continue
 
-            for (crop_index, crop_box, crop_image), embedding in zip(
-                crop_batch,
-                embeddings,
-            ):
+            can_batch_decode = (
+                self.prompt_decode_batch_size > 1
+                and hasattr(self.predictor, "predict_from_embedding_batches")
+            )
+            if not can_batch_decode:
+                for (crop_index, crop_box, crop_image), embedding in zip(
+                    crop_batch,
+                    embeddings,
+                ):
+                    proposals.extend(
+                        self._generate_for_crop_embedding(
+                            embedding,
+                            crop_image,
+                            crop_box,
+                            crop_grid,
+                            crop_index,
+                            normalized_grid,
+                            full_size,
+                        )
+                    )
+                continue
+
+            try:
                 proposals.extend(
-                    self._generate_for_crop_embedding(
-                        embedding,
-                        crop_image,
-                        crop_box,
+                    self._generate_for_crop_embeddings_batched(
+                        crop_batch,
+                        embeddings,
                         crop_grid,
-                        crop_index,
                         normalized_grid,
                         full_size,
                     )
                 )
+            except torch.cuda.OutOfMemoryError:
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                for (crop_index, crop_box, crop_image), embedding in zip(
+                    crop_batch,
+                    embeddings,
+                ):
+                    proposals.extend(
+                        self._generate_for_crop_embedding(
+                            embedding,
+                            crop_image,
+                            crop_box,
+                            crop_grid,
+                            crop_index,
+                            normalized_grid,
+                            full_size,
+                        )
+                    )
         return proposals
 
     def _generate_for_crop_jobs_single(
@@ -414,6 +463,103 @@ class Sam3AutomaticMaskGenerator:
         if self.max_masks_per_crop is not None:
             proposals = proposals[: self.max_masks_per_crop]
         return proposals
+
+    def _generate_for_crop_embeddings_batched(
+        self,
+        crop_batch: list[tuple[int, tuple[int, int, int, int], Image.Image | np.ndarray]],
+        embeddings,
+        crop_grid: int,
+        normalized_grid: np.ndarray,
+        full_size: tuple[int, int],
+    ) -> list[MaskProposal]:
+        crop_proposals: list[list[MaskProposal]] = [[] for _ in crop_batch]
+        all_decode_jobs = []
+        for crop_slot, ((crop_index, crop_box, crop_image), embedding) in enumerate(
+            zip(crop_batch, embeddings)
+        ):
+            crop_width, crop_height = _image_size(crop_image)
+            pixel_grid = normalized_grid.copy()
+            pixel_grid[:, 0] *= float(crop_width)
+            pixel_grid[:, 1] *= float(crop_height)
+            decode_jobs = []
+            for point_batch in batched(pixel_grid, self.points_per_batch):
+                point_labels = np.ones((len(point_batch), 1), dtype=np.int64)
+                decode_jobs.append(
+                    (
+                        crop_slot,
+                        crop_index,
+                        crop_box,
+                        point_batch,
+                        Sam3PromptBatch(
+                            embedding=embedding,
+                            point_coords=point_batch[:, None, :].astype(np.float32),
+                            point_labels=point_labels,
+                        ),
+                    )
+                )
+
+            if self.allow_cross_crop_prompt_decode:
+                all_decode_jobs.extend(decode_jobs)
+                continue
+
+            self._decode_prompt_jobs(
+                decode_jobs,
+                crop_proposals,
+                crop_grid,
+                full_size,
+            )
+
+        if self.allow_cross_crop_prompt_decode:
+            self._decode_prompt_jobs(
+                all_decode_jobs,
+                crop_proposals,
+                crop_grid,
+                full_size,
+            )
+
+        proposals: list[MaskProposal] = []
+        for crop_items in crop_proposals:
+            crop_items = self._remove_duplicates(crop_items, self.crop_nms_thresh)
+            if self.max_masks_per_crop is not None:
+                crop_items = crop_items[: self.max_masks_per_crop]
+            proposals.extend(crop_items)
+        return proposals
+
+    def _decode_prompt_jobs(
+        self,
+        decode_jobs,
+        crop_proposals: list[list[MaskProposal]],
+        crop_grid: int,
+        full_size: tuple[int, int],
+    ) -> None:
+        if not decode_jobs:
+            return
+        for start in range(0, len(decode_jobs), self.prompt_decode_batch_size):
+            job_batch = decode_jobs[start : start + self.prompt_decode_batch_size]
+            prompt_batches = [job[-1] for job in job_batch]
+            results = self.predictor.predict_from_embedding_batches(
+                prompt_batches,
+                multimask_output=True,
+            )
+            for (
+                crop_slot,
+                crop_index,
+                crop_box,
+                point_batch,
+                _prompt_batch,
+            ), (masks, scores, low_res_masks) in zip(job_batch, results):
+                crop_proposals[crop_slot].extend(
+                    self._proposals_from_batch(
+                        point_batch,
+                        masks,
+                        scores,
+                        low_res_masks,
+                        crop_box,
+                        crop_grid,
+                        crop_index,
+                        full_size,
+                    )
+                )
 
     def _proposals_from_batch(
         self,

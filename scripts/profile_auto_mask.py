@@ -349,6 +349,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-masks-per-crop", type=int, default=None)
     parser.add_argument("--keep-crop-edge-masks", action="store_true")
     parser.add_argument("--crop-encode-batch-size", type=int, default=2)
+    parser.add_argument("--prompt-decode-batch-size", type=int, default=1)
+    parser.add_argument("--image-batch-size", type=int, default=None)
+    parser.add_argument("--prompt-batch-size", type=int, default=None)
+    parser.add_argument("--allow-cross-crop-prompt-decode", action="store_true")
     parser.add_argument("--skip-mask-decoder-internals", action="store_true")
     parser.add_argument("--no-sync-cuda", action="store_true")
     return parser.parse_args()
@@ -364,6 +368,16 @@ def main() -> None:
 
     profiler = StageProfiler(sync_cuda=not args.no_sync_cuda)
     image = Image.open(image_path).convert("RGB")
+    image_batch_size = (
+        args.crop_encode_batch_size
+        if args.image_batch_size is None
+        else args.image_batch_size
+    )
+    prompt_batch_size = (
+        args.prompt_decode_batch_size
+        if args.prompt_batch_size is None
+        else args.prompt_batch_size
+    )
     generator = ProfilingAutomaticMaskGenerator.from_checkpoint(
         checkpoint_path,
         device="cuda",
@@ -378,7 +392,9 @@ def main() -> None:
         crop_overlap_ratio=args.crop_overlap_ratio,
         max_masks_per_crop=args.max_masks_per_crop,
         filter_crop_edge_masks=not args.keep_crop_edge_masks,
-        crop_encode_batch_size=args.crop_encode_batch_size,
+        image_batch_size=image_batch_size,
+        prompt_batch_size=prompt_batch_size,
+        allow_cross_crop_prompt_decode=args.allow_cross_crop_prompt_decode,
         profiler=profiler,
     )
 
@@ -388,6 +404,7 @@ def main() -> None:
     wrap_timed(profiler, predictor, "encode_image_tensor_batch", "image_encoder")
     wrap_timed(profiler, predictor, "predict", "predict")
     wrap_timed(profiler, predictor, "predict_from_embedding", "predict_from_embedding")
+    wrap_timed(profiler, predictor, "_format_outputs", "format_outputs_cpu_copy")
     wrap_timed(profiler, predictor.model.prompt_encoder, "forward", "prompt_encoder")
     wrap_timed(profiler, predictor.model.mask_decoder, "forward", "mask_decoder")
     wrap_timed(profiler, predictor.transforms, "transform_coords", "transform_coords")
@@ -410,7 +427,9 @@ def main() -> None:
     print(f"crop_grids: {args.crop_grids}")
     print(f"crop_points_per_side: {args.crop_points_per_side}")
     print(f"points_per_batch: {args.points_per_batch}")
-    print(f"crop_encode_batch_size: {args.crop_encode_batch_size}")
+    print(f"image_batch_size: {image_batch_size}")
+    print(f"prompt_batch_size: {prompt_batch_size}")
+    print(f"allow_cross_crop_prompt_decode: {args.allow_cross_crop_prompt_decode}")
     print(f"mask_decoder_internals: {not args.skip_mask_decoder_internals}")
     mask_decoder = predictor.model.mask_decoder
     print(f"mask_decoder_transformer_depth: {mask_decoder.transformer.depth}")
