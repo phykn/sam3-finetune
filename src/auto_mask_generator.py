@@ -5,7 +5,7 @@ from pathlib import Path
 from collections.abc import Iterator, Sequence
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from .predictor import Sam3Predictor
 
@@ -236,3 +236,74 @@ def _image_size(image: Image.Image | np.ndarray) -> tuple[int, int]:
         height, width = image.shape[:2]
         return width, height
     raise TypeError(f"Unsupported image type: {type(image)!r}")
+
+
+def save_proposal_overlay(
+    image: Image.Image,
+    proposals: Sequence[MaskProposal],
+    path: str | Path,
+    max_masks: int = 50,
+) -> None:
+    base = image.convert("RGBA")
+    overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    for index, proposal in enumerate(proposals[:max_masks]):
+        color = _proposal_color(index)
+        mask = Image.fromarray((proposal.segmentation.astype(np.uint8) * 110), mode="L")
+        layer = Image.new("RGBA", base.size, color)
+        layer.putalpha(mask)
+        overlay = Image.alpha_composite(overlay, layer)
+    Image.alpha_composite(base, overlay).save(path)
+
+
+def save_proposal_grid(
+    image: Image.Image,
+    proposals: Sequence[MaskProposal],
+    path: str | Path,
+    max_masks: int = 24,
+    columns: int = 6,
+) -> None:
+    if columns <= 0:
+        raise ValueError("columns must be a positive integer")
+    selected = list(proposals[:max_masks])
+    if not selected:
+        Image.new("RGB", (1, 1), (0, 0, 0)).save(path)
+        return
+
+    thumb_width = 160
+    thumb_height = int(round(thumb_width * image.height / image.width))
+    rows = int(np.ceil(len(selected) / columns))
+    sheet = Image.new(
+        "RGB",
+        (columns * thumb_width, rows * thumb_height),
+        (20, 20, 20),
+    )
+
+    for index, proposal in enumerate(selected):
+        tile = image.convert("RGBA")
+        color = _proposal_color(index)
+        mask = Image.fromarray((proposal.segmentation.astype(np.uint8) * 130), mode="L")
+        layer = Image.new("RGBA", tile.size, color)
+        layer.putalpha(mask)
+        tile = Image.alpha_composite(tile, layer)
+        draw = ImageDraw.Draw(tile)
+        draw.rectangle(proposal.bbox, outline=color[:3], width=3)
+        tile = tile.resize((thumb_width, thumb_height), Image.Resampling.LANCZOS)
+        x = (index % columns) * thumb_width
+        y = (index // columns) * thumb_height
+        sheet.paste(tile.convert("RGB"), (x, y))
+
+    sheet.save(path)
+
+
+def _proposal_color(index: int) -> tuple[int, int, int, int]:
+    palette = [
+        (230, 57, 70, 255),
+        (42, 157, 143, 255),
+        (69, 123, 157, 255),
+        (244, 162, 97, 255),
+        (131, 56, 236, 255),
+        (255, 190, 11, 255),
+        (6, 214, 160, 255),
+        (239, 71, 111, 255),
+    ]
+    return palette[index % len(palette)]
