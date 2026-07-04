@@ -7,6 +7,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from types import MethodType
 from typing import Any
 
 import torch
@@ -185,6 +186,158 @@ def wrap_timed(
     setattr(obj, method_name, timed_method)
 
 
+def install_timed_predict_masks(profiler: StageProfiler, mask_decoder: Any) -> None:
+    def timed_predict_masks(
+        self,
+        image_embeddings: torch.Tensor,
+        image_pe: torch.Tensor,
+        sparse_prompt_embeddings: torch.Tensor,
+        dense_prompt_embeddings: torch.Tensor,
+        repeat_image: bool,
+        high_res_features: list[torch.Tensor] | None = None,
+    ):
+        with profiler.stage("mask_decoder.predict_masks"):
+            with profiler.stage("mask_decoder.tokens"):
+                s = 0
+                if self.pred_obj_scores:
+                    output_tokens = torch.cat(
+                        [
+                            self.obj_score_token.weight,
+                            self.iou_token.weight,
+                            self.mask_tokens.weight,
+                        ],
+                        dim=0,
+                    )
+                    s = 1
+                else:
+                    output_tokens = torch.cat(
+                        [self.iou_token.weight, self.mask_tokens.weight], dim=0
+                    )
+                output_tokens = output_tokens.unsqueeze(0).expand(
+                    sparse_prompt_embeddings.size(0), -1, -1
+                )
+                tokens = torch.cat((output_tokens, sparse_prompt_embeddings), dim=1)
+
+            with profiler.stage("mask_decoder.repeat_image"):
+                if repeat_image:
+                    src = torch.repeat_interleave(
+                        image_embeddings,
+                        tokens.shape[0],
+                        dim=0,
+                    )
+                else:
+                    assert image_embeddings.shape[0] == tokens.shape[0]
+                    src = image_embeddings
+                src = src + dense_prompt_embeddings
+                assert image_pe.size(0) == 1, (
+                    "image_pe should have size 1 in batch dim (from `get_dense_pe()`)"
+                )
+                pos_src = torch.repeat_interleave(image_pe, tokens.shape[0], dim=0)
+                b, c, h, w = src.shape
+
+            with profiler.stage("mask_decoder.transformer"):
+                hs, src = self.transformer(src, pos_src, tokens)
+            iou_token_out = hs[:, s, :]
+            mask_tokens_out = hs[:, s + 1 : (s + 1 + self.num_mask_tokens), :]
+
+            with profiler.stage("mask_decoder.reshape_src"):
+                src = src.transpose(1, 2).view(b, c, h, w)
+
+            with profiler.stage("mask_decoder.upscale_total"):
+                if not self.use_high_res_features:
+                    upscaled_embedding = self.output_upscaling(src)
+                else:
+                    dc1, ln1, act1, dc2, act2 = self.output_upscaling
+                    feat_s0, feat_s1 = high_res_features
+                    upscaled_embedding = act1(ln1(dc1(src) + feat_s1))
+                    upscaled_embedding = act2(dc2(upscaled_embedding) + feat_s0)
+
+            with profiler.stage("mask_decoder.hyper_stack"):
+                hyper_in_list = []
+                for i in range(self.num_mask_tokens):
+                    hyper_in_list.append(
+                        self.output_hypernetworks_mlps[i](mask_tokens_out[:, i, :])
+                    )
+                hyper_in = torch.stack(hyper_in_list, dim=1)
+
+            with profiler.stage("mask_decoder.mask_matmul"):
+                b, c, h, w = upscaled_embedding.shape
+                masks = (hyper_in @ upscaled_embedding.view(b, c, h * w)).view(
+                    b,
+                    -1,
+                    h,
+                    w,
+                )
+
+            with profiler.stage("mask_decoder.quality_heads"):
+                iou_pred = self.iou_prediction_head(iou_token_out)
+                if self.pred_obj_scores:
+                    assert s == 1
+                    object_score_logits = self.pred_obj_score_head(hs[:, 0, :])
+                else:
+                    object_score_logits = 10.0 * iou_pred.new_ones(
+                        iou_pred.shape[0],
+                        1,
+                    )
+
+            return masks, iou_pred, mask_tokens_out, object_score_logits
+
+    mask_decoder.predict_masks = MethodType(timed_predict_masks, mask_decoder)
+
+
+def instrument_mask_decoder_internals(profiler: StageProfiler, mask_decoder: Any) -> None:
+    install_timed_predict_masks(profiler, mask_decoder)
+
+    for layer in mask_decoder.transformer.layers:
+        wrap_timed(profiler, layer, "forward", "mask_decoder.transformer.layer")
+        wrap_timed(
+            profiler,
+            layer.self_attn,
+            "forward",
+            "mask_decoder.attn.self",
+        )
+        wrap_timed(
+            profiler,
+            layer.cross_attn_token_to_image,
+            "forward",
+            "mask_decoder.attn.token_to_image",
+        )
+        wrap_timed(profiler, layer.mlp, "forward", "mask_decoder.transformer.mlp")
+        wrap_timed(
+            profiler,
+            layer.cross_attn_image_to_token,
+            "forward",
+            "mask_decoder.attn.image_to_token",
+        )
+
+    wrap_timed(
+        profiler,
+        mask_decoder.transformer.final_attn_token_to_image,
+        "forward",
+        "mask_decoder.attn.final_token_to_image",
+    )
+
+    output_upscaling = mask_decoder.output_upscaling
+    wrap_timed(profiler, output_upscaling[0], "forward", "mask_decoder.upscale.dc1")
+    wrap_timed(profiler, output_upscaling[1], "forward", "mask_decoder.upscale.ln1")
+    wrap_timed(profiler, output_upscaling[3], "forward", "mask_decoder.upscale.dc2")
+    for hyper_mlp in mask_decoder.output_hypernetworks_mlps:
+        wrap_timed(profiler, hyper_mlp, "forward", "mask_decoder.hyper_mlp")
+    wrap_timed(
+        profiler,
+        mask_decoder.iou_prediction_head,
+        "forward",
+        "mask_decoder.iou_head",
+    )
+    if getattr(mask_decoder, "pred_obj_scores", False):
+        wrap_timed(
+            profiler,
+            mask_decoder.pred_obj_score_head,
+            "forward",
+            "mask_decoder.obj_score_head",
+        )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--crop-grids", nargs="*", type=int, default=[1, 2])
@@ -196,6 +349,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-masks-per-crop", type=int, default=None)
     parser.add_argument("--keep-crop-edge-masks", action="store_true")
     parser.add_argument("--crop-encode-batch-size", type=int, default=2)
+    parser.add_argument("--skip-mask-decoder-internals", action="store_true")
     parser.add_argument("--no-sync-cuda", action="store_true")
     return parser.parse_args()
 
@@ -238,6 +392,8 @@ def main() -> None:
     wrap_timed(profiler, predictor.model.mask_decoder, "forward", "mask_decoder")
     wrap_timed(profiler, predictor.transforms, "transform_coords", "transform_coords")
     wrap_timed(profiler, predictor.transforms, "postprocess_masks", "postprocess_masks")
+    if not args.skip_mask_decoder_internals:
+        instrument_mask_decoder_internals(profiler, predictor.model.mask_decoder)
 
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
@@ -255,6 +411,12 @@ def main() -> None:
     print(f"crop_points_per_side: {args.crop_points_per_side}")
     print(f"points_per_batch: {args.points_per_batch}")
     print(f"crop_encode_batch_size: {args.crop_encode_batch_size}")
+    print(f"mask_decoder_internals: {not args.skip_mask_decoder_internals}")
+    mask_decoder = predictor.model.mask_decoder
+    print(f"mask_decoder_transformer_depth: {mask_decoder.transformer.depth}")
+    print(f"mask_decoder_num_mask_tokens: {mask_decoder.num_mask_tokens}")
+    print(f"mask_decoder_use_high_res_features: {mask_decoder.use_high_res_features}")
+    print(f"mask_decoder_pred_obj_scores: {mask_decoder.pred_obj_scores}")
     print(f"sync_cuda: {not args.no_sync_cuda}")
     print(f"elapsed_sec: {elapsed:.2f}")
     print(f"proposal_count: {len(proposals)}")
