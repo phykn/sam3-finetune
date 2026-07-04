@@ -298,9 +298,34 @@ class CropAwareFakePredictor:
     def __init__(self):
         self.images = []
         self.predict_batches = []
+        self.encoded_batches = []
 
     def set_image(self, image):
         self.images.append(image.size)
+
+    def encode_image_batch(self, images):
+        self.encoded_batches.append([image.size for image in images])
+        return [{"image": image, "size": image.size} for image in images]
+
+    def predict_from_embedding(
+        self,
+        embedding,
+        point_coords=None,
+        point_labels=None,
+        box=None,
+        mask_input=None,
+        multimask_output=True,
+        return_logits=False,
+    ):
+        self.images.append(embedding["size"])
+        return self.predict(
+            point_coords=point_coords,
+            point_labels=point_labels,
+            box=box,
+            mask_input=mask_input,
+            multimask_output=multimask_output,
+            return_logits=return_logits,
+        )
 
     def predict(
         self,
@@ -417,6 +442,37 @@ def test_generator_filters_internal_crop_edge_masks():
     proposals = generator.generate(Image.new("RGB", (8, 8), color=(0, 0, 0)))
 
     assert proposals == []
+
+
+def test_generator_rejects_invalid_crop_encode_batch_size():
+    try:
+        Sam3AutomaticMaskGenerator(CropAwareFakePredictor(), crop_encode_batch_size=0)
+    except ValueError as exc:
+        assert "crop_encode_batch_size" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+
+def test_generator_batches_crop_encoding_without_changing_outputs():
+    predictor = CropAwareFakePredictor()
+    generator = Sam3AutomaticMaskGenerator(
+        predictor,
+        points_per_batch=8,
+        pred_iou_thresh=0.0,
+        stability_score_thresh=0.0,
+        box_nms_thresh=1.0,
+        crop_grids=[2],
+        crop_points_per_side=[1],
+        crop_overlap_ratio=0.0,
+        filter_crop_edge_masks=False,
+        crop_encode_batch_size=2,
+    )
+
+    proposals = generator.generate(Image.new("RGB", (8, 8), color=(0, 0, 0)))
+
+    assert predictor.encoded_batches == [[(4, 4), (4, 4)], [(4, 4), (4, 4)]]
+    assert len(proposals) == 4
+    assert sorted(proposal.crop_index for proposal in proposals) == [0, 1, 2, 3]
 
 
 def test_count_proposals_by_crop_grid():

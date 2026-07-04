@@ -6,6 +6,7 @@ from pathlib import Path
 from collections.abc import Iterator, Sequence
 
 import numpy as np
+import torch
 from PIL import Image, ImageDraw
 
 from .predictor import Sam3Predictor
@@ -149,6 +150,7 @@ class Sam3AutomaticMaskGenerator:
         crop_nms_thresh: float | None = None,
         max_masks_per_crop: int | None = None,
         filter_crop_edge_masks: bool = True,
+        crop_encode_batch_size: int = 1,
     ) -> None:
         if points_per_side <= 0:
             raise ValueError("points_per_side must be a positive integer")
@@ -171,6 +173,8 @@ class Sam3AutomaticMaskGenerator:
                 )
         if crop_overlap_ratio < 0.0 or crop_overlap_ratio >= 0.5:
             raise ValueError("crop_overlap_ratio must be in [0.0, 0.5)")
+        if crop_encode_batch_size <= 0:
+            raise ValueError("crop_encode_batch_size must be a positive integer")
         self.predictor = predictor
         self.points_per_side = points_per_side
         self.points_per_batch = points_per_batch
@@ -190,6 +194,7 @@ class Sam3AutomaticMaskGenerator:
         )
         self.max_masks_per_crop = max_masks_per_crop
         self.filter_crop_edge_masks = filter_crop_edge_masks
+        self.crop_encode_batch_size = crop_encode_batch_size
 
     @classmethod
     def from_checkpoint(
@@ -216,18 +221,18 @@ class Sam3AutomaticMaskGenerator:
                 crop_grid,
                 self.crop_overlap_ratio,
             )
-            for crop_index, crop_box in enumerate(crop_boxes):
-                crop_image = _crop_image(image, crop_box)
-                proposals.extend(
-                    self._generate_for_crop(
-                        crop_image,
-                        crop_box,
-                        crop_grid,
-                        crop_index,
-                        normalized_grid,
-                        (width, height),
-                    )
+            crop_jobs = [
+                (crop_index, crop_box, _crop_image(image, crop_box))
+                for crop_index, crop_box in enumerate(crop_boxes)
+            ]
+            proposals.extend(
+                self._generate_for_crop_jobs(
+                    crop_jobs,
+                    crop_grid,
+                    normalized_grid,
+                    (width, height),
                 )
+            )
 
         proposals = self._remove_duplicates(proposals)
         proposals.sort(
@@ -248,6 +253,87 @@ class Sam3AutomaticMaskGenerator:
         assert self.crop_points_per_side is not None
         return list(zip(self.crop_grids, self.crop_points_per_side))
 
+    def _generate_for_crop_jobs(
+        self,
+        crop_jobs: list[
+            tuple[int, tuple[int, int, int, int], Image.Image | np.ndarray]
+        ],
+        crop_grid: int,
+        normalized_grid: np.ndarray,
+        full_size: tuple[int, int],
+    ) -> list[MaskProposal]:
+        can_batch_encode = (
+            self.crop_encode_batch_size > 1
+            and hasattr(self.predictor, "encode_image_batch")
+            and hasattr(self.predictor, "predict_from_embedding")
+        )
+        if not can_batch_encode:
+            return self._generate_for_crop_jobs_single(
+                crop_jobs,
+                crop_grid,
+                normalized_grid,
+                full_size,
+            )
+
+        proposals: list[MaskProposal] = []
+        for start in range(0, len(crop_jobs), self.crop_encode_batch_size):
+            crop_batch = crop_jobs[start : start + self.crop_encode_batch_size]
+            crop_images = [job[2] for job in crop_batch]
+            try:
+                embeddings = self.predictor.encode_image_batch(crop_images)
+            except torch.cuda.OutOfMemoryError:
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                proposals.extend(
+                    self._generate_for_crop_jobs_single(
+                        crop_batch,
+                        crop_grid,
+                        normalized_grid,
+                        full_size,
+                    )
+                )
+                continue
+
+            for (crop_index, crop_box, crop_image), embedding in zip(
+                crop_batch,
+                embeddings,
+            ):
+                proposals.extend(
+                    self._generate_for_crop_embedding(
+                        embedding,
+                        crop_image,
+                        crop_box,
+                        crop_grid,
+                        crop_index,
+                        normalized_grid,
+                        full_size,
+                    )
+                )
+        return proposals
+
+    def _generate_for_crop_jobs_single(
+        self,
+        crop_jobs: list[
+            tuple[int, tuple[int, int, int, int], Image.Image | np.ndarray]
+        ],
+        crop_grid: int,
+        normalized_grid: np.ndarray,
+        full_size: tuple[int, int],
+    ) -> list[MaskProposal]:
+        proposals: list[MaskProposal] = []
+        for crop_index, crop_box, crop_image in crop_jobs:
+            proposals.extend(
+                self._generate_for_crop(
+                    crop_image,
+                    crop_box,
+                    crop_grid,
+                    crop_index,
+                    normalized_grid,
+                    full_size,
+                )
+            )
+        return proposals
+
     def _generate_for_crop(
         self,
         crop_image: Image.Image | np.ndarray,
@@ -267,6 +353,47 @@ class Sam3AutomaticMaskGenerator:
         for point_batch in batched(pixel_grid, self.points_per_batch):
             point_labels = np.ones((len(point_batch), 1), dtype=np.int64)
             masks, scores, low_res_masks = self.predictor.predict(
+                point_coords=point_batch[:, None, :].astype(np.float32),
+                point_labels=point_labels,
+                multimask_output=True,
+            )
+            proposals.extend(
+                self._proposals_from_batch(
+                    point_batch,
+                    masks,
+                    scores,
+                    low_res_masks,
+                    crop_box,
+                    crop_grid,
+                    crop_index,
+                    full_size,
+                )
+            )
+        proposals = self._remove_duplicates(proposals, self.crop_nms_thresh)
+        if self.max_masks_per_crop is not None:
+            proposals = proposals[: self.max_masks_per_crop]
+        return proposals
+
+    def _generate_for_crop_embedding(
+        self,
+        embedding,
+        crop_image: Image.Image | np.ndarray,
+        crop_box: tuple[int, int, int, int],
+        crop_grid: int,
+        crop_index: int,
+        normalized_grid: np.ndarray,
+        full_size: tuple[int, int],
+    ) -> list[MaskProposal]:
+        crop_width, crop_height = _image_size(crop_image)
+        pixel_grid = normalized_grid.copy()
+        pixel_grid[:, 0] *= float(crop_width)
+        pixel_grid[:, 1] *= float(crop_height)
+
+        proposals: list[MaskProposal] = []
+        for point_batch in batched(pixel_grid, self.points_per_batch):
+            point_labels = np.ones((len(point_batch), 1), dtype=np.int64)
+            masks, scores, low_res_masks = self.predictor.predict_from_embedding(
+                embedding,
                 point_coords=point_batch[:, None, :].astype(np.float32),
                 point_labels=point_labels,
                 multimask_output=True,
