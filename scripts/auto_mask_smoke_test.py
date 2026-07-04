@@ -30,6 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-masks", type=int, default=100)
     parser.add_argument("--max-masks-per-crop", type=int, default=None)
     parser.add_argument("--keep-crop-edge-masks", action="store_true")
+    parser.add_argument("--crop-encode-batch-size", type=int, default=1)
     return parser.parse_args()
 
 
@@ -63,6 +64,7 @@ def main() -> None:
         crop_overlap_ratio=args.crop_overlap_ratio,
         max_masks_per_crop=args.max_masks_per_crop,
         filter_crop_edge_masks=not args.keep_crop_edge_masks,
+        crop_encode_batch_size=args.crop_encode_batch_size,
     )
     started_at = time.perf_counter()
     with torch.autocast(device_type="cuda", dtype=torch.float16):
@@ -78,6 +80,7 @@ def main() -> None:
     print(f"device: {torch.cuda.get_device_name(0)}")
     print(f"crop_grids: {crop_grids}")
     print(f"crop_points_per_side: {crop_points_per_side}")
+    print(f"crop_encode_batch_size: {args.crop_encode_batch_size}")
     print(f"elapsed_sec: {elapsed:.2f}")
     print(f"proposal_count: {len(proposals)}")
     print(f"proposal_count_by_crop_grid: {count_proposals_by_crop_grid(proposals)}")
