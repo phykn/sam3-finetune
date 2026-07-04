@@ -2,12 +2,14 @@ import numpy as np
 from PIL import Image
 
 from src.auto_mask_generator import (
+    MaskProposal,
     Sam3AutomaticMaskGenerator,
     batched,
     box_area,
     box_iou,
     build_point_grid,
     calculate_stability_score,
+    generate_crop_boxes,
     mask_to_box,
     nms_boxes,
 )
@@ -76,6 +78,58 @@ def test_batched_splits_sequence_without_dropping_items():
     chunks = list(batched(np.arange(5), 2))
 
     assert [chunk.tolist() for chunk in chunks] == [[0, 1], [2, 3], [4]]
+
+
+def test_generate_crop_boxes_full_image_grid():
+    crops = generate_crop_boxes(100, 80, grid_size=1, overlap_ratio=0.25)
+
+    assert crops == [(0, 0, 100, 80)]
+
+
+def test_generate_crop_boxes_two_by_two_with_overlap_cover_edges():
+    crops = generate_crop_boxes(100, 80, grid_size=2, overlap_ratio=0.25)
+
+    assert len(crops) == 4
+    assert crops[0] == (0, 0, 56, 45)
+    assert crops[-1] == (44, 35, 100, 80)
+    assert min(crop[0] for crop in crops) == 0
+    assert min(crop[1] for crop in crops) == 0
+    assert max(crop[2] for crop in crops) == 100
+    assert max(crop[3] for crop in crops) == 80
+    assert all(x0 < x1 and y0 < y1 for x0, y0, x1, y1 in crops)
+
+
+def test_generate_crop_boxes_rejects_invalid_config():
+    for grid_size in (0, -1):
+        try:
+            generate_crop_boxes(100, 80, grid_size=grid_size, overlap_ratio=0.25)
+        except ValueError as exc:
+            assert "grid_size" in str(exc)
+        else:
+            raise AssertionError("Expected ValueError")
+
+    for overlap_ratio in (-0.1, 0.5):
+        try:
+            generate_crop_boxes(100, 80, grid_size=2, overlap_ratio=overlap_ratio)
+        except ValueError as exc:
+            assert "overlap_ratio" in str(exc)
+        else:
+            raise AssertionError("Expected ValueError")
+
+
+def test_mask_proposal_defaults_crop_metadata():
+    proposal = MaskProposal(
+        segmentation=np.zeros((4, 4), dtype=bool),
+        bbox=(0, 0, 1, 1),
+        area=1,
+        predicted_iou=0.9,
+        stability_score=1.0,
+        point_coords=(0.5, 0.5),
+        crop_box=(0, 0, 4, 4),
+    )
+
+    assert proposal.crop_grid == 1
+    assert proposal.crop_index == 0
 
 
 class FakePredictor:

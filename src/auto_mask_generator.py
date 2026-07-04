@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import ceil
 from pathlib import Path
 from collections.abc import Iterator, Sequence
 
@@ -19,6 +20,8 @@ class MaskProposal:
     stability_score: float
     point_coords: tuple[float, float]
     crop_box: tuple[int, int, int, int]
+    crop_grid: int = 1
+    crop_index: int = 0
 
 
 def build_point_grid(points_per_side: int) -> np.ndarray:
@@ -28,6 +31,39 @@ def build_point_grid(points_per_side: int) -> np.ndarray:
     points = np.linspace(offset, 1.0 - offset, points_per_side, dtype=np.float32)
     xv, yv = np.meshgrid(points, points)
     return np.stack([xv.reshape(-1), yv.reshape(-1)], axis=1).astype(np.float32)
+
+
+def generate_crop_boxes(
+    width: int,
+    height: int,
+    grid_size: int,
+    overlap_ratio: float,
+) -> list[tuple[int, int, int, int]]:
+    if grid_size <= 0:
+        raise ValueError("grid_size must be a positive integer")
+    if overlap_ratio < 0.0 or overlap_ratio >= 0.5:
+        raise ValueError("overlap_ratio must be in [0.0, 0.5)")
+    if width <= 0 or height <= 0:
+        raise ValueError("width and height must be positive")
+    if grid_size == 1:
+        return [(0, 0, width, height)]
+
+    overlap_w = int(round((width / grid_size) * overlap_ratio))
+    overlap_h = int(round((height / grid_size) * overlap_ratio))
+    crop_w = int(ceil((width + overlap_w * (grid_size - 1)) / grid_size))
+    crop_h = int(ceil((height + overlap_h * (grid_size - 1)) / grid_size))
+    stride_w = crop_w - overlap_w
+    stride_h = crop_h - overlap_h
+
+    boxes: list[tuple[int, int, int, int]] = []
+    for iy in range(grid_size):
+        y0 = min(iy * stride_h, height - crop_h)
+        y1 = min(y0 + crop_h, height)
+        for ix in range(grid_size):
+            x0 = min(ix * stride_w, width - crop_w)
+            x1 = min(x0 + crop_w, width)
+            boxes.append((int(x0), int(y0), int(x1), int(y1)))
+    return boxes
 
 
 def mask_to_box(mask: np.ndarray) -> tuple[int, int, int, int] | None:
