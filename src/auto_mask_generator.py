@@ -454,11 +454,12 @@ def save_proposal_overlay(
     base = image.convert("RGBA")
     overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
     for index, proposal in enumerate(proposals[:max_masks]):
-        color = _proposal_color(index)
-        mask = Image.fromarray((proposal.segmentation.astype(np.uint8) * 110), mode="L")
-        layer = Image.new("RGBA", base.size, color)
-        layer.putalpha(mask)
-        overlay = Image.alpha_composite(overlay, layer)
+        overlay = _paste_proposal_overlay(
+            overlay,
+            proposal,
+            _proposal_color(index),
+            alpha=110,
+        )
     Image.alpha_composite(base, overlay).save(path)
 
 
@@ -488,10 +489,7 @@ def save_proposal_grid(
     for index, proposal in enumerate(selected):
         tile = image.convert("RGBA")
         color = _proposal_color(index)
-        mask = Image.fromarray((proposal.segmentation.astype(np.uint8) * 130), mode="L")
-        layer = Image.new("RGBA", tile.size, color)
-        layer.putalpha(mask)
-        tile = Image.alpha_composite(tile, layer)
+        tile = _paste_proposal_overlay(tile, proposal, color, alpha=130)
         draw = ImageDraw.Draw(tile)
         draw.rectangle(proposal.bbox, outline=color[:3], width=3)
         tile = tile.resize((thumb_width, thumb_height), Image.Resampling.LANCZOS)
@@ -500,6 +498,20 @@ def save_proposal_grid(
         sheet.paste(tile.convert("RGB"), (x, y))
 
     sheet.save(path)
+
+
+def _paste_proposal_overlay(
+    overlay: Image.Image,
+    proposal: MaskProposal,
+    color: tuple[int, int, int, int],
+    alpha: int,
+) -> Image.Image:
+    x0, y0, x1, y1 = _validate_roi_geometry(proposal)
+    mask = proposal_mask_image(proposal, alpha=alpha)
+    layer = Image.new("RGBA", (x1 - x0, y1 - y0), color)
+    layer.putalpha(mask)
+    overlay.alpha_composite(layer, dest=(x0, y0))
+    return overlay
 
 
 def _proposal_color(index: int) -> tuple[int, int, int, int]:

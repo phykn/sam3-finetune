@@ -15,6 +15,8 @@ from src.auto_mask_generator import (
     nms_boxes,
     proposal_mask_image,
     proposal_to_full_mask,
+    save_proposal_grid,
+    save_proposal_overlay,
 )
 
 
@@ -452,3 +454,46 @@ def test_count_proposals_by_crop_grid():
     ]
 
     assert count_proposals_by_crop_grid(proposals) == {1: 1, 2: 2}
+
+
+def test_save_proposal_overlay_accepts_roi_masks(tmp_path):
+    image = Image.new("RGB", (4, 4), color=(0, 0, 0))
+    proposal = MaskProposal(
+        segmentation=np.ones((2, 2), dtype=bool),
+        bbox=(1, 1, 3, 3),
+        area=4,
+        predicted_iou=1.0,
+        stability_score=1.0,
+        point_coords=(2.0, 2.0),
+        crop_box=(0, 0, 4, 4),
+        image_size=(4, 4),
+    )
+    path = tmp_path / "overlay.png"
+
+    save_proposal_overlay(image, [proposal], path)
+
+    output = Image.open(path).convert("RGBA")
+    assert output.size == (4, 4)
+    assert output.getpixel((1, 1)) != (0, 0, 0, 255)
+    assert output.getpixel((0, 0)) == (0, 0, 0, 255)
+
+
+def test_save_proposal_grid_accepts_roi_masks(tmp_path):
+    image = Image.new("RGB", (4, 4), color=(0, 0, 0))
+    proposal = MaskProposal(
+        segmentation=np.ones((2, 2), dtype=bool),
+        bbox=(1, 1, 3, 3),
+        area=4,
+        predicted_iou=1.0,
+        stability_score=1.0,
+        point_coords=(2.0, 2.0),
+        crop_box=(0, 0, 4, 4),
+        image_size=(4, 4),
+    )
+    path = tmp_path / "grid.png"
+
+    save_proposal_grid(image, [proposal], path, max_masks=1, columns=1)
+
+    output = Image.open(path)
+    assert output.size[0] == 160
+    assert output.size[1] == 160
