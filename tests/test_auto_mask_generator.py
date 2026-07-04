@@ -13,6 +13,8 @@ from src.auto_mask_generator import (
     generate_crop_boxes,
     mask_to_box,
     nms_boxes,
+    proposal_mask_image,
+    proposal_to_full_mask,
 )
 
 
@@ -131,6 +133,87 @@ def test_mask_proposal_defaults_crop_metadata():
 
     assert proposal.crop_grid == 1
     assert proposal.crop_index == 0
+
+
+def test_proposal_to_full_mask_reconstructs_roi_mask():
+    roi_mask = np.array([[True, False], [True, True]], dtype=bool)
+    proposal = MaskProposal(
+        segmentation=roi_mask,
+        bbox=(2, 1, 4, 3),
+        area=3,
+        predicted_iou=0.9,
+        stability_score=1.0,
+        point_coords=(2.5, 1.5),
+        crop_box=(0, 0, 5, 4),
+        image_size=(5, 4),
+    )
+
+    full_mask = proposal_to_full_mask(proposal)
+
+    expected = np.zeros((4, 5), dtype=bool)
+    expected[1:3, 2:4] = roi_mask
+    np.testing.assert_array_equal(full_mask, expected)
+
+
+def test_proposal_to_full_mask_rejects_missing_image_size():
+    proposal = MaskProposal(
+        segmentation=np.ones((1, 1), dtype=bool),
+        bbox=(0, 0, 1, 1),
+        area=1,
+        predicted_iou=0.9,
+        stability_score=1.0,
+        point_coords=(0.5, 0.5),
+        crop_box=(0, 0, 1, 1),
+    )
+
+    try:
+        proposal_to_full_mask(proposal)
+    except ValueError as exc:
+        assert "image_size" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+
+def test_proposal_to_full_mask_rejects_shape_mismatch():
+    proposal = MaskProposal(
+        segmentation=np.ones((1, 2), dtype=bool),
+        bbox=(0, 0, 3, 1),
+        area=2,
+        predicted_iou=0.9,
+        stability_score=1.0,
+        point_coords=(0.5, 0.5),
+        crop_box=(0, 0, 3, 1),
+        image_size=(3, 1),
+    )
+
+    try:
+        proposal_to_full_mask(proposal)
+    except ValueError as exc:
+        assert "segmentation shape" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+
+def test_proposal_mask_image_returns_roi_alpha_mask():
+    proposal = MaskProposal(
+        segmentation=np.array([[True, False]], dtype=bool),
+        bbox=(1, 2, 3, 3),
+        area=1,
+        predicted_iou=0.9,
+        stability_score=1.0,
+        point_coords=(1.5, 2.5),
+        crop_box=(0, 0, 4, 4),
+        image_size=(4, 4),
+    )
+
+    mask_image = proposal_mask_image(proposal, alpha=7)
+
+    assert mask_image.mode == "L"
+    assert mask_image.size == (2, 1)
+    np.testing.assert_array_equal(
+        np.array(mask_image),
+        np.array([[7, 0]], dtype=np.uint8),
+    )
 
 
 class FakePredictor:

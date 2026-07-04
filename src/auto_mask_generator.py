@@ -22,6 +22,7 @@ class MaskProposal:
     crop_box: tuple[int, int, int, int]
     crop_grid: int = 1
     crop_index: int = 0
+    image_size: tuple[int, int] | None = None
 
 
 def build_point_grid(points_per_side: int) -> np.ndarray:
@@ -414,6 +415,33 @@ def count_proposals_by_crop_grid(
     for proposal in proposals:
         counts[proposal.crop_grid] = counts.get(proposal.crop_grid, 0) + 1
     return dict(sorted(counts.items()))
+
+
+def _validate_roi_geometry(proposal: MaskProposal) -> tuple[int, int, int, int]:
+    x0, y0, x1, y1 = proposal.bbox
+    expected_shape = (y1 - y0, x1 - x0)
+    if proposal.segmentation.shape != expected_shape:
+        raise ValueError(
+            "segmentation shape must match bbox size: "
+            f"got {proposal.segmentation.shape}, expected {expected_shape}"
+        )
+    return x0, y0, x1, y1
+
+
+def proposal_to_full_mask(proposal: MaskProposal) -> np.ndarray:
+    if proposal.image_size is None:
+        raise ValueError("proposal.image_size is required")
+    x0, y0, x1, y1 = _validate_roi_geometry(proposal)
+    width, height = proposal.image_size
+    full_mask = np.zeros((height, width), dtype=bool)
+    full_mask[y0:y1, x0:x1] = proposal.segmentation.astype(bool)
+    return full_mask
+
+
+def proposal_mask_image(proposal: MaskProposal, alpha: int = 255) -> Image.Image:
+    _validate_roi_geometry(proposal)
+    mask = proposal.segmentation.astype(np.uint8) * int(alpha)
+    return Image.fromarray(mask, mode="L")
 
 
 def save_proposal_overlay(
