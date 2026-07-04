@@ -102,6 +102,16 @@ class Sam3Predictor:
 
         if concat_points is None and mask_prompt is None:
             raise ValueError("Provide at least one point, box, or mask prompt.")
+        if concat_points is None and mask_prompt is not None:
+            concat_points = (
+                torch.zeros(mask_prompt.shape[0], 1, 2, device=self.device),
+                -torch.ones(
+                    mask_prompt.shape[0],
+                    1,
+                    dtype=torch.int,
+                    device=self.device,
+                ),
+            )
 
         sparse_embeddings, dense_embeddings = self.model.prompt_encoder(
             points=concat_points,
