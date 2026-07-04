@@ -719,7 +719,7 @@ counts by crop grid.
 Run:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\auto_mask_smoke_test.py --crop-grids 1 2 4 --crop-points-per-side 32 32 32 --max-masks 200
+.\.venv\Scripts\python.exe scripts\auto_mask_smoke_test.py --crop-grids 1 2 --crop-points-per-side 32 32 --max-masks 200
 ```
 
 Expected: command completes, writes `outputs/auto_masks_overlay.png` and
@@ -775,7 +775,7 @@ Expected: PASS and write PNGs under `outputs/`.
 Run:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\auto_mask_smoke_test.py --crop-grids 1 2 4 --crop-points-per-side 32 32 32 --max-masks 200
+.\.venv\Scripts\python.exe scripts\auto_mask_smoke_test.py --crop-grids 1 2 --crop-points-per-side 32 32 --max-masks 200
 ```
 
 Expected: PASS and print proposal counts by crop grid.

@@ -151,7 +151,7 @@ Real checkpoint smoke tests remain:
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests -q
 .\.venv\Scripts\python.exe scripts\auto_mask_smoke_test.py
-.\.venv\Scripts\python.exe scripts\auto_mask_smoke_test.py --crop-grids 1 2 4 --crop-points-per-side 32 32 32 --max-masks 200
+.\.venv\Scripts\python.exe scripts\auto_mask_smoke_test.py --crop-grids 1 2 --crop-points-per-side 32 32 --max-masks 200
 ```
 
 The proposal counts may change only if filtering semantics accidentally change.

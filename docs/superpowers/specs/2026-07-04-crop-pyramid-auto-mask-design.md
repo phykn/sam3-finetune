@@ -225,8 +225,8 @@ Extend `scripts/auto_mask_smoke_test.py` with CLI options:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\auto_mask_smoke_test.py `
-  --crop-grids 1 2 4 `
-  --crop-points-per-side 32 32 32 `
+  --crop-grids 1 2 `
+  --crop-points-per-side 32 32 `
   --crop-overlap-ratio 0.25 `
   --max-masks 200
 ```
@@ -267,11 +267,13 @@ Real checkpoint verification:
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests -q
 .\.venv\Scripts\python.exe scripts\auto_mask_smoke_test.py --crop-grids 1 2 --crop-points-per-side 16 16
-.\.venv\Scripts\python.exe scripts\auto_mask_smoke_test.py --crop-grids 1 2 4 --crop-points-per-side 32 32 32 --max-masks 200
+.\.venv\Scripts\python.exe scripts\auto_mask_smoke_test.py --crop-grids 1 2 --crop-points-per-side 32 32 --max-masks 200
 ```
 
-The smaller smoke command gives a fast correctness check. The `[1, 2, 4]`
-command is the recall-oriented inspection run and may be slower.
+The smaller smoke command gives a fast correctness check. The `[1, 2]` command
+is the routine recall-oriented inspection run. A `[1, 2, 4]` run remains
+supported for manual experiments, but is too slow for normal verification on the
+current GPU.
 
 ## Git And Artifact Rules
 
