@@ -20,6 +20,9 @@ class Sam3PromptedSegmenter(nn.Module):
         self.backbone_stride = 14
         self.hidden_dim = 256
         self.sam_image_embedding_size = self.image_size // self.backbone_stride
+        self.interactivity_no_mem_embed = nn.Parameter(
+            torch.zeros(1, 1, self.hidden_dim)
+        )
 
         position_encoding = PositionEmbeddingSine(
             num_pos_feats=256,
@@ -94,7 +97,11 @@ class Sam3PromptedSegmenter(nn.Module):
         )
 
     def encode_image(self, images: torch.Tensor) -> dict[str, object]:
-        return self.image_encoder(images, self.mask_decoder)
+        return self.image_encoder(
+            images,
+            self.mask_decoder,
+            interactivity_no_mem_embed=self.interactivity_no_mem_embed,
+        )
 
 
 def build_model(

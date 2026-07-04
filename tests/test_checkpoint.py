@@ -38,3 +38,14 @@ def test_filter_and_remap_state_dict_accepts_nested_model_key():
 
     assert ignored == []
     assert list(remapped.keys()) == ["prompt_encoder.no_mask_embed.weight"]
+
+
+def test_filter_and_remap_state_dict_keeps_interactivity_no_mem_embed():
+    source = {
+        "tracker.model.interactivity_no_mem_embed": torch.ones(1, 1, 256),
+    }
+
+    remapped, ignored = filter_and_remap_state_dict(source)
+
+    assert ignored == []
+    assert list(remapped.keys()) == ["interactivity_no_mem_embed"]

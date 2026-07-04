@@ -25,12 +25,8 @@ def main() -> None:
     output_dir.mkdir(exist_ok=True)
 
     image = Image.open(image_path).convert("RGB")
-    width, height = image.size
-    box = np.array(
-        [width * 0.25, height * 0.25, width * 0.75, height * 0.75],
-        dtype=np.float32,
-    )
-    point_coords = np.array([[width * 0.5, height * 0.5]], dtype=np.float32)
+    box = np.array([132.0, 92.0, 264.0, 375.0], dtype=np.float32)
+    point_coords = np.array([[195.0, 295.0]], dtype=np.float32)
     point_labels = np.array([1], dtype=np.int64)
 
     predictor = Sam3Predictor.from_checkpoint(checkpoint_path, device="cuda")

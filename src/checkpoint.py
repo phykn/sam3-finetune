@@ -31,6 +31,7 @@ def filter_and_remap_state_dict(
     ignored: list[str] = []
 
     prefix_map = {
+        "tracker.model.interactivity_no_mem_embed": "interactivity_no_mem_embed",
         "tracker.model.interactive_sam_prompt_encoder.": "prompt_encoder.",
         "tracker.model.interactive_sam_mask_decoder.": "mask_decoder.",
         "detector.backbone.vision_backbone.": "image_encoder.vision_backbone.",

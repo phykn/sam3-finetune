@@ -11,7 +11,12 @@ class InteractiveImageEncoder(nn.Module):
         super().__init__()
         self.vision_backbone = vision_backbone
 
-    def forward(self, images: torch.Tensor, mask_decoder: nn.Module) -> dict[str, object]:
+    def forward(
+        self,
+        images: torch.Tensor,
+        mask_decoder: nn.Module,
+        interactivity_no_mem_embed: torch.Tensor | None = None,
+    ) -> dict[str, object]:
         _, _, interactive_features, _interactive_pos, _, _ = self.vision_backbone(
             images,
             need_sam3_out=False,
@@ -29,8 +34,16 @@ class InteractiveImageEncoder(nn.Module):
             interactive_features[1].tensors
         )
 
+        image_embed = interactive_features[-1].tensors
+        if interactivity_no_mem_embed is not None:
+            no_mem_embed = interactivity_no_mem_embed.view(1, -1, 1, 1).to(
+                device=image_embed.device,
+                dtype=image_embed.dtype,
+            )
+            image_embed = image_embed + no_mem_embed
+
         return {
-            "image_embed": interactive_features[-1].tensors,
+            "image_embed": image_embed,
             "high_res_features": [
                 interactive_features[0].tensors,
                 interactive_features[1].tensors,
