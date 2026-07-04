@@ -5,8 +5,8 @@ from typing import Iterable, Optional
 
 import numpy as np
 import torch
-from ..data.structures import NestedTensor
-from ..io_utils import load_video_frames
+from ...data.structures import NestedTensor
+from ...io_utils import load_video_frames
 from .multiplex import MultiplexState
 from .prompting import concat_points
 from .tracker_utils import fill_holes_in_mask_scores

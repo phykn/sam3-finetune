@@ -1,5 +1,4 @@
 from contextlib import nullcontext
-from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Sequence
 
@@ -10,27 +9,7 @@ from PIL import Image
 
 from ..checkpoint import LoadReport
 from .builder import build_video_memory_model
-
-
-@dataclass(frozen=True)
-class MemoryReference:
-    image: Image.Image | np.ndarray
-    mask: np.ndarray | torch.Tensor
-    obj_id: int
-
-
-@dataclass(frozen=True)
-class PreparedReference:
-    reference: MemoryReference
-    frame_index: int
-
-
-@dataclass(frozen=True)
-class MemoryPrediction:
-    frame_index: int
-    obj_ids: list[int]
-    masks: np.ndarray
-    scores: np.ndarray
+from .types import MemoryPrediction, MemoryReference, PreparedReference
 
 
 class VideoMemoryInference:

@@ -8,9 +8,16 @@ import torch.nn.functional as F
 from PIL import Image
 
 from ..masks.geometry import calculate_stability_score, mask_to_box
-from ..data.prediction import Sam3ImageEmbedding
-from ..predictor import Sam3Predictor
+from ..image import Sam3Predictor
+from ..image.types import Sam3ImageEmbedding
 from .postprocess import nms_context_predictions
+from .prototype import (
+    build_context_prototype,
+    mean_score_over_mask,
+    resize_similarity_map,
+    select_feature,
+    similarity_map,
+)
 from .scoring import area_ratio_score
 from .types import ContextPrediction, ContextReference
 
@@ -20,13 +27,6 @@ class _ReferenceShapePrior:
     roi_mask: np.ndarray
     width_ratio: float
     height_ratio: float
-
-
-@dataclass(frozen=True)
-class _ContextPrototype:
-    positive: torch.Tensor
-    negative: torch.Tensor | None
-    reference_area_ratio: float
 
 
 class ContextMatcher:
@@ -125,20 +125,27 @@ class ContextMatcher:
         reference_embeddings = embeddings[:-1]
         target_embedding = embeddings[-1]
 
-        prototype, reference_area_ratio = self._build_context_prototype(
+        prototype = build_context_prototype(
             references,
             reference_embeddings,
+            feature_layer=self.feature_layer,
+            negative_context_mode=self.negative_context_mode,
+            negative_context_scale=self.negative_context_scale,
         )
         shape_prior = (
             _reference_shape_prior(references, reference_embeddings)
             if self.use_reference_mask_prior or self.candidate_score_mode == "shape"
             else None
         )
-        target_features = self._select_feature(target_embedding)
-        similarity_map = self._similarity_map(target_features, prototype)
+        target_features = select_feature(target_embedding, self.feature_layer)
+        similarity = similarity_map(
+            target_features,
+            prototype,
+            negative_context_weight=self.negative_context_weight,
+        )
         if target_point_coords is None:
             candidate_score_map = self._candidate_score_map(
-                similarity_map,
+                similarity,
                 shape_prior=shape_prior,
                 target_hw=target_embedding.orig_hw,
             )
@@ -156,8 +163,8 @@ class ContextMatcher:
         predictions = self._decode_candidates(
             target_embedding,
             point_coords,
-            similarity_map,
-            reference_area_ratio=reference_area_ratio,
+            similarity,
+            reference_area_ratio=prototype.reference_area_ratio,
             shape_prior=shape_prior,
             max_masks=self.max_masks if max_masks is None else int(max_masks),
         )
@@ -179,95 +186,6 @@ class ContextMatcher:
             shape_prior,
             target_hw=target_hw,
         )
-
-    def _build_context_prototype(
-        self,
-        references: Sequence[ContextReference],
-        reference_embeddings: Sequence[Sam3ImageEmbedding],
-    ) -> tuple[_ContextPrototype, float]:
-        positive_sum: torch.Tensor | None = None
-        negative_sum: torch.Tensor | None = None
-        total_weight = 0.0
-        negative_total_weight = 0.0
-        weighted_area_ratio = 0.0
-        for reference, embedding in zip(references, reference_embeddings):
-            if reference.weight <= 0:
-                raise ValueError("reference weight must be positive")
-            features = self._select_feature(embedding)
-            positive = _masked_feature_mean(
-                features,
-                reference.mask,
-                embedding.orig_hw,
-            )
-            positive_sum = (
-                positive * float(reference.weight)
-                if positive_sum is None
-                else positive_sum + positive * float(reference.weight)
-            )
-            negative = _negative_feature_mean(
-                features,
-                reference.mask,
-                embedding.orig_hw,
-                mode=self.negative_context_mode,
-                scale=self.negative_context_scale,
-            )
-            if negative is not None:
-                negative_sum = (
-                    negative * float(reference.weight)
-                    if negative_sum is None
-                    else negative_sum + negative * float(reference.weight)
-                )
-                negative_total_weight += float(reference.weight)
-            total_weight += float(reference.weight)
-            weighted_area_ratio += _mask_area_ratio(
-                reference.mask,
-                embedding.orig_hw,
-            ) * float(reference.weight)
-        assert positive_sum is not None
-        negative_prototype = (
-            F.normalize(negative_sum / negative_total_weight, dim=0)
-            if negative_sum is not None and negative_total_weight > 0.0
-            else None
-        )
-        return (
-            _ContextPrototype(
-                positive=F.normalize(positive_sum / total_weight, dim=0),
-                negative=negative_prototype,
-                reference_area_ratio=weighted_area_ratio / total_weight,
-            ),
-            weighted_area_ratio / total_weight,
-        )
-
-    def _select_feature(self, embedding: Sam3ImageEmbedding) -> torch.Tensor:
-        if self.feature_layer == "image_embed":
-            features = embedding.image_embed
-        elif isinstance(self.feature_layer, int):
-            features = embedding.high_res_features[self.feature_layer]
-        else:
-            raise ValueError("feature_layer must be 'image_embed' or a feature index")
-        if features.ndim != 4 or features.shape[0] != 1:
-            raise ValueError("selected embedding feature must have shape 1xCxHxW")
-        return features[0].float()
-
-    def _similarity_map(
-        self,
-        target_features: torch.Tensor,
-        prototype: _ContextPrototype,
-    ) -> torch.Tensor:
-        normalized_features = F.normalize(target_features, dim=0)
-        positive = torch.einsum(
-            "c,chw->hw",
-            prototype.positive.to(target_features.device),
-            normalized_features,
-        )
-        if prototype.negative is None or self.negative_context_weight == 0.0:
-            return positive
-        negative = torch.einsum(
-            "c,chw->hw",
-            prototype.negative.to(target_features.device),
-            normalized_features,
-        )
-        return positive - negative * self.negative_context_weight
 
     def _candidate_points(
         self,
@@ -315,7 +233,7 @@ class ContextMatcher:
         max_masks: int,
     ) -> list[ContextPrediction]:
         labels = np.ones((len(point_coords), 1), dtype=np.int64)
-        similarity_full = _resize_similarity_map(similarity_map, embedding.orig_hw)
+        similarity_full = resize_similarity_map(similarity_map, embedding.orig_hw)
         candidates: list[ContextPrediction] = []
         for start in range(0, len(point_coords), self.decode_batch_size):
             end = min(start + self.decode_batch_size, len(point_coords))
@@ -381,7 +299,7 @@ class ContextMatcher:
                 bbox = mask_to_box(mask)
                 if bbox is None:
                     continue
-                context_score = _mean_score_over_mask(similarity_full, mask)
+                context_score = mean_score_over_mask(similarity_full, mask)
                 if self.min_context_score is not None and context_score < float(
                     self.min_context_score
                 ):
@@ -416,115 +334,6 @@ class ContextMatcher:
                     )
                 )
         return predictions
-
-
-def _masked_feature_mean(
-    features: torch.Tensor,
-    mask: np.ndarray | torch.Tensor,
-    orig_hw: tuple[int, int],
-) -> torch.Tensor:
-    if features.ndim != 3:
-        raise ValueError("features must have shape CxHxW")
-    mask_tensor = torch.as_tensor(mask, dtype=torch.float32, device=features.device)
-    if mask_tensor.ndim != 2:
-        raise ValueError("reference mask must have shape HxW")
-    if tuple(mask_tensor.shape) != tuple(orig_hw):
-        raise ValueError("reference mask size must match reference image size")
-    mask_weights = F.interpolate(
-        mask_tensor[None, None],
-        size=features.shape[-2:],
-        mode="area",
-    )[0, 0]
-    weight_sum = mask_weights.sum()
-    if float(weight_sum.detach().cpu()) <= 0.0:
-        raise ValueError("reference mask must contain at least one foreground pixel")
-    prototype = (features * mask_weights[None]).sum(dim=(1, 2)) / weight_sum
-    return F.normalize(prototype.float(), dim=0)
-
-
-def _negative_feature_mean(
-    features: torch.Tensor,
-    mask: np.ndarray | torch.Tensor,
-    orig_hw: tuple[int, int],
-    *,
-    mode: str,
-    scale: float,
-) -> torch.Tensor | None:
-    if mode == "none":
-        return None
-    if features.ndim != 3:
-        raise ValueError("features must have shape CxHxW")
-    mask_array = np.asarray(
-        mask.detach().cpu() if isinstance(mask, torch.Tensor) else mask
-    )
-    if mask_array.ndim != 2:
-        raise ValueError("reference mask must have shape HxW")
-    if tuple(mask_array.shape) != tuple(orig_hw):
-        raise ValueError("reference mask size must match reference image size")
-    mask_bool = mask_array.astype(bool)
-    bbox = mask_to_box(mask_bool)
-    if bbox is None:
-        raise ValueError("reference mask must contain at least one foreground pixel")
-
-    if mode == "image":
-        negative_mask = ~mask_bool
-    elif mode == "local":
-        negative_mask = _expanded_bbox_background_mask(mask_bool, bbox, scale=scale)
-        if not bool(negative_mask.any()):
-            negative_mask = ~mask_bool
-    else:
-        raise ValueError("negative context mode must be 'none', 'image', or 'local'")
-
-    if not bool(negative_mask.any()):
-        return None
-    mask_weights = F.interpolate(
-        torch.as_tensor(negative_mask, dtype=torch.float32, device=features.device)[
-            None, None
-        ],
-        size=features.shape[-2:],
-        mode="area",
-    )[0, 0]
-    weight_sum = mask_weights.sum()
-    if float(weight_sum.detach().cpu()) <= 0.0:
-        return None
-    prototype = (features * mask_weights[None]).sum(dim=(1, 2)) / weight_sum
-    return F.normalize(prototype.float(), dim=0)
-
-
-def _expanded_bbox_background_mask(
-    mask: np.ndarray,
-    bbox: tuple[int, int, int, int],
-    *,
-    scale: float,
-) -> np.ndarray:
-    height, width = mask.shape
-    x0, y0, x1, y1 = bbox
-    box_w = max(1, x1 - x0)
-    box_h = max(1, y1 - y0)
-    center_x = (x0 + x1) / 2.0
-    center_y = (y0 + y1) / 2.0
-    expanded_w = box_w * scale
-    expanded_h = box_h * scale
-    expanded_x0 = max(0, int(round(center_x - expanded_w / 2.0)))
-    expanded_y0 = max(0, int(round(center_y - expanded_h / 2.0)))
-    expanded_x1 = min(width, int(round(center_x + expanded_w / 2.0)))
-    expanded_y1 = min(height, int(round(center_y + expanded_h / 2.0)))
-    local = np.zeros_like(mask, dtype=bool)
-    local[expanded_y0:expanded_y1, expanded_x0:expanded_x1] = True
-    return local & ~mask.astype(bool)
-
-
-def _resize_similarity_map(
-    similarity_map: torch.Tensor,
-    orig_hw: tuple[int, int],
-) -> np.ndarray:
-    resized = F.interpolate(
-        similarity_map[None, None].float(),
-        size=orig_hw,
-        mode="bilinear",
-        align_corners=False,
-    )[0, 0]
-    return resized.detach().cpu().numpy()
 
 
 def _target_points_array(
@@ -616,29 +425,6 @@ def _ensure_decode_batch_shapes(
     if low_res_masks.ndim != 4:
         raise ValueError("decoded low_res_masks must have shape BxMxHxW")
     return masks, scores, low_res_masks
-
-
-def _mean_score_over_mask(scores: np.ndarray, mask: np.ndarray) -> float:
-    values = scores[mask]
-    if values.size == 0:
-        return 0.0
-    return float(values.mean())
-
-
-def _mask_area_ratio(
-    mask: np.ndarray | torch.Tensor, orig_hw: tuple[int, int]
-) -> float:
-    mask_array = np.asarray(
-        mask.detach().cpu() if isinstance(mask, torch.Tensor) else mask
-    )
-    if mask_array.ndim != 2:
-        raise ValueError("reference mask must have shape HxW")
-    if tuple(mask_array.shape) != tuple(orig_hw):
-        raise ValueError("reference mask size must match reference image size")
-    area = float(mask_array.astype(bool).sum())
-    if area <= 0.0:
-        raise ValueError("reference mask must contain at least one foreground pixel")
-    return area / float(orig_hw[0] * orig_hw[1])
 
 
 def _reference_shape_prior(

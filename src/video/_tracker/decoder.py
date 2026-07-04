@@ -6,8 +6,8 @@ import torch
 import torch.nn.functional as torchF
 from torch import Tensor, nn
 
-from ..nn.utils import get_activation_fn, get_clones
-from ..sam.rope import apply_rotary_enc, apply_rotary_enc_real, compute_axial_cis
+from ...nn.utils import get_activation_fn, get_clones
+from ...sam.rope import apply_rotary_enc, apply_rotary_enc_real, compute_axial_cis
 
 
 def _activation_ckpt_wrapper(layer: nn.Module):

@@ -126,7 +126,7 @@ def predict_sam_mask_from_prompts(
 ) -> ReferenceMaskResult:
     import torch
 
-    from src.predictor import Sam3Predictor
+    from src.image import Sam3Predictor
 
     point_coords, point_labels = make_point_prompt_arrays(
         positive_points=positive_points,
@@ -192,7 +192,7 @@ def predict_sam_mask_from_box(
 ) -> ReferenceMaskResult:
     import torch
 
-    from src.predictor import Sam3Predictor
+    from src.image import Sam3Predictor
 
     predictor = None
     try:

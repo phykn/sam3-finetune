@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from src.data.prediction import Sam3ImageEmbedding
+from src.image.types import Sam3ImageEmbedding
 
 
 def _embedding_from_feature_map(feature_map: torch.Tensor) -> Sam3ImageEmbedding:
@@ -111,6 +111,7 @@ def test_context_matcher_lives_under_context_package() -> None:
     root = Path(__file__).resolve().parents[1]
     assert (root / "src" / "context" / "matcher.py").is_file()
     assert (root / "src" / "context" / "postprocess.py").is_file()
+    assert (root / "src" / "context" / "prototype.py").is_file()
     assert (root / "src" / "context" / "scoring.py").is_file()
     assert (root / "src" / "context" / "types.py").is_file()
     assert not (root / "src" / "context_predictor.py").exists()
@@ -119,6 +120,19 @@ def test_context_matcher_lives_under_context_package() -> None:
     assert ContextPrediction.__module__ == "src.context.types"
     assert context_prediction_to_full_mask.__module__ == "src.context.postprocess"
     assert area_ratio_score.__module__ == "src.context.scoring"
+
+
+def test_context_package_exports_user_facing_api() -> None:
+    import src.context as context
+    from src.context.matcher import ContextMatcher
+    from src.context.reference_guided import ReferenceGuidedMaskGenerator
+    from src.context.types import ContextPrediction, ContextReference
+
+    assert context.ContextMatcher is ContextMatcher
+    assert context.ReferenceGuidedMaskGenerator is ReferenceGuidedMaskGenerator
+    assert context.ContextPrediction is ContextPrediction
+    assert context.ContextReference is ContextReference
+    assert not hasattr(context, "__all__")
 
 
 def test_contrastive_context_penalizes_reference_background_like_candidates():
@@ -315,7 +329,7 @@ def test_reference_prompt_points_encode_positive_and_negative_labels():
 
 def test_reference_prompt_refinement_keeps_original_prompts(monkeypatch):
     from scripts.video_memory_reference import predict_sam_mask_from_prompts
-    from src.predictor import Sam3Predictor
+    from src.image import Sam3Predictor
 
     class FakeSam3Predictor:
         def __init__(self) -> None:

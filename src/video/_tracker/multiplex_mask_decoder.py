@@ -4,7 +4,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from ..sam.layers import LayerNorm2d
+from ...sam.layers import LayerNorm2d
 
 
 class MultiplexMaskDecoder(nn.Module):

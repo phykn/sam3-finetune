@@ -10,8 +10,8 @@ try:
 except ModuleNotFoundError:
     from timm.models.layers import DropPath
 
-from ..nn.utils import get_clones
-from ..sam.layers import LayerNorm2d
+from ...nn.utils import get_clones
+from ...sam.layers import LayerNorm2d
 
 
 class SimpleMaskDownSampler(nn.Module):

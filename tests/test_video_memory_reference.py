@@ -61,7 +61,7 @@ def test_resolve_box_defaults_to_center_region() -> None:
 
 
 def test_predict_sam_mask_from_box_keeps_box_during_refinement(monkeypatch) -> None:
-    import src.predictor
+    import src.image
 
     class FakePredictor:
         instances = []
@@ -92,7 +92,7 @@ def test_predict_sam_mask_from_box_keeps_box_during_refinement(monkeypatch) -> N
             low_res = np.zeros((1, 1, 2, 2), dtype=np.float32)
             return masks, scores, low_res
 
-    monkeypatch.setattr(src.predictor, "Sam3Predictor", FakePredictor)
+    monkeypatch.setattr(src.image, "Sam3Predictor", FakePredictor)
     image = Image.new("RGB", (6, 4), color=(0, 0, 0))
 
     result = predict_sam_mask_from_box(

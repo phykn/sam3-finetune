@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from src.data.prediction import Sam3ImageEmbedding
+from src.image.types import Sam3ImageEmbedding
 from src.masks.types import MaskInstance, ReferenceExample
 
 

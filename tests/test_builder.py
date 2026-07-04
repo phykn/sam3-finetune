@@ -1,6 +1,6 @@
 import torch
 
-from src.builder import build_model
+from src.image import build_model
 from src.backbone.image_encoder import InteractiveImageEncoder
 
 

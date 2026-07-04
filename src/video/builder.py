@@ -14,9 +14,14 @@ from ..nn.decoder import (
     SimpleRoPEAttention,
     TransformerEncoderDecoupledCrossAttention,
 )
-from .demo import Sam3VideoTrackingMultiplexDemo
-from .memory import CXBlock, SimpleFuser, SimpleMaskDownSampler, SimpleMaskEncoder
-from .multiplex import MultiplexController
+from ._tracker.demo import Sam3VideoTrackingMultiplexDemo
+from ._tracker.memory import (
+    CXBlock,
+    SimpleFuser,
+    SimpleMaskDownSampler,
+    SimpleMaskEncoder,
+)
+from ._tracker.multiplex import MultiplexController
 
 
 class TriHeadVisionOnly(nn.Module):

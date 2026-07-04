@@ -1,1 +1,1 @@
-from .predictor import Sam3Predictor
+from .image import Sam3Predictor

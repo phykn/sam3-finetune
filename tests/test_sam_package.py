@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import src.nn.modules as model_misc
-import src.video.memory as memory
+import src.video._tracker.memory as memory
 from src.nn.layers import LayerScale
 from src.nn.output import SAM3Output
 from src.nn.scoring import DotProductScoring

@@ -7,11 +7,11 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
+from ..checkpoint import LoadReport
+from ..transforms import Sam3Transforms
 from .builder import build_model
-from .checkpoint import LoadReport
-from .data.prediction import Sam3ImageEmbedding as _Sam3ImageEmbedding
-from .data.prediction import Sam3PromptBatch as _Sam3PromptBatch
-from .transforms import Sam3Transforms
+from .types import Sam3ImageEmbedding as _Sam3ImageEmbedding
+from .types import Sam3PromptBatch as _Sam3PromptBatch
 
 
 class Sam3Predictor:

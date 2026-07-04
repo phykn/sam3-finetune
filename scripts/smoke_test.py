@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.predictor import Sam3Predictor
+from src.image import Sam3Predictor
 from src.transforms import save_mask_png, save_overlay_png
 
 

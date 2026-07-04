@@ -17,7 +17,7 @@ import torch
 import torch.distributed
 import torch.nn as nn
 import torch.nn.functional as F
-from ..data.structures import BatchedDatapoint, NestedTensor
+from ...data.structures import BatchedDatapoint, NestedTensor
 from .memory import SimpleMaskEncoder
 from .multiplex_mask_decoder import MLP, MultiplexMaskDecoder
 from .multiplex import MultiplexController, MultiplexState
@@ -29,9 +29,9 @@ from .tracker_utils import (
     select_closest_cond_frames,
 )
 from .types import NO_OBJ_SCORE, SAMOutput, StageOutput
-from ..sam.mask_decoder import MaskDecoder
-from ..sam.prompt_encoder import PositionEmbeddingRandom, PromptEncoder
-from ..sam.transformer import TwoWayTransformer
+from ...sam.mask_decoder import MaskDecoder
+from ...sam.prompt_encoder import PositionEmbeddingRandom, PromptEncoder
+from ...sam.transformer import TwoWayTransformer
 from timm.models.layers import trunc_normal_
 
 

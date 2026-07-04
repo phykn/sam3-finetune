@@ -2,8 +2,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from src.data.prediction import Sam3ImageEmbedding, Sam3PromptBatch
-from src.predictor import Sam3Predictor
+from src.image import Sam3Predictor, Sam3ImageEmbedding, Sam3PromptBatch
 
 
 class FakePromptEncoder(torch.nn.Module):
@@ -73,11 +72,19 @@ class FakeModel(torch.nn.Module):
 
 def test_package_public_surface_exposes_only_main_predictor():
     import src
-    import src.predictor as predictor_module
+    import src.image as image
+    import src.image.predictor as predictor_module
 
     assert src.Sam3Predictor is Sam3Predictor
+    assert image.Sam3Predictor is Sam3Predictor
+    assert image.Sam3ImageEmbedding is Sam3ImageEmbedding
+    assert image.Sam3PromptBatch is Sam3PromptBatch
+    assert not hasattr(src, "Sam3ImageEmbedding")
+    assert not hasattr(src, "Sam3PromptBatch")
     assert not hasattr(predictor_module, "Sam3ImageEmbedding")
     assert not hasattr(predictor_module, "Sam3PromptBatch")
+    assert not hasattr(src, "__all__")
+    assert not hasattr(image, "__all__")
     for name in (
         "Sam3PromptBatch",
         "AutomaticMaskGenerator",

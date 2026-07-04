@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.video.memory_inference import VideoMemoryInference, MemoryReference
+from src.video import MemoryReference, VideoMemoryInference
 from scripts.video_memory_reference import build_reference_mask, make_box_mask
 
 

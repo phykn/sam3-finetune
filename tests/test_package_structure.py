@@ -13,7 +13,9 @@ def test_shared_modules_are_grouped_by_responsibility() -> None:
         "src/nn/position.py",
         "src/ops/box.py",
         "src/data/structures.py",
-        "src/data/prediction.py",
+        "src/image/builder.py",
+        "src/image/predictor.py",
+        "src/image/types.py",
     ):
         assert (root / path).is_file()
 
@@ -26,5 +28,7 @@ def test_shared_modules_are_grouped_by_responsibility() -> None:
         "position_encoding.py",
         "box_ops.py",
         "data_misc.py",
+        "builder.py",
+        "predictor.py",
     ):
         assert not (root / "src" / filename).exists()

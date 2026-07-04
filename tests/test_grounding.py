@@ -75,13 +75,12 @@ def test_grounding_modules_live_under_grounding_package():
         assert not (root / "src" / filename).exists()
 
 
-def test_grounding_package_does_not_reexport_internal_api():
+def test_grounding_package_exports_user_facing_api():
     import src.grounding as grounding
+    from src.grounding.types import GroundingPrediction
 
-    for name in (
-        "GroundingInference",
-        "GroundingPrediction",
-        "VisualLanguageCache",
-        "filter_grounding_prediction",
-    ):
-        assert not hasattr(grounding, name)
+    assert grounding.GroundingInference is GroundingInference
+    assert grounding.VisualLanguageCache is VisualLanguageCache
+    assert grounding.GroundingPrediction is GroundingPrediction
+    assert not hasattr(grounding, "filter_grounding_prediction")
+    assert not hasattr(grounding, "__all__")

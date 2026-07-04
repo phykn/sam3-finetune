@@ -35,6 +35,18 @@ def test_mask_helpers_are_split_by_responsibility() -> None:
     assert MaskProposal.__module__ == "src.masks.proposals"
 
 
+def test_masks_package_exports_user_facing_api() -> None:
+    import src.masks as masks
+
+    assert masks.AutomaticMaskGenerator is AutomaticMaskGenerator
+    assert masks.MaskInstance is MaskInstance
+    assert masks.MaskProposal is MaskProposal
+    assert hasattr(masks, "ReferenceExample")
+    assert hasattr(masks, "mask_instance_from_proposal")
+    assert hasattr(masks, "mask_instances_from_proposals")
+    assert not hasattr(masks, "__all__")
+
+
 def test_build_point_grid_centers_points_inside_unit_cells():
     grid = build_point_grid(2)
 

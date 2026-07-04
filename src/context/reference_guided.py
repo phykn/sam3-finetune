@@ -6,8 +6,14 @@ import torch
 from PIL import Image
 
 from ..masks.types import MaskInstance, ReferenceExample
-from ..predictor import Sam3Predictor
-from .matcher import ContextMatcher, _mean_score_over_mask, _resize_similarity_map
+from ..image import Sam3Predictor
+from .prototype import (
+    build_context_prototype,
+    mean_score_over_mask,
+    resize_similarity_map,
+    select_feature,
+    similarity_map,
+)
 from .types import ContextReference
 
 
@@ -38,16 +44,10 @@ class ReferenceGuidedMaskGenerator:
         self.base_score_weight = float(base_score_weight)
         self.min_context_score = min_context_score
         self.max_masks = max_masks
-        self._matcher = ContextMatcher(
-            predictor,
-            feature_layer=feature_layer,
-            candidate_count=1,
-            decode_batch_size=1,
-            max_masks=1,
-            negative_context_mode=negative_context_mode,
-            negative_context_weight=negative_context_weight,
-            negative_context_scale=negative_context_scale,
-        )
+        self.feature_layer = feature_layer
+        self.negative_context_mode = negative_context_mode
+        self.negative_context_weight = float(negative_context_weight)
+        self.negative_context_scale = float(negative_context_scale)
 
     @classmethod
     def from_checkpoint(
@@ -102,14 +102,21 @@ class ReferenceGuidedMaskGenerator:
         reference_embeddings = embeddings[:-1]
         target_embedding = embeddings[-1]
 
-        prototype, _reference_area_ratio = self._matcher._build_context_prototype(
+        prototype = build_context_prototype(
             context_references,
             reference_embeddings,
+            feature_layer=self.feature_layer,
+            negative_context_mode=self.negative_context_mode,
+            negative_context_scale=self.negative_context_scale,
         )
-        target_features = self._matcher._select_feature(target_embedding)
-        similarity_map = self._matcher._similarity_map(target_features, prototype)
-        similarity_full = _resize_similarity_map(
-            similarity_map,
+        target_features = select_feature(target_embedding, self.feature_layer)
+        similarity = similarity_map(
+            target_features,
+            prototype,
+            negative_context_weight=self.negative_context_weight,
+        )
+        similarity_full = resize_similarity_map(
+            similarity,
             target_embedding.orig_hw,
         )
         target_image_size = (target_embedding.orig_hw[1], target_embedding.orig_hw[0])
@@ -119,7 +126,7 @@ class ReferenceGuidedMaskGenerator:
             if candidate.image_size != target_image_size:
                 raise ValueError("candidate image_size must match target image size")
             full_mask = candidate.to_full_mask()
-            context_score = _mean_score_over_mask(similarity_full, full_mask)
+            context_score = mean_score_over_mask(similarity_full, full_mask)
             if self.min_context_score is not None and context_score < float(
                 self.min_context_score
             ):

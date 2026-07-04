@@ -5,8 +5,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from ..data.prediction import Sam3PromptBatch
-from ..predictor import Sam3Predictor
+from ..image import Sam3Predictor, Sam3PromptBatch
 from .geometry import (
     batched,
     build_point_grid,
