@@ -72,6 +72,14 @@ def parse_args() -> argparse.Namespace:
         help="Optional path for a reference mask overlay.",
     )
     parser.add_argument(
+        "--target-point",
+        type=float,
+        nargs=2,
+        metavar=("X", "Y"),
+        default=None,
+        help="Optional positive point on the target image in original pixels.",
+    )
+    parser.add_argument(
         "--output",
         default="outputs/video_memory_smoke.png",
         help="Overlay output path.",
@@ -159,7 +167,19 @@ def main() -> None:
         args.checkpoint,
         device=args.device,
     )
-    prediction = predictor.predict(target_image=target_image, references=references)
+    if args.target_point is None:
+        target_point_coords = None
+        target_point_labels = None
+    else:
+        target_point_coords = np.asarray([args.target_point], dtype=np.float32)
+        target_point_labels = np.asarray([1], dtype=np.int64)
+
+    prediction = predictor.predict(
+        target_image=target_image,
+        references=references,
+        target_point_coords=target_point_coords,
+        target_point_labels=target_point_labels,
+    )
 
     if prediction.masks.size == 0:
         raise RuntimeError("video memory smoke produced no masks")
@@ -184,6 +204,7 @@ def main() -> None:
             "reference_overlay": str(reference_overlay_path)
             if reference_overlay_path is not None
             else None,
+            "target_point": args.target_point,
             "loaded_keys": predictor.load_report.loaded_keys
             if predictor.load_report
             else None,

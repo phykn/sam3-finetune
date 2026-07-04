@@ -116,3 +116,67 @@ def test_mask_to_tensor_resizes_reference_mask_to_target_size() -> None:
     assert tuple(resized.shape) == (1, 12, 20)
     assert resized.dtype == torch.float32
     assert resized.sum() > mask.sum()
+
+
+def test_memory_predictor_adds_target_points_after_reference_masks() -> None:
+    from src.memory_predictor import Sam3MemoryPredictor, Sam3MemoryReference
+
+    class FakeVideoModel:
+        image_size = 16
+
+        def __init__(self) -> None:
+            self.added_points = None
+
+        def init_state(self, **kwargs):
+            return {"device": torch.device("cpu"), **kwargs}
+
+        def add_new_masks(self, *args, **kwargs) -> None:
+            pass
+
+        def add_new_points(self, *args, **kwargs) -> None:
+            self.added_points = kwargs
+
+        def propagate_in_video_preflight(self, *args, **kwargs) -> None:
+            pass
+
+        def propagate_in_video(self, *args, **kwargs):
+            yield (
+                1,
+                [7],
+                None,
+                torch.ones(1, 1, 12, 20),
+                torch.tensor([[0.5]]),
+            )
+
+    model = FakeVideoModel()
+    predictor = object.__new__(Sam3MemoryPredictor)
+    predictor.model = model
+    predictor.device = torch.device("cpu")
+    predictor.image_size = 16
+    predictor.load_report = None
+    reference = Sam3MemoryReference(
+        image=Image.fromarray(np.zeros((8, 10, 3), dtype=np.uint8)),
+        mask=np.ones((8, 10), dtype=bool),
+        obj_id=7,
+    )
+    target = Image.fromarray(np.zeros((12, 20, 3), dtype=np.uint8))
+
+    predictor.predict(
+        target_image=target,
+        references=[reference],
+        target_point_coords=np.array([[10, 6]], dtype=np.float32),
+        target_point_labels=np.array([1], dtype=np.int64),
+    )
+
+    assert model.added_points["frame_idx"] == 1
+    assert model.added_points["obj_id"] == 7
+    assert model.added_points["clear_old_points"] is True
+    assert model.added_points["rel_coordinates"] is False
+    torch.testing.assert_close(
+        model.added_points["points"],
+        torch.tensor([[[8.0, 8.0]]], dtype=torch.float32),
+    )
+    torch.testing.assert_close(
+        model.added_points["labels"],
+        torch.tensor([[1]], dtype=torch.int64),
+    )

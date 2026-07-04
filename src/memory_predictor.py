@@ -79,6 +79,9 @@ class Sam3MemoryPredictor:
         self,
         target_image: Image.Image | np.ndarray,
         references: Sequence[Sam3MemoryReference],
+        target_point_coords: np.ndarray | torch.Tensor | None = None,
+        target_point_labels: np.ndarray | torch.Tensor | None = None,
+        target_obj_id: int | None = None,
     ) -> Sam3MemoryPrediction:
         prepared = self.prepare_references(references)
         images = [item.reference.image for item in prepared] + [target_image]
@@ -117,6 +120,31 @@ class Sam3MemoryPredictor:
                     frame_idx=item.frame_index,
                     obj_ids=[int(item.reference.obj_id)],
                     masks=mask,
+                )
+
+            if target_point_coords is not None:
+                if target_point_labels is None:
+                    raise ValueError(
+                        "target_point_labels must be supplied with target_point_coords"
+                    )
+                point_obj_id = (
+                    int(target_obj_id)
+                    if target_obj_id is not None
+                    else int(prepared[0].reference.obj_id)
+                )
+                point_coords, point_labels = self._target_points_to_tensors(
+                    target_point_coords,
+                    target_point_labels,
+                    target_hw=orig_hw,
+                )
+                self.model.add_new_points(
+                    inference_state=inference_state,
+                    frame_idx=target_frame_index,
+                    obj_id=point_obj_id,
+                    points=point_coords,
+                    labels=point_labels,
+                    clear_old_points=True,
+                    rel_coordinates=False,
                 )
 
             self.model.propagate_in_video_preflight(
@@ -198,6 +226,32 @@ class Sam3MemoryPredictor:
                 mode="nearest",
             )[0]
         return mask_tensor
+
+    def _target_points_to_tensors(
+        self,
+        point_coords: np.ndarray | torch.Tensor,
+        point_labels: np.ndarray | torch.Tensor,
+        target_hw: tuple[int, int],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        coords = torch.as_tensor(point_coords, dtype=torch.float32)
+        labels = torch.as_tensor(point_labels, dtype=torch.int64)
+        if coords.ndim == 2:
+            coords = coords.unsqueeze(0)
+        if labels.ndim == 1:
+            labels = labels.unsqueeze(0)
+        if coords.ndim != 3 or coords.shape[-1] != 2:
+            raise ValueError("target_point_coords must have shape Nx2 or BxNx2")
+        if labels.ndim != 2:
+            raise ValueError("target_point_labels must have shape N or BxN")
+        if coords.shape[:2] != labels.shape:
+            raise ValueError("target point coordinates and labels must align")
+
+        height, width = target_hw
+        scale = torch.tensor(
+            [self.image_size / width, self.image_size / height],
+            dtype=torch.float32,
+        )
+        return coords * scale, labels
 
     @staticmethod
     def _to_pil(image: Image.Image | np.ndarray) -> Image.Image:
