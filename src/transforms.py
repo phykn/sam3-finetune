@@ -55,9 +55,13 @@ class Sam3Transforms:
         orig_hw: tuple[int, int],
     ) -> torch.Tensor:
         box_t = torch.as_tensor(box, dtype=torch.float32)
-        if box_t.numel() != 4:
-            raise ValueError("Box must contain four values: x0, y0, x1, y1")
-        return self.transform_coords(box_t.reshape(1, 2, 2), orig_hw)
+        if box_t.shape[-1] != 4:
+            raise ValueError("Boxes must end with four values: x0, y0, x1, y1")
+        if box_t.ndim == 1:
+            box_t = box_t.reshape(1, 2, 2)
+        else:
+            box_t = box_t.reshape(*box_t.shape[:-1], 2, 2)
+        return self.transform_coords(box_t, orig_hw)
 
     def postprocess_masks(
         self,

@@ -69,7 +69,8 @@ class Sam3Predictor:
 
         if box is not None:
             box_coords = self.transforms.transform_box(box, self._orig_hw).to(self.device)
-            box_labels = torch.tensor([[2, 3]], dtype=torch.int, device=self.device)
+            box_labels = torch.tensor([2, 3], dtype=torch.int, device=self.device)
+            box_labels = box_labels.expand(box_coords.shape[0], 2)
             if concat_points is None:
                 concat_points = (box_coords, box_labels)
             else:
