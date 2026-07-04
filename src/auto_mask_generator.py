@@ -142,11 +142,34 @@ class Sam3AutomaticMaskGenerator:
         min_mask_region_area: int = 0,
         box_nms_thresh: float = 0.7,
         max_masks: int | None = None,
+        crop_grids: Sequence[int] | None = None,
+        crop_points_per_side: Sequence[int] | None = None,
+        crop_overlap_ratio: float = 0.25,
+        crop_nms_thresh: float | None = None,
+        max_masks_per_crop: int | None = None,
+        filter_crop_edge_masks: bool = True,
     ) -> None:
         if points_per_side <= 0:
             raise ValueError("points_per_side must be a positive integer")
         if points_per_batch <= 0:
             raise ValueError("points_per_batch must be a positive integer")
+        if crop_grids is None and crop_points_per_side is not None:
+            raise ValueError("crop_points_per_side requires crop_grids")
+        if crop_grids is not None:
+            if crop_points_per_side is None or len(crop_grids) != len(
+                crop_points_per_side
+            ):
+                raise ValueError(
+                    "crop_grids and crop_points_per_side must have the same length"
+                )
+            if any(grid <= 0 for grid in crop_grids):
+                raise ValueError("crop_grids entries must be positive integers")
+            if any(points <= 0 for points in crop_points_per_side):
+                raise ValueError(
+                    "crop_points_per_side entries must be positive integers"
+                )
+        if crop_overlap_ratio < 0.0 or crop_overlap_ratio >= 0.5:
+            raise ValueError("crop_overlap_ratio must be in [0.0, 0.5)")
         self.predictor = predictor
         self.points_per_side = points_per_side
         self.points_per_batch = points_per_batch
@@ -156,6 +179,16 @@ class Sam3AutomaticMaskGenerator:
         self.min_mask_region_area = min_mask_region_area
         self.box_nms_thresh = box_nms_thresh
         self.max_masks = max_masks
+        self.crop_grids = tuple(crop_grids) if crop_grids is not None else None
+        self.crop_points_per_side = (
+            tuple(crop_points_per_side) if crop_points_per_side is not None else None
+        )
+        self.crop_overlap_ratio = crop_overlap_ratio
+        self.crop_nms_thresh = (
+            box_nms_thresh if crop_nms_thresh is None else crop_nms_thresh
+        )
+        self.max_masks_per_crop = max_masks_per_crop
+        self.filter_crop_edge_masks = filter_crop_edge_masks
 
     @classmethod
     def from_checkpoint(
@@ -169,13 +202,65 @@ class Sam3AutomaticMaskGenerator:
 
     def generate(self, image: Image.Image | np.ndarray) -> list[MaskProposal]:
         width, height = _image_size(image)
-        crop_box = (0, 0, width, height)
-        self.predictor.set_image(image)
+        point_grid_cache: dict[int, np.ndarray] = {}
+        proposals: list[MaskProposal] = []
+        for crop_grid, points_per_side in self._crop_grid_config():
+            normalized_grid = point_grid_cache.setdefault(
+                points_per_side,
+                build_point_grid(points_per_side),
+            )
+            crop_boxes = generate_crop_boxes(
+                width,
+                height,
+                crop_grid,
+                self.crop_overlap_ratio,
+            )
+            for crop_index, crop_box in enumerate(crop_boxes):
+                crop_image = _crop_image(image, crop_box)
+                proposals.extend(
+                    self._generate_for_crop(
+                        crop_image,
+                        crop_box,
+                        crop_grid,
+                        crop_index,
+                        normalized_grid,
+                        (width, height),
+                    )
+                )
 
-        normalized_grid = build_point_grid(self.points_per_side)
+        proposals = self._remove_duplicates(proposals)
+        proposals.sort(
+            key=lambda proposal: (
+                proposal.predicted_iou,
+                proposal.stability_score,
+                proposal.area,
+            ),
+            reverse=True,
+        )
+        if self.max_masks is not None:
+            proposals = proposals[: self.max_masks]
+        return proposals
+
+    def _crop_grid_config(self) -> list[tuple[int, int]]:
+        if self.crop_grids is None:
+            return [(1, self.points_per_side)]
+        assert self.crop_points_per_side is not None
+        return list(zip(self.crop_grids, self.crop_points_per_side))
+
+    def _generate_for_crop(
+        self,
+        crop_image: Image.Image | np.ndarray,
+        crop_box: tuple[int, int, int, int],
+        crop_grid: int,
+        crop_index: int,
+        normalized_grid: np.ndarray,
+        full_size: tuple[int, int],
+    ) -> list[MaskProposal]:
+        crop_width, crop_height = _image_size(crop_image)
+        self.predictor.set_image(crop_image)
         pixel_grid = normalized_grid.copy()
-        pixel_grid[:, 0] *= float(width)
-        pixel_grid[:, 1] *= float(height)
+        pixel_grid[:, 0] *= float(crop_width)
+        pixel_grid[:, 1] *= float(crop_height)
 
         proposals: list[MaskProposal] = []
         for point_batch in batched(pixel_grid, self.points_per_batch):
@@ -192,20 +277,14 @@ class Sam3AutomaticMaskGenerator:
                     scores,
                     low_res_masks,
                     crop_box,
+                    crop_grid,
+                    crop_index,
+                    full_size,
                 )
             )
-
-        proposals = self._remove_duplicates(proposals)
-        proposals.sort(
-            key=lambda proposal: (
-                proposal.predicted_iou,
-                proposal.stability_score,
-                proposal.area,
-            ),
-            reverse=True,
-        )
-        if self.max_masks is not None:
-            proposals = proposals[: self.max_masks]
+        proposals = self._remove_duplicates(proposals, self.crop_nms_thresh)
+        if self.max_masks_per_crop is not None:
+            proposals = proposals[: self.max_masks_per_crop]
         return proposals
 
     def _proposals_from_batch(
@@ -215,8 +294,13 @@ class Sam3AutomaticMaskGenerator:
         scores: np.ndarray,
         low_res_masks: np.ndarray,
         crop_box: tuple[int, int, int, int],
+        crop_grid: int,
+        crop_index: int,
+        full_size: tuple[int, int],
     ) -> list[MaskProposal]:
         proposals: list[MaskProposal] = []
+        crop_x0, crop_y0, crop_x1, crop_y1 = crop_box
+        full_width, full_height = full_size
         for point_index, point in enumerate(points):
             for mask_index in range(masks.shape[1]):
                 predicted_iou = float(scores[point_index, mask_index])
@@ -226,8 +310,14 @@ class Sam3AutomaticMaskGenerator:
                 area = int(mask.sum())
                 if area < self.min_mask_region_area:
                     continue
-                bbox = mask_to_box(mask)
-                if bbox is None:
+                local_bbox = mask_to_box(mask)
+                if local_bbox is None:
+                    continue
+                if self.filter_crop_edge_masks and _touches_internal_crop_edge(
+                    local_bbox,
+                    crop_box,
+                    full_size,
+                ):
                     continue
                 stability = calculate_stability_score(
                     low_res_masks[point_index, mask_index],
@@ -235,22 +325,40 @@ class Sam3AutomaticMaskGenerator:
                 )
                 if stability < self.stability_score_thresh:
                     continue
+                bbox = (
+                    local_bbox[0] + crop_x0,
+                    local_bbox[1] + crop_y0,
+                    local_bbox[2] + crop_x0,
+                    local_bbox[3] + crop_y0,
+                )
+                full_mask = np.zeros((full_height, full_width), dtype=bool)
+                full_mask[crop_y0:crop_y1, crop_x0:crop_x1] = mask
                 proposals.append(
                     MaskProposal(
-                        segmentation=mask,
+                        segmentation=full_mask,
                         bbox=bbox,
                         area=area,
                         predicted_iou=predicted_iou,
                         stability_score=stability,
-                        point_coords=(float(point[0]), float(point[1])),
+                        point_coords=(
+                            float(point[0] + crop_x0),
+                            float(point[1] + crop_y0),
+                        ),
                         crop_box=crop_box,
+                        crop_grid=crop_grid,
+                        crop_index=crop_index,
                     )
                 )
         return proposals
 
-    def _remove_duplicates(self, proposals: list[MaskProposal]) -> list[MaskProposal]:
+    def _remove_duplicates(
+        self,
+        proposals: list[MaskProposal],
+        iou_threshold: float | None = None,
+    ) -> list[MaskProposal]:
         if not proposals:
             return []
+        threshold = self.box_nms_thresh if iou_threshold is None else iou_threshold
         scores = np.array(
             [
                 proposal.predicted_iou + proposal.stability_score * 1e-3
@@ -259,7 +367,7 @@ class Sam3AutomaticMaskGenerator:
             dtype=np.float32,
         )
         boxes = np.array([proposal.bbox for proposal in proposals], dtype=np.float32)
-        keep = nms_boxes(boxes, scores, self.box_nms_thresh)
+        keep = nms_boxes(boxes, scores, threshold)
         return [proposals[index] for index in keep]
 
 
@@ -272,6 +380,31 @@ def _image_size(image: Image.Image | np.ndarray) -> tuple[int, int]:
         height, width = image.shape[:2]
         return width, height
     raise TypeError(f"Unsupported image type: {type(image)!r}")
+
+
+def _crop_image(
+    image: Image.Image | np.ndarray,
+    crop_box: tuple[int, int, int, int],
+) -> Image.Image | np.ndarray:
+    x0, y0, x1, y1 = crop_box
+    if isinstance(image, Image.Image):
+        return image.crop(crop_box)
+    return image[y0:y1, x0:x1, :]
+
+
+def _touches_internal_crop_edge(
+    local_bbox: tuple[int, int, int, int],
+    crop_box: tuple[int, int, int, int],
+    full_size: tuple[int, int],
+) -> bool:
+    x0, y0, x1, y1 = local_bbox
+    crop_x0, crop_y0, crop_x1, crop_y1 = crop_box
+    full_width, full_height = full_size
+    touches_left = x0 <= 0 and crop_x0 > 0
+    touches_top = y0 <= 0 and crop_y0 > 0
+    touches_right = x1 >= crop_x1 - crop_x0 and crop_x1 < full_width
+    touches_bottom = y1 >= crop_y1 - crop_y0 and crop_y1 < full_height
+    return touches_left or touches_top or touches_right or touches_bottom
 
 
 def save_proposal_overlay(

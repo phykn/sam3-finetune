@@ -201,3 +201,123 @@ def test_generator_filters_by_score_stability_area_and_max_masks():
 
     assert len(proposals) == 2
     assert all(proposal.area >= 4 for proposal in proposals)
+
+
+class CropAwareFakePredictor:
+    def __init__(self):
+        self.images = []
+        self.predict_batches = []
+
+    def set_image(self, image):
+        self.images.append(image.size)
+
+    def predict(
+        self,
+        point_coords=None,
+        point_labels=None,
+        box=None,
+        mask_input=None,
+        multimask_output=True,
+        return_logits=False,
+    ):
+        self.predict_batches.append((point_coords.copy(), point_labels.copy()))
+        batch = point_coords.shape[0]
+        crop_w, crop_h = self.images[-1]
+        masks = np.zeros((batch, 1, crop_h, crop_w), dtype=bool)
+        low_res = np.zeros((batch, 1, crop_h, crop_w), dtype=np.float32)
+        scores = np.ones((batch, 1), dtype=np.float32)
+        for i in range(batch):
+            x = min(max(int(point_coords[i, 0, 0]), 0), crop_w - 1)
+            y = min(max(int(point_coords[i, 0, 1]), 0), crop_h - 1)
+            x0 = max(x - 1, 0)
+            y0 = max(y - 1, 0)
+            x1 = min(x0 + 2, crop_w)
+            y1 = min(y0 + 2, crop_h)
+            masks[i, 0, y0:y1, x0:x1] = True
+            low_res[i, 0] = np.where(masks[i, 0], 2.0, -2.0)
+            scores[i, 0] = 1.0 - (i * 0.01)
+        return masks, scores, low_res
+
+
+class EdgeTouchingFakePredictor:
+    def __init__(self):
+        self.images = []
+
+    def set_image(self, image):
+        self.images.append(image.size)
+
+    def predict(
+        self,
+        point_coords=None,
+        point_labels=None,
+        box=None,
+        mask_input=None,
+        multimask_output=True,
+        return_logits=False,
+    ):
+        batch = point_coords.shape[0]
+        crop_w, crop_h = self.images[-1]
+        masks = np.ones((batch, 1, crop_h, crop_w), dtype=bool)
+        low_res = np.full((batch, 1, crop_h, crop_w), 2.0, dtype=np.float32)
+        scores = np.ones((batch, 1), dtype=np.float32)
+        return masks, scores, low_res
+
+
+def test_generator_rejects_mismatched_crop_lists():
+    try:
+        Sam3AutomaticMaskGenerator(
+            CropAwareFakePredictor(),
+            crop_grids=[1, 2],
+            crop_points_per_side=[4],
+        )
+    except ValueError as exc:
+        assert "crop_grids" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+
+def test_generator_runs_explicit_crop_grids_and_maps_to_full_image():
+    predictor = CropAwareFakePredictor()
+    generator = Sam3AutomaticMaskGenerator(
+        predictor,
+        points_per_batch=8,
+        pred_iou_thresh=0.0,
+        stability_score_thresh=0.0,
+        box_nms_thresh=1.0,
+        crop_grids=[1, 2],
+        crop_points_per_side=[1, 1],
+        crop_overlap_ratio=0.0,
+        filter_crop_edge_masks=False,
+    )
+
+    proposals = generator.generate(Image.new("RGB", (8, 8), color=(0, 0, 0)))
+
+    assert predictor.images == [(8, 8), (4, 4), (4, 4), (4, 4), (4, 4)]
+    assert len(proposals) == 5
+    assert {proposal.crop_grid for proposal in proposals} == {1, 2}
+    assert sorted(
+        proposal.crop_index for proposal in proposals if proposal.crop_grid == 2
+    ) == [0, 1, 2, 3]
+    assert all(proposal.segmentation.shape == (8, 8) for proposal in proposals)
+    assert any(proposal.crop_box == (4, 4, 8, 8) for proposal in proposals)
+    assert all(0.0 <= proposal.point_coords[0] <= 8.0 for proposal in proposals)
+    assert all(0.0 <= proposal.point_coords[1] <= 8.0 for proposal in proposals)
+
+
+def test_generator_filters_internal_crop_edge_masks():
+    predictor = EdgeTouchingFakePredictor()
+    generator = Sam3AutomaticMaskGenerator(
+        predictor,
+        points_per_batch=8,
+        pred_iou_thresh=0.0,
+        stability_score_thresh=0.0,
+        box_nms_thresh=1.0,
+        crop_grids=[2],
+        crop_points_per_side=[1],
+        crop_overlap_ratio=0.0,
+        filter_crop_edge_masks=True,
+    )
+
+    proposals = generator.generate(Image.new("RGB", (8, 8), color=(0, 0, 0)))
+
+    assert proposals == []
