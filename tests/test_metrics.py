@@ -19,7 +19,7 @@ def test_mask_iou_returns_zero_for_empty_union() -> None:
 
 
 def test_grounding_postprocess_uses_shared_mask_metric() -> None:
-    import src.grounding.postprocess as postprocess
+    import src.predict.grounding.postprocess as postprocess
 
     assert not hasattr(postprocess, "_mask_iou")
 

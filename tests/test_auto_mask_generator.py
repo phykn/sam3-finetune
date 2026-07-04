@@ -1,42 +1,42 @@
 import numpy as np
 from PIL import Image
-
-from src.masks.generator import AutomaticMaskGenerator
-from src.masks.geometry import (
+from src.ops.box import box_area_xyxy, box_iou_xyxy, nms_boxes_xyxy
+from src.predict.masks.generator import AutomaticMaskGenerator
+from src.predict.masks.geometry import (
     batched,
     build_point_grid,
     calculate_stability_score,
     generate_crop_boxes,
     mask_to_box,
 )
-from src.ops.box import box_area_xyxy, box_iou_xyxy, nms_boxes_xyxy
-from src.masks.proposals import (
-    MaskProposal,
+from src.predict.masks.proposals import (
     count_proposals_by_crop_grid,
+    MaskProposal,
     proposal_mask_image,
     proposal_to_full_mask,
     save_proposal_grid,
     save_proposal_overlay,
 )
-from src.masks.types import MaskInstance
+from src.types import MaskInstance
 
 
 def test_mask_generator_lives_under_masks_package() -> None:
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
-    assert (root / "src" / "masks" / "generator.py").is_file()
+    assert (root / "src" / "predict" / "masks" / "generator.py").is_file()
+    assert not (root / "src" / "masks").exists()
     assert not (root / "src" / "auto_mask_generator.py").exists()
-    assert AutomaticMaskGenerator.__module__ == "src.masks.generator"
+    assert AutomaticMaskGenerator.__module__ == "src.predict.masks.generator"
 
 
 def test_mask_helpers_are_split_by_responsibility() -> None:
-    assert build_point_grid.__module__ == "src.masks.geometry"
-    assert MaskProposal.__module__ == "src.masks.proposals"
+    assert build_point_grid.__module__ == "src.predict.masks.geometry"
+    assert MaskProposal.__module__ == "src.types"
 
 
 def test_masks_package_exports_user_facing_api() -> None:
-    import src.masks as masks
+    import src.predict.masks as masks
 
     assert masks.AutomaticMaskGenerator is AutomaticMaskGenerator
     assert masks.MaskInstance is MaskInstance

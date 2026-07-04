@@ -1,8 +1,7 @@
 import numpy as np
 import torch
 from PIL import Image
-
-from src.image.types import Sam3ImageEmbedding
+from src.types import Sam3ImageEmbedding
 
 
 def _embedding_from_feature_map(feature_map: torch.Tensor) -> Sam3ImageEmbedding:
@@ -55,8 +54,8 @@ class FakeContextPredictor:
 
 
 def test_context_predictor_selects_target_points_from_reference_mask_similarity():
-    from src.context.matcher import ContextMatcher
-    from src.context.types import ContextReference
+    from src.predict.reference.matcher import ContextMatcher
+    from src.types import ContextReference
 
     reference_features = torch.zeros(2, 4, 4, dtype=torch.float32)
     reference_features[0, 1:3, 1:3] = 3.0
@@ -103,30 +102,34 @@ def test_context_predictor_selects_target_points_from_reference_mask_similarity(
 
 def test_context_matcher_lives_under_context_package() -> None:
     from pathlib import Path
-    from src.context.matcher import ContextMatcher
-    from src.context.postprocess import context_prediction_to_full_mask
-    from src.context.scoring import area_ratio_score
-    from src.context.types import ContextPrediction, ContextReference
+
+    from src.predict.reference.matcher import ContextMatcher
+    from src.predict.reference.postprocess import context_prediction_to_full_mask
+    from src.predict.reference.scoring import area_ratio_score
+    from src.types import ContextPrediction, ContextReference
 
     root = Path(__file__).resolve().parents[1]
-    assert (root / "src" / "context" / "matcher.py").is_file()
-    assert (root / "src" / "context" / "postprocess.py").is_file()
-    assert (root / "src" / "context" / "prototype.py").is_file()
-    assert (root / "src" / "context" / "scoring.py").is_file()
-    assert (root / "src" / "context" / "types.py").is_file()
+    assert (root / "src" / "predict" / "reference" / "matcher.py").is_file()
+    assert (root / "src" / "predict" / "reference" / "postprocess.py").is_file()
+    assert (root / "src" / "predict" / "reference" / "prototype.py").is_file()
+    assert (root / "src" / "predict" / "reference" / "scoring.py").is_file()
+    assert not (root / "src" / "context").exists()
     assert not (root / "src" / "context_predictor.py").exists()
-    assert ContextMatcher.__module__ == "src.context.matcher"
-    assert ContextReference.__module__ == "src.context.types"
-    assert ContextPrediction.__module__ == "src.context.types"
-    assert context_prediction_to_full_mask.__module__ == "src.context.postprocess"
-    assert area_ratio_score.__module__ == "src.context.scoring"
+    assert ContextMatcher.__module__ == "src.predict.reference.matcher"
+    assert ContextReference.__module__ == "src.types"
+    assert ContextPrediction.__module__ == "src.types"
+    assert (
+        context_prediction_to_full_mask.__module__
+        == "src.predict.reference.postprocess"
+    )
+    assert area_ratio_score.__module__ == "src.predict.reference.scoring"
 
 
 def test_context_package_exports_user_facing_api() -> None:
-    import src.context as context
-    from src.context.matcher import ContextMatcher
-    from src.context.reference_guided import ReferenceGuidedMaskGenerator
-    from src.context.types import ContextPrediction, ContextReference
+    import src.predict.reference as context
+    from src.predict.reference.guided import ReferenceGuidedMaskGenerator
+    from src.predict.reference.matcher import ContextMatcher
+    from src.types import ContextPrediction, ContextReference
 
     assert context.ContextMatcher is ContextMatcher
     assert context.ReferenceGuidedMaskGenerator is ReferenceGuidedMaskGenerator
@@ -136,8 +139,8 @@ def test_context_package_exports_user_facing_api() -> None:
 
 
 def test_contrastive_context_penalizes_reference_background_like_candidates():
-    from src.context.matcher import ContextMatcher
-    from src.context.types import ContextReference
+    from src.predict.reference.matcher import ContextMatcher
+    from src.types import ContextReference
 
     reference_features = torch.zeros(2, 4, 4, dtype=torch.float32)
     reference_features[:, :, :] = torch.tensor([1.0, 0.0])[:, None, None]
@@ -187,8 +190,8 @@ def test_contrastive_context_penalizes_reference_background_like_candidates():
 
 
 def test_shape_candidate_scoring_prefers_distributed_reference_match():
-    from src.context.matcher import ContextMatcher
-    from src.context.types import ContextReference
+    from src.predict.reference.matcher import ContextMatcher
+    from src.types import ContextReference
 
     reference_features = torch.zeros(2, 5, 5, dtype=torch.float32)
     reference_features[0, 1:4, 1:4] = 1.0
@@ -226,8 +229,8 @@ def test_shape_candidate_scoring_prefers_distributed_reference_match():
 
 
 def test_context_predictor_uses_explicit_target_points_as_candidates():
-    from src.context.matcher import ContextMatcher
-    from src.context.types import ContextReference
+    from src.predict.reference.matcher import ContextMatcher
+    from src.types import ContextReference
 
     reference_features = torch.zeros(2, 4, 4, dtype=torch.float32)
     reference_features[0, 1:3, 1:3] = 3.0
@@ -257,8 +260,8 @@ def test_context_predictor_uses_explicit_target_points_as_candidates():
 
 
 def test_context_predictor_rejects_empty_reference_mask():
-    from src.context.matcher import ContextMatcher
-    from src.context.types import ContextReference
+    from src.predict.reference.matcher import ContextMatcher
+    from src.types import ContextReference
 
     fake = FakeContextPredictor()
     predictor = ContextMatcher(fake)
@@ -280,7 +283,7 @@ def test_context_predictor_rejects_empty_reference_mask():
 
 
 def test_context_reference_accepts_pil_images_for_public_api():
-    from src.context.types import ContextReference
+    from src.types import ContextReference
 
     reference = ContextReference(
         image=Image.new("RGB", (4, 4), color=(0, 0, 0)),
@@ -329,7 +332,7 @@ def test_reference_prompt_points_encode_positive_and_negative_labels():
 
 def test_reference_prompt_refinement_keeps_original_prompts(monkeypatch):
     from scripts.video_memory_reference import predict_sam_mask_from_prompts
-    from src.image import Sam3Predictor
+    from src.predict import Sam3Predictor
 
     class FakeSam3Predictor:
         def __init__(self) -> None:
@@ -383,8 +386,8 @@ def test_reference_prompt_refinement_keeps_original_prompts(monkeypatch):
 
 
 def test_context_predictor_can_send_reference_shape_as_mask_prior():
-    from src.context.matcher import ContextMatcher
-    from src.context.types import ContextReference
+    from src.predict.reference.matcher import ContextMatcher
+    from src.types import ContextReference
 
     reference_features = torch.zeros(2, 4, 4, dtype=torch.float32)
     reference_features[0, 1:3, 1:3] = 3.0
@@ -422,8 +425,8 @@ def test_context_predictor_can_send_reference_shape_as_mask_prior():
 
 
 def test_context_prediction_to_full_mask_reconstructs_roi():
-    from src.context.postprocess import context_prediction_to_full_mask
-    from src.context.types import ContextPrediction
+    from src.predict.reference.postprocess import context_prediction_to_full_mask
+    from src.types import ContextPrediction
 
     prediction = ContextPrediction(
         segmentation=np.array([[True, False], [True, True]], dtype=bool),
@@ -445,7 +448,7 @@ def test_context_prediction_to_full_mask_reconstructs_roi():
 
 
 def test_area_ratio_score_penalizes_masks_with_different_relative_size():
-    from src.context.scoring import area_ratio_score
+    from src.predict.reference.scoring import area_ratio_score
 
     same = area_ratio_score(candidate_ratio=0.05, reference_ratio=0.05)
     larger = area_ratio_score(candidate_ratio=0.20, reference_ratio=0.05)

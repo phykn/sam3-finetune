@@ -1,10 +1,9 @@
 from pathlib import Path
 
 import torch
-
-from src.grounding.builder import filter_and_remap_grounding_state_dict
-from src.grounding.cache import VisualLanguageCache
-from src.grounding.inference import GroundingInference
+from src.model.grounding.builder import filter_and_remap_grounding_state_dict
+from src.predict.grounding.cache import VisualLanguageCache
+from src.predict.grounding.inference import GroundingInference
 
 
 def test_filter_and_remap_grounding_state_dict_drops_language_backbone_only():
@@ -52,20 +51,21 @@ def test_visual_language_cache_loads_and_moves_tensors(tmp_path: Path):
 def test_grounding_inference_is_not_a_predictor_entrypoint():
     root = Path(__file__).resolve().parents[1]
 
-    assert GroundingInference.__module__ == "src.grounding.inference"
-    assert VisualLanguageCache.__module__ == "src.grounding.cache"
+    assert GroundingInference.__module__ == "src.predict.grounding.inference"
+    assert VisualLanguageCache.__module__ == "src.predict.grounding.cache"
     assert not (root / "src" / "grounding_predictor.py").exists()
 
 
 def test_grounding_modules_live_under_grounding_package():
     root = Path(__file__).resolve().parents[1]
 
-    assert (root / "src" / "grounding" / "builder.py").is_file()
-    assert (root / "src" / "grounding" / "model.py").is_file()
-    assert (root / "src" / "grounding" / "geometry.py").is_file()
-    assert (root / "src" / "grounding" / "segmentation.py").is_file()
-    assert (root / "src" / "grounding" / "cache.py").is_file()
-    assert (root / "src" / "grounding" / "types.py").is_file()
+    assert (root / "src" / "model" / "grounding" / "builder.py").is_file()
+    assert (root / "src" / "model" / "grounding" / "model.py").is_file()
+    assert (root / "src" / "model" / "grounding" / "geometry.py").is_file()
+    assert (root / "src" / "model" / "grounding" / "segmentation.py").is_file()
+    assert (root / "src" / "predict" / "grounding" / "cache.py").is_file()
+    assert (root / "src" / "types.py").is_file()
+    assert not (root / "src" / "grounding").exists()
     for filename in (
         "grounding_builder.py",
         "grounding_model.py",
@@ -76,8 +76,8 @@ def test_grounding_modules_live_under_grounding_package():
 
 
 def test_grounding_package_exports_user_facing_api():
-    import src.grounding as grounding
-    from src.grounding.types import GroundingPrediction
+    import src.predict.grounding as grounding
+    from src.types import GroundingPrediction
 
     assert grounding.GroundingInference is GroundingInference
     assert grounding.VisualLanguageCache is VisualLanguageCache

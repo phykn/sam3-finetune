@@ -1,6 +1,5 @@
 import numpy as np
 from PIL import Image
-
 from scripts.video_memory_reference import (
     build_reference_mask,
     predict_sam_mask_from_box,
@@ -61,7 +60,7 @@ def test_resolve_box_defaults_to_center_region() -> None:
 
 
 def test_predict_sam_mask_from_box_keeps_box_during_refinement(monkeypatch) -> None:
-    import src.image
+    import src.predict
 
     class FakePredictor:
         instances = []
@@ -92,7 +91,7 @@ def test_predict_sam_mask_from_box_keeps_box_during_refinement(monkeypatch) -> N
             low_res = np.zeros((1, 1, 2, 2), dtype=np.float32)
             return masks, scores, low_res
 
-    monkeypatch.setattr(src.image, "Sam3Predictor", FakePredictor)
+    monkeypatch.setattr(src.predict, "Sam3Predictor", FakePredictor)
     image = Image.new("RGB", (6, 4), color=(0, 0, 0))
 
     result = predict_sam_mask_from_box(

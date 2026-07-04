@@ -9,8 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.video import MemoryReference, VideoMemoryInference
-from scripts.video_memory_reference import ReferenceMaskResult, build_reference_mask
+from scripts.video_memory_reference import build_reference_mask, ReferenceMaskResult
+from src.predict import MemoryReference, VideoMemoryInference
 
 
 def parse_args() -> argparse.Namespace:
@@ -206,17 +206,19 @@ def main() -> None:
             "reference_score": mask_results[0].score,
             "reference_refined_score": mask_results[0].refined_score,
             "reference_selected_index": mask_results[0].selected_index,
-            "reference_overlay": str(reference_overlay_path)
-            if reference_overlay_path is not None
-            else None,
+            "reference_overlay": (
+                str(reference_overlay_path)
+                if reference_overlay_path is not None
+                else None
+            ),
             "target_point": args.target_point,
             "target_point_mode": args.target_point_mode,
-            "loaded_keys": predictor.load_report.loaded_keys
-            if predictor.load_report
-            else None,
-            "ignored_keys": predictor.load_report.ignored_keys
-            if predictor.load_report
-            else None,
+            "loaded_keys": (
+                predictor.load_report.loaded_keys if predictor.load_report else None
+            ),
+            "ignored_keys": (
+                predictor.load_report.ignored_keys if predictor.load_report else None
+            ),
         }
     )
 

@@ -1,8 +1,7 @@
 import numpy as np
 import torch
 from PIL import Image
-
-from src.image import Sam3Predictor, Sam3ImageEmbedding, Sam3PromptBatch
+from src.predict import Sam3ImageEmbedding, Sam3Predictor, Sam3PromptBatch
 
 
 class FakePromptEncoder(torch.nn.Module):
@@ -72,8 +71,8 @@ class FakeModel(torch.nn.Module):
 
 def test_package_public_surface_exposes_only_main_predictor():
     import src
-    import src.image as image
-    import src.image.predictor as predictor_module
+    import src.predict as image
+    import src.predict.image as predictor_module
 
     assert src.Sam3Predictor is Sam3Predictor
     assert image.Sam3Predictor is Sam3Predictor

@@ -1,8 +1,7 @@
 from pathlib import Path
 
 import numpy as np
-
-from src.grounding.types import GroundingPrediction
+from src.types import GroundingPrediction
 
 
 def _prediction() -> GroundingPrediction:
@@ -31,7 +30,7 @@ def _prediction() -> GroundingPrediction:
 
 
 def test_filter_grounding_prediction_uses_model_score_and_mask_nms() -> None:
-    from src.grounding.postprocess import filter_grounding_prediction
+    from src.predict.grounding.postprocess import filter_grounding_prediction
 
     filtered = filter_grounding_prediction(
         _prediction(),
@@ -48,7 +47,7 @@ def test_filter_grounding_prediction_uses_model_score_and_mask_nms() -> None:
 
 
 def test_filter_grounding_prediction_allows_disabling_nms() -> None:
-    from src.grounding.postprocess import filter_grounding_prediction
+    from src.predict.grounding.postprocess import filter_grounding_prediction
 
     filtered = filter_grounding_prediction(
         _prediction(),
@@ -61,14 +60,14 @@ def test_filter_grounding_prediction_allows_disabling_nms() -> None:
 
 
 def test_grounding_postprocess_lives_under_grounding_package() -> None:
-    from src.grounding.postprocess import filter_grounding_prediction
+    from src.predict.grounding.postprocess import filter_grounding_prediction
 
-    assert filter_grounding_prediction.__module__ == "src.grounding.postprocess"
+    assert filter_grounding_prediction.__module__ == "src.predict.grounding.postprocess"
     assert not Path("src/grounding_postprocess.py").exists()
 
 
 def test_grounding_postprocess_does_not_expose_labeling_wrapper() -> None:
-    import src.grounding.postprocess as postprocess
+    import src.predict.grounding.postprocess as postprocess
 
     assert not hasattr(postprocess, "LabeledGroundingPrediction")
     assert not hasattr(postprocess, "label_grounding_prediction")

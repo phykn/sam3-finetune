@@ -14,13 +14,13 @@ def _tiny_mask() -> np.ndarray:
 
 
 def test_video_memory_public_api_imports() -> None:
-    import src.video as video
-    from src.video.builder import build_video_memory_model
-    from src.video import MemoryReference, VideoMemoryInference
+    import src.predict as video
+    from src.model.video.builder import build_video_memory_model
+    from src.predict import MemoryReference, VideoMemoryInference
 
     assert VideoMemoryInference.__name__ == "VideoMemoryInference"
     assert MemoryReference.__name__ == "MemoryReference"
-    assert MemoryReference.__module__ == "src.video.types"
+    assert MemoryReference.__module__ == "src.types"
     assert callable(build_video_memory_model)
     assert video.VideoMemoryInference is VideoMemoryInference
     assert video.MemoryReference is MemoryReference
@@ -28,26 +28,26 @@ def test_video_memory_public_api_imports() -> None:
 
 
 def test_video_memory_modules_import_without_triton() -> None:
-    import src.video._tracker.demo
-    import src.video._tracker.tracker_utils
-    import src.video._tracker.tracking
+    import src.model.video._tracker.demo
+    import src.model.video._tracker.tracker_utils
+    import src.model.video._tracker.tracking
 
-    assert hasattr(src.video._tracker.tracker_utils, "select_closest_cond_frames")
-    assert hasattr(src.video._tracker.tracking, "VideoTrackingDynamicMultiplex")
-    assert hasattr(src.video._tracker.demo, "Sam3VideoTrackingMultiplexDemo")
+    assert hasattr(src.model.video._tracker.tracker_utils, "select_closest_cond_frames")
+    assert hasattr(src.model.video._tracker.tracking, "VideoTrackingDynamicMultiplex")
+    assert hasattr(src.model.video._tracker.demo, "Sam3VideoTrackingMultiplexDemo")
 
 
-def test_video_modules_live_under_video_package() -> None:
+def test_video_modules_live_under_role_packages() -> None:
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
     for filename in (
         "builder.py",
         "checkpoint.py",
-        "inference.py",
-        "types.py",
     ):
-        assert (root / "src" / "video" / filename).is_file()
+        assert (root / "src" / "model" / "video" / filename).is_file()
+    assert (root / "src" / "predict" / "video.py").is_file()
+    assert (root / "src" / "types.py").is_file()
     for filename in (
         "memory.py",
         "decoder.py",
@@ -58,7 +58,7 @@ def test_video_modules_live_under_video_package() -> None:
         "demo.py",
         "prompting.py",
     ):
-        assert (root / "src" / "video" / "_tracker" / filename).is_file()
+        assert (root / "src" / "model" / "video" / "_tracker" / filename).is_file()
     for filename in (
         "video_builder.py",
         "video_checkpoint.py",
@@ -73,10 +73,11 @@ def test_video_modules_live_under_video_package() -> None:
     ):
         assert not (root / "src" / filename).exists()
     assert not (root / "src" / "video" / "memory_inference.py").exists()
+    assert not (root / "src" / "video").exists()
 
 
 def test_video_checkpoint_remap_keeps_tracker_memory_and_backbone_keys() -> None:
-    from src.video.checkpoint import filter_and_remap_video_state_dict
+    from src.model.video.checkpoint import filter_and_remap_video_state_dict
 
     checkpoint = {
         "model": {
@@ -108,7 +109,7 @@ def test_video_checkpoint_remap_keeps_tracker_memory_and_backbone_keys() -> None
 
 
 def test_memory_references_preserve_order_for_same_object_id() -> None:
-    from src.video import MemoryReference, VideoMemoryInference
+    from src.predict import MemoryReference, VideoMemoryInference
 
     references = [
         MemoryReference(image=_tiny_image(), mask=_tiny_mask(), obj_id=3),
@@ -123,7 +124,7 @@ def test_memory_references_preserve_order_for_same_object_id() -> None:
 
 
 def test_preprocess_sequence_uses_target_size_for_mixed_image_sizes() -> None:
-    from src.video import VideoMemoryInference
+    from src.predict import VideoMemoryInference
 
     predictor = object.__new__(VideoMemoryInference)
     predictor.image_size = 16
@@ -141,7 +142,7 @@ def test_preprocess_sequence_uses_target_size_for_mixed_image_sizes() -> None:
 
 
 def test_mask_to_tensor_resizes_reference_mask_to_target_size() -> None:
-    from src.video import VideoMemoryInference
+    from src.predict import VideoMemoryInference
 
     predictor = object.__new__(VideoMemoryInference)
     mask = np.zeros((8, 10), dtype=bool)
@@ -159,7 +160,7 @@ def test_mask_to_tensor_resizes_reference_mask_to_target_size() -> None:
 
 
 def test_memory_predictor_adds_target_points_after_reference_masks() -> None:
-    from src.video import MemoryReference, VideoMemoryInference
+    from src.predict import MemoryReference, VideoMemoryInference
 
     class FakeVideoModel:
         image_size = 16
@@ -223,7 +224,7 @@ def test_memory_predictor_adds_target_points_after_reference_masks() -> None:
 
 
 def test_memory_predictor_allows_target_points_without_references() -> None:
-    from src.video import VideoMemoryInference
+    from src.predict import VideoMemoryInference
 
     class FakeVideoModel:
         image_size = 16
@@ -277,7 +278,7 @@ def test_memory_predictor_allows_target_points_without_references() -> None:
 
 
 def test_memory_predictor_can_combine_reference_memory_with_target_points() -> None:
-    from src.video import MemoryReference, VideoMemoryInference
+    from src.predict import MemoryReference, VideoMemoryInference
 
     class FakeVideoModel:
         image_size = 16

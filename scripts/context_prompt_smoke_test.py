@@ -12,11 +12,14 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.video_memory_reference import ReferenceMaskResult, build_reference_mask
-from scripts.video_memory_reference import predict_sam_mask_from_prompts
-from src.context.matcher import ContextMatcher
-from src.context.postprocess import context_prediction_to_full_mask
-from src.context.types import ContextReference
+from scripts.video_memory_reference import (
+    build_reference_mask,
+    predict_sam_mask_from_prompts,
+    ReferenceMaskResult,
+)
+from src.predict.reference.matcher import ContextMatcher
+from src.predict.reference.postprocess import context_prediction_to_full_mask
+from src.types import ContextReference
 
 
 def parse_args() -> argparse.Namespace:

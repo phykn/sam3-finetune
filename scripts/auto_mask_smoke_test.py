@@ -10,8 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.masks.generator import AutomaticMaskGenerator
-from src.masks.proposals import (
+from src.predict.masks.generator import AutomaticMaskGenerator
+from src.predict.masks.proposals import (
     count_proposals_by_crop_grid,
     save_proposal_grid,
     save_proposal_overlay,

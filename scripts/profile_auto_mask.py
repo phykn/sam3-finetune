@@ -15,14 +15,14 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.masks.generator import AutomaticMaskGenerator
-from src.masks.geometry import (
+from src.predict.masks.generator import AutomaticMaskGenerator
+from src.predict.masks.geometry import (
     build_point_grid,
     crop_image,
     generate_crop_boxes,
     image_size,
 )
-from src.masks.proposals import count_proposals_by_crop_grid
+from src.predict.masks.proposals import count_proposals_by_crop_grid
 
 
 @dataclass
@@ -227,9 +227,9 @@ def install_timed_predict_masks(profiler: StageProfiler, mask_decoder: Any) -> N
                     assert image_embeddings.shape[0] == tokens.shape[0]
                     src = image_embeddings
                 src = src + dense_prompt_embeddings
-                assert image_pe.size(0) == 1, (
-                    "image_pe should have size 1 in batch dim (from `get_dense_pe()`)"
-                )
+                assert (
+                    image_pe.size(0) == 1
+                ), "image_pe should have size 1 in batch dim (from `get_dense_pe()`)"
                 pos_src = torch.repeat_interleave(image_pe, tokens.shape[0], dim=0)
                 b, c, h, w = src.shape
 

@@ -1,8 +1,6 @@
 import numpy as np
 import torch
-
-from src.image.types import Sam3ImageEmbedding
-from src.masks.types import MaskInstance, ReferenceExample
+from src.types import MaskInstance, ReferenceExample, Sam3ImageEmbedding
 
 
 def _embedding_from_feature_map(feature_map: torch.Tensor) -> Sam3ImageEmbedding:
@@ -40,7 +38,7 @@ def _candidate(
 
 
 def test_reference_guided_rerank_prefers_candidates_matching_reference_features():
-    from src.context.reference_guided import ReferenceGuidedMaskGenerator
+    from src.predict.reference.guided import ReferenceGuidedMaskGenerator
 
     reference_features = torch.zeros(2, 4, 4, dtype=torch.float32)
     reference_features[0, 1:3, 1:3] = 3.0
@@ -86,7 +84,7 @@ def test_reference_guided_rerank_prefers_candidates_matching_reference_features(
 
 
 def test_reference_guided_generator_wraps_base_automatic_generator():
-    from src.context.reference_guided import ReferenceGuidedMaskGenerator
+    from src.predict.reference.guided import ReferenceGuidedMaskGenerator
 
     class FakeBaseGenerator:
         def __init__(self) -> None:
@@ -132,7 +130,7 @@ def test_reference_guided_generator_wraps_base_automatic_generator():
 
 
 def test_reference_guided_rerank_rejects_mixed_reference_concepts():
-    from src.context.reference_guided import ReferenceGuidedMaskGenerator
+    from src.predict.reference.guided import ReferenceGuidedMaskGenerator
 
     mask = np.ones((40, 40), dtype=bool)
     features = torch.zeros(2, 4, 4, dtype=torch.float32)

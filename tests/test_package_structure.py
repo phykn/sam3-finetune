@@ -5,17 +5,28 @@ def test_shared_modules_are_grouped_by_responsibility() -> None:
     root = Path(__file__).resolve().parents[1]
 
     for path in (
-        "src/nn/activation_checkpoint.py",
-        "src/nn/decoder.py",
-        "src/nn/encoder.py",
-        "src/nn/fused.py",
-        "src/nn/modules.py",
-        "src/nn/position.py",
+        "src/types.py",
+        "src/model/nn/activation_checkpoint.py",
+        "src/model/nn/decoder.py",
+        "src/model/nn/encoder.py",
+        "src/model/nn/fused.py",
+        "src/model/nn/modules.py",
+        "src/model/nn/position.py",
+        "src/model/backbone/vit.py",
+        "src/model/sam/prompt_encoder.py",
+        "src/model/image/builder.py",
+        "src/model/grounding/builder.py",
+        "src/model/video/builder.py",
+        "src/predict/image.py",
+        "src/predict/masks/generator.py",
+        "src/predict/reference/matcher.py",
+        "src/predict/grounding/inference.py",
+        "src/predict/video.py",
+        "src/checkpoint/loader.py",
+        "src/transforms/image.py",
+        "src/io/video.py",
         "src/ops/box.py",
         "src/data/structures.py",
-        "src/image/builder.py",
-        "src/image/predictor.py",
-        "src/image/types.py",
     ):
         assert (root / path).is_file()
 
@@ -30,5 +41,19 @@ def test_shared_modules_are_grouped_by_responsibility() -> None:
         "data_misc.py",
         "builder.py",
         "predictor.py",
+        "checkpoint.py",
+        "transforms.py",
+        "io_utils.py",
     ):
         assert not (root / "src" / filename).exists()
+    for dirname in (
+        "backbone",
+        "sam",
+        "nn",
+        "image",
+        "masks",
+        "context",
+        "grounding",
+        "video",
+    ):
+        assert not (root / "src" / dirname).exists()

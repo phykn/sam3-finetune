@@ -1,7 +1,6 @@
 import torch
-
-from src.image import build_model
-from src.backbone.image_encoder import InteractiveImageEncoder
+from src.model.backbone.image_encoder import InteractiveImageEncoder
+from src.model.image import build_model
 
 
 class _FakeBackbone(torch.nn.Module):

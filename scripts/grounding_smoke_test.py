@@ -12,11 +12,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.grounding_postprocess import (
+from src.predict.grounding.inference import GroundingInference
+from src.predict.grounding.postprocess import (
     filter_grounding_prediction,
     label_grounding_prediction,
 )
-from src.grounding.inference import GroundingInference
 
 
 def parse_args() -> argparse.Namespace:
