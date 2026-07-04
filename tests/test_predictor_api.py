@@ -2,7 +2,8 @@ import numpy as np
 import torch
 from PIL import Image
 
-from src.predictor import Sam3ImageEmbedding, Sam3Predictor, Sam3PromptBatch
+from src.data.prediction import Sam3ImageEmbedding, Sam3PromptBatch
+from src.predictor import Sam3Predictor
 
 
 class FakePromptEncoder(torch.nn.Module):
@@ -66,6 +67,26 @@ class FakeModel(torch.nn.Module):
                 torch.zeros(batch_size, 64, 144, 144),
             ],
         }
+
+
+def test_package_public_surface_exposes_only_main_predictor():
+    import src
+    import src.predictor as predictor_module
+
+    assert src.Sam3Predictor is Sam3Predictor
+    assert not hasattr(predictor_module, "Sam3ImageEmbedding")
+    assert not hasattr(predictor_module, "Sam3PromptBatch")
+    for name in (
+        "Sam3PromptBatch",
+        "AutomaticMaskGenerator",
+        "ContextMatcher",
+        "VideoMemoryInference",
+        "GroundingInference",
+        "VisualLanguageCache",
+        "build_video_memory_model",
+        "filter_grounding_prediction",
+    ):
+        assert not hasattr(src, name)
 
 
 def test_predictor_accepts_box_and_returns_numpy_outputs():

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import argparse
 import json
 import sys
@@ -12,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.memory_predictor import Sam3MemoryPredictor, Sam3MemoryReference
+from src.video.memory_inference import VideoMemoryInference, MemoryReference
 from scripts.video_memory_reference import build_reference_mask, make_box_mask
 
 
@@ -111,7 +109,7 @@ def mask_iou(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def run_case(
-    predictor: Sam3MemoryPredictor,
+    predictor: VideoMemoryInference,
     name: str,
     reference_image: Image.Image,
     target_image: Image.Image,
@@ -122,7 +120,7 @@ def run_case(
     output_dir: Path,
 ) -> tuple[dict[str, object], np.ndarray]:
     references = [
-        Sam3MemoryReference(image=reference_image, mask=reference_mask, obj_id=obj_id)
+        MemoryReference(image=reference_image, mask=reference_mask, obj_id=obj_id)
         for _ in range(reference_repeat)
     ]
     prediction = predictor.predict(target_image=target_image, references=references)
@@ -175,7 +173,7 @@ def main() -> None:
         control_reference_overlay_path
     )
 
-    predictor = Sam3MemoryPredictor.from_checkpoint(
+    predictor = VideoMemoryInference.from_checkpoint(
         args.checkpoint,
         device=args.device,
     )

@@ -79,6 +79,9 @@ These instructions apply to the whole `D:\code\sam3` workspace.
 
 - Do not use Hugging Face for the new `src/` rewrite. Load weights only from
   explicit local paths, normally under `weight/`.
+- For no-text image grounding in `src/`, do not load the VLM/text encoder at
+  runtime. Use a precomputed cached `"visual"` language feature tensor under
+  `weight/` and inject it into the grounding backbone output.
 
 ## Commands
 
@@ -118,9 +121,16 @@ These instructions apply to the whole `D:\code\sam3` workspace.
 
 ## Coding Guidelines
 
-- Preserve upstream style and file headers. Many Python files start with Meta
-  copyright notices and `# pyre-unsafe`; keep them unless a deliberate cleanup
-  requires otherwise.
+- Preserve upstream style and file headers in `sam3-main/` reference work. For
+  new `src/` rewrite code, do not add Meta copyright headers or `# pyre-unsafe`.
+- For new `src/` rewrite code, do not add `__all__`,
+  `from __future__ import annotations`, or similar module-level boilerplate
+  unless the user explicitly asks for it.
+- Write comments only when they explain why a non-obvious choice exists or when
+  they clarify tensor shapes around non-trivial reshape, permute, attention, or
+  batching code. Do not add note-taking comments or comments that merely restate
+  non-shape code. Delete such comments when touching nearby code, with no
+  exception for large files or copied reference code in `src/`.
 - Keep changes narrowly scoped. This is a large model repository with expensive
   inference and training paths; avoid incidental refactors across model,
   training, and eval boundaries.

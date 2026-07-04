@@ -14,3 +14,10 @@ timm
 einops
 opencv-python
 pytest
+
+# Needed only for generating the cached "visual" language feature from sam3-main.
+triton-windows; platform_system == "Windows"
+pycocotools
+psutil
+ftfy
+regex

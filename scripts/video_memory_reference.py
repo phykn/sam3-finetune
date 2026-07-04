@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 import gc
 from contextlib import nullcontext
@@ -93,6 +92,97 @@ def build_reference_mask(
     )
 
 
+def make_point_prompt_arrays(
+    positive_points: Sequence[Sequence[float]] | None,
+    negative_points: Sequence[Sequence[float]] | None = None,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    points: list[list[float]] = []
+    labels: list[int] = []
+    for point in positive_points or ():
+        if len(point) != 2:
+            raise ValueError("points must contain x and y")
+        points.append([float(point[0]), float(point[1])])
+        labels.append(1)
+    for point in negative_points or ():
+        if len(point) != 2:
+            raise ValueError("points must contain x and y")
+        points.append([float(point[0]), float(point[1])])
+        labels.append(0)
+    if not points:
+        return None, None
+    return (
+        np.asarray(points, dtype=np.float32),
+        np.asarray(labels, dtype=np.int64),
+    )
+
+
+def predict_sam_mask_from_prompts(
+    image: Image.Image,
+    *,
+    checkpoint: str | Path,
+    device: str,
+    positive_points: Sequence[Sequence[float]] | None = None,
+    negative_points: Sequence[Sequence[float]] | None = None,
+    box: Sequence[int] | None = None,
+) -> ReferenceMaskResult:
+    import torch
+
+    from src.predictor import Sam3Predictor
+
+    point_coords, point_labels = make_point_prompt_arrays(
+        positive_points=positive_points,
+        negative_points=negative_points,
+    )
+    box_array = None if box is None else np.asarray(resolve_box(image, box), dtype=np.float32)
+    if point_coords is None and box_array is None:
+        raise ValueError("at least one point or box prompt is required")
+
+    predictor = None
+    try:
+        predictor = Sam3Predictor.from_checkpoint(checkpoint, device=device)
+        device_type = torch.device(device).type
+        autocast_context = (
+            torch.autocast(device_type="cuda", dtype=torch.float16)
+            if device_type == "cuda"
+            else nullcontext()
+        )
+        with autocast_context:
+            predictor.set_image(image)
+            masks, scores, low_res_masks = predictor.predict(
+                point_coords=point_coords,
+                point_labels=point_labels,
+                box=box_array,
+                multimask_output=True,
+            )
+            mask, score, selected_index = select_best_mask(masks, scores)
+            low_res = np.asarray(low_res_masks).reshape(
+                -1, *np.asarray(low_res_masks).shape[-2:]
+            )[selected_index]
+            refined_masks, refined_scores, _refined_low_res = predictor.predict(
+                point_coords=point_coords,
+                point_labels=point_labels,
+                box=box_array,
+                mask_input=low_res,
+                multimask_output=False,
+            )
+            refined_mask, refined_score, _refined_index = select_best_mask(
+                refined_masks,
+                refined_scores,
+            )
+        return ReferenceMaskResult(
+            mask=refined_mask,
+            source="sam_prompt",
+            score=score,
+            selected_index=selected_index,
+            refined_score=refined_score,
+        )
+    finally:
+        del predictor
+        gc.collect()
+        if "torch" in locals() and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
 def predict_sam_mask_from_box(
     image: Image.Image,
     box: Sequence[int],
@@ -124,6 +214,7 @@ def predict_sam_mask_from_box(
                 -1, *np.asarray(low_res_masks).shape[-2:]
             )[selected_index]
             refined_masks, refined_scores, _refined_low_res = predictor.predict(
+                box=box_array,
                 mask_input=low_res,
                 multimask_output=False,
             )

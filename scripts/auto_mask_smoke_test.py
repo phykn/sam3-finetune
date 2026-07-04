@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 import argparse
 import sys
@@ -12,8 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.auto_mask_generator import (
-    Sam3AutomaticMaskGenerator,
+from src.masks.generator import AutomaticMaskGenerator
+from src.masks.proposals import (
     count_proposals_by_crop_grid,
     save_proposal_grid,
     save_proposal_overlay,
@@ -64,7 +63,7 @@ def main() -> None:
         if args.prompt_batch_size is None
         else args.prompt_batch_size
     )
-    generator = Sam3AutomaticMaskGenerator.from_checkpoint(
+    generator = AutomaticMaskGenerator.from_checkpoint(
         checkpoint_path,
         device="cuda",
         points_per_side=args.points_per_side,

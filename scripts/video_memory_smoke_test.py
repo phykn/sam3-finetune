@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import argparse
 import sys
 from pathlib import Path
@@ -11,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.memory_predictor import Sam3MemoryPredictor, Sam3MemoryReference
+from src.video.memory_inference import VideoMemoryInference, MemoryReference
 from scripts.video_memory_reference import ReferenceMaskResult, build_reference_mask
 
 
@@ -78,6 +76,15 @@ def parse_args() -> argparse.Namespace:
         metavar=("X", "Y"),
         default=None,
         help="Optional positive point on the target image in original pixels.",
+    )
+    parser.add_argument(
+        "--target-point-mode",
+        choices=("interaction", "memory"),
+        default="interaction",
+        help=(
+            "interaction stores the target point as a conditioning prompt; memory "
+            "combines reference memory propagation with the target point."
+        ),
     )
     parser.add_argument(
         "--output",
@@ -159,11 +166,11 @@ def main() -> None:
         reference_overlay_path = None
 
     references = [
-        Sam3MemoryReference(image=image, mask=result.mask, obj_id=args.obj_id)
+        MemoryReference(image=image, mask=result.mask, obj_id=args.obj_id)
         for image, result in zip(reference_images, mask_results)
     ]
 
-    predictor = Sam3MemoryPredictor.from_checkpoint(
+    predictor = VideoMemoryInference.from_checkpoint(
         args.checkpoint,
         device=args.device,
     )
@@ -179,6 +186,7 @@ def main() -> None:
         references=references,
         target_point_coords=target_point_coords,
         target_point_labels=target_point_labels,
+        target_point_mode=args.target_point_mode,
     )
 
     if prediction.masks.size == 0:
@@ -205,6 +213,7 @@ def main() -> None:
             if reference_overlay_path is not None
             else None,
             "target_point": args.target_point,
+            "target_point_mode": args.target_point_mode,
             "loaded_keys": predictor.load_report.loaded_keys
             if predictor.load_report
             else None,

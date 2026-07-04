@@ -1,10 +1,9 @@
-from __future__ import annotations
-
 import numpy as np
 from PIL import Image
 
 from scripts.video_memory_reference import (
     build_reference_mask,
+    predict_sam_mask_from_box,
     resolve_box,
     select_best_mask,
 )
@@ -59,3 +58,52 @@ def test_resolve_box_defaults_to_center_region() -> None:
     image = Image.new("RGB", (100, 80), color=(0, 0, 0))
 
     assert resolve_box(image, None) == [25, 16, 75, 68]
+
+
+def test_predict_sam_mask_from_box_keeps_box_during_refinement(monkeypatch) -> None:
+    import src.predictor
+
+    class FakePredictor:
+        instances = []
+
+        def __init__(self) -> None:
+            self.calls = []
+            FakePredictor.instances.append(self)
+
+        @classmethod
+        def from_checkpoint(cls, checkpoint, device):
+            return cls()
+
+        def set_image(self, image):
+            self.image = image
+
+        def predict(self, **kwargs):
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                masks = np.zeros((1, 3, 4, 6), dtype=bool)
+                masks[0, 1, 1:3, 2:5] = True
+                scores = np.array([[0.1, 0.9, 0.2]], dtype=np.float32)
+                low_res = np.zeros((1, 3, 2, 2), dtype=np.float32)
+                low_res[0, 1] = 1.0
+                return masks, scores, low_res
+            masks = np.zeros((1, 1, 4, 6), dtype=bool)
+            masks[0, 0, 1:3, 2:5] = True
+            scores = np.array([[0.8]], dtype=np.float32)
+            low_res = np.zeros((1, 1, 2, 2), dtype=np.float32)
+            return masks, scores, low_res
+
+    monkeypatch.setattr(src.predictor, "Sam3Predictor", FakePredictor)
+    image = Image.new("RGB", (6, 4), color=(0, 0, 0))
+
+    result = predict_sam_mask_from_box(
+        image=image,
+        box=[1, 1, 5, 3],
+        checkpoint="checkpoint.pt",
+        device="cpu",
+    )
+
+    fake = FakePredictor.instances[-1]
+    np.testing.assert_array_equal(fake.calls[0]["box"], np.array([1, 1, 5, 3]))
+    np.testing.assert_array_equal(fake.calls[1]["box"], np.array([1, 1, 5, 3]))
+    assert fake.calls[1]["mask_input"].shape == (2, 2)
+    assert result.source == "sam"

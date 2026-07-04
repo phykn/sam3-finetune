@@ -1,7 +1,5 @@
-from __future__ import annotations
 
 from contextlib import nullcontext
-from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Sequence
 
@@ -12,23 +10,9 @@ from PIL import Image
 
 from .builder import build_model
 from .checkpoint import LoadReport
+from .data.prediction import Sam3ImageEmbedding as _Sam3ImageEmbedding
+from .data.prediction import Sam3PromptBatch as _Sam3PromptBatch
 from .transforms import Sam3Transforms
-
-
-@dataclass(frozen=True)
-class Sam3ImageEmbedding:
-    image_embed: torch.Tensor
-    high_res_features: tuple[torch.Tensor, ...]
-    orig_hw: tuple[int, int]
-
-
-@dataclass(frozen=True)
-class Sam3PromptBatch:
-    embedding: Sam3ImageEmbedding
-    point_coords: np.ndarray | None = None
-    point_labels: np.ndarray | None = None
-    box: np.ndarray | None = None
-    mask_input: np.ndarray | torch.Tensor | None = None
 
 
 class Sam3Predictor:
@@ -42,7 +26,7 @@ class Sam3Predictor:
         self.model = model.to(self.device).eval()
         self.transforms = Sam3Transforms(resolution=1008, mask_threshold=0.0)
         self.load_report = load_report
-        self._embedding: Sam3ImageEmbedding | None = None
+        self._embedding: _Sam3ImageEmbedding | None = None
 
     @classmethod
     def from_checkpoint(
@@ -57,7 +41,7 @@ class Sam3Predictor:
     def set_image(self, image: Image.Image | np.ndarray) -> None:
         self.set_image_embedding(self.encode_image(image))
 
-    def set_image_embedding(self, embedding: Sam3ImageEmbedding) -> None:
+    def set_image_embedding(self, embedding: _Sam3ImageEmbedding) -> None:
         self._embedding = embedding
 
     def encode_image_tensor_batch(
@@ -66,7 +50,7 @@ class Sam3Predictor:
         orig_hws: Sequence[tuple[int, int]],
         *,
         inference: bool = True,
-    ) -> list[Sam3ImageEmbedding]:
+    ) -> list[_Sam3ImageEmbedding]:
         if input_tensor.ndim != 4 or input_tensor.shape[0] == 0:
             raise ValueError("input_tensor must be a non-empty BCHW batch")
         if input_tensor.shape[0] != len(orig_hws):
@@ -78,10 +62,10 @@ class Sam3Predictor:
 
         image_embed = features["image_embed"]
         high_res_features = tuple(features["high_res_features"])
-        embeddings: list[Sam3ImageEmbedding] = []
+        embeddings: list[_Sam3ImageEmbedding] = []
         for index, orig_hw in enumerate(orig_hws):
             embeddings.append(
-                Sam3ImageEmbedding(
+                _Sam3ImageEmbedding(
                     image_embed=image_embed[index : index + 1],
                     high_res_features=tuple(
                         feature[index : index + 1] for feature in high_res_features
@@ -96,7 +80,7 @@ class Sam3Predictor:
         image: Image.Image | np.ndarray,
         *,
         inference: bool = True,
-    ) -> Sam3ImageEmbedding:
+    ) -> _Sam3ImageEmbedding:
         return self.encode_image_batch([image], inference=inference)[0]
 
     def encode_image_batch(
@@ -104,7 +88,7 @@ class Sam3Predictor:
         images: Sequence[Image.Image | np.ndarray],
         *,
         inference: bool = True,
-    ) -> list[Sam3ImageEmbedding]:
+    ) -> list[_Sam3ImageEmbedding]:
         if not images:
             raise ValueError("images batch must be non-empty")
         tensors: list[torch.Tensor] = []
@@ -145,7 +129,7 @@ class Sam3Predictor:
     @torch.inference_mode()
     def predict_from_embedding(
         self,
-        embedding: Sam3ImageEmbedding,
+        embedding: _Sam3ImageEmbedding,
         point_coords: np.ndarray | None = None,
         point_labels: np.ndarray | None = None,
         box: np.ndarray | None = None,
@@ -185,7 +169,7 @@ class Sam3Predictor:
     @torch.inference_mode()
     def predict_from_embedding_batches(
         self,
-        prompt_batches: Sequence[Sam3PromptBatch],
+        prompt_batches: Sequence[_Sam3PromptBatch],
         multimask_output: bool = True,
         return_logits: bool = False,
     ) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
@@ -198,7 +182,7 @@ class Sam3Predictor:
         high_res_parts: list[list[torch.Tensor]] | None = None
         split_sizes: list[int] = []
         orig_hws: list[tuple[int, int]] = []
-        embeddings: list[Sam3ImageEmbedding] = []
+        embeddings: list[_Sam3ImageEmbedding] = []
         sparse_token_count: int | None = None
 
         for prompt_batch in prompt_batches:
@@ -284,7 +268,7 @@ class Sam3Predictor:
 
     def _prepare_prompt_tensors(
         self,
-        embedding: Sam3ImageEmbedding,
+        embedding: _Sam3ImageEmbedding,
         point_coords: np.ndarray | None = None,
         point_labels: np.ndarray | None = None,
         box: np.ndarray | None = None,

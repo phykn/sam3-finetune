@@ -1,16 +1,14 @@
-from __future__ import annotations
-
 import torch
 import torch.nn as nn
 
 from .checkpoint import LoadReport, load_weights
-from .image_encoder import InteractiveImageEncoder
-from .mask_decoder import MaskDecoder
-from .neck import Sam3TriViTDetNeck
-from .position_encoding import PositionEmbeddingSine
-from .prompt_encoder import PromptEncoder
-from .transformer import TwoWayTransformer
-from .vit import ViT
+from .backbone.vit import ViT
+from .backbone.neck import Sam3TriViTDetNeck
+from .backbone.image_encoder import InteractiveImageEncoder
+from .nn.position import PositionEmbeddingSine
+from .sam.mask_decoder import MaskDecoder
+from .sam.prompt_encoder import PromptEncoder
+from .sam.transformer import TwoWayTransformer
 
 
 class Sam3PromptedSegmenter(nn.Module):

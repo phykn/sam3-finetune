@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 import argparse
 import sys
@@ -17,14 +16,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.auto_mask_generator import (
-    Sam3AutomaticMaskGenerator,
-    _crop_image,
-    _image_size,
-    build_point_grid,
-    count_proposals_by_crop_grid,
-    generate_crop_boxes,
-)
+from src.masks.generator import AutomaticMaskGenerator
+from src.masks.geometry import build_point_grid, crop_image, generate_crop_boxes, image_size
+from src.masks.proposals import count_proposals_by_crop_grid
 
 
 @dataclass
@@ -78,7 +72,7 @@ class StageProfiler:
             )
 
 
-class ProfilingAutomaticMaskGenerator(Sam3AutomaticMaskGenerator):
+class ProfilingAutomaticMaskGenerator(AutomaticMaskGenerator):
     def __init__(self, *args: Any, profiler: StageProfiler, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.profiler = profiler
@@ -86,7 +80,7 @@ class ProfilingAutomaticMaskGenerator(Sam3AutomaticMaskGenerator):
 
     def generate(self, image: Image.Image):
         with self.profiler.stage("generate_total"):
-            width, height = _image_size(image)
+            width, height = image_size(image)
             point_grid_cache = {}
             proposals = []
             for crop_grid, points_per_side in self._crop_grid_config():
@@ -106,7 +100,7 @@ class ProfilingAutomaticMaskGenerator(Sam3AutomaticMaskGenerator):
                 for crop_index, crop_box in enumerate(crop_boxes):
                     with self.profiler.stage("crop_image"):
                         crop_jobs.append(
-                            (crop_index, crop_box, _crop_image(image, crop_box))
+                            (crop_index, crop_box, crop_image(image, crop_box))
                         )
 
                 proposals.extend(

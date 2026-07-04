@@ -1,23 +1,37 @@
 import numpy as np
 from PIL import Image
 
-from src.auto_mask_generator import (
-    MaskProposal,
-    Sam3AutomaticMaskGenerator,
+from src.masks.generator import AutomaticMaskGenerator
+from src.masks.geometry import (
     batched,
-    box_area,
-    box_iou,
     build_point_grid,
     calculate_stability_score,
-    count_proposals_by_crop_grid,
     generate_crop_boxes,
     mask_to_box,
-    nms_boxes,
+)
+from src.ops.box import box_area_xyxy, box_iou_xyxy, nms_boxes_xyxy
+from src.masks.proposals import (
+    MaskProposal,
+    count_proposals_by_crop_grid,
     proposal_mask_image,
     proposal_to_full_mask,
     save_proposal_grid,
     save_proposal_overlay,
 )
+
+
+def test_mask_generator_lives_under_masks_package() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    assert (root / "src" / "masks" / "generator.py").is_file()
+    assert not (root / "src" / "auto_mask_generator.py").exists()
+    assert AutomaticMaskGenerator.__module__ == "src.masks.generator"
+
+
+def test_mask_helpers_are_split_by_responsibility() -> None:
+    assert build_point_grid.__module__ == "src.masks.geometry"
+    assert MaskProposal.__module__ == "src.masks.proposals"
 
 
 def test_build_point_grid_centers_points_inside_unit_cells():
@@ -74,9 +88,9 @@ def test_box_iou_and_nms_boxes_remove_lower_scoring_duplicate():
     )
     scores = np.array([0.9, 0.8, 0.7], dtype=np.float32)
 
-    assert box_area((0, 0, 10, 10)) == 100
-    assert box_iou((0, 0, 10, 10), (20, 20, 30, 30)) == 0.0
-    assert nms_boxes(boxes, scores, iou_threshold=0.6) == [0, 2]
+    assert box_area_xyxy((0, 0, 10, 10)) == 100
+    assert box_iou_xyxy((0, 0, 10, 10), (20, 20, 30, 30)) == 0.0
+    assert nms_boxes_xyxy(boxes, scores, iou_threshold=0.6) == [0, 2]
 
 
 def test_batched_splits_sequence_without_dropping_items():
@@ -251,7 +265,7 @@ class FakePredictor:
 
 def test_generator_batches_grid_points_and_returns_sorted_proposals():
     predictor = FakePredictor()
-    generator = Sam3AutomaticMaskGenerator(
+    generator = AutomaticMaskGenerator(
         predictor,
         points_per_side=2,
         points_per_batch=3,
@@ -277,7 +291,7 @@ def test_generator_batches_grid_points_and_returns_sorted_proposals():
 
 def test_generator_filters_by_score_stability_area_and_max_masks():
     predictor = FakePredictor()
-    generator = Sam3AutomaticMaskGenerator(
+    generator = AutomaticMaskGenerator(
         predictor,
         points_per_side=2,
         points_per_batch=4,
@@ -412,7 +426,7 @@ class EdgeTouchingFakePredictor:
 
 def test_generator_rejects_mismatched_crop_lists():
     try:
-        Sam3AutomaticMaskGenerator(
+        AutomaticMaskGenerator(
             CropAwareFakePredictor(),
             crop_grids=[1, 2],
             crop_points_per_side=[4],
@@ -425,7 +439,7 @@ def test_generator_rejects_mismatched_crop_lists():
 
 def test_generator_runs_explicit_crop_grids_and_maps_to_full_image():
     predictor = CropAwareFakePredictor()
-    generator = Sam3AutomaticMaskGenerator(
+    generator = AutomaticMaskGenerator(
         predictor,
         points_per_batch=8,
         pred_iou_thresh=0.0,
@@ -458,7 +472,7 @@ def test_generator_runs_explicit_crop_grids_and_maps_to_full_image():
 
 def test_generator_filters_internal_crop_edge_masks():
     predictor = EdgeTouchingFakePredictor()
-    generator = Sam3AutomaticMaskGenerator(
+    generator = AutomaticMaskGenerator(
         predictor,
         points_per_batch=8,
         pred_iou_thresh=0.0,
@@ -477,7 +491,7 @@ def test_generator_filters_internal_crop_edge_masks():
 
 def test_generator_rejects_invalid_crop_encode_batch_size():
     try:
-        Sam3AutomaticMaskGenerator(CropAwareFakePredictor(), crop_encode_batch_size=0)
+        AutomaticMaskGenerator(CropAwareFakePredictor(), crop_encode_batch_size=0)
     except ValueError as exc:
         assert "crop_encode_batch_size" in str(exc)
     else:
@@ -486,7 +500,7 @@ def test_generator_rejects_invalid_crop_encode_batch_size():
 
 def test_generator_batches_crop_encoding_without_changing_outputs():
     predictor = CropAwareFakePredictor()
-    generator = Sam3AutomaticMaskGenerator(
+    generator = AutomaticMaskGenerator(
         predictor,
         points_per_batch=8,
         pred_iou_thresh=0.0,
@@ -508,7 +522,7 @@ def test_generator_batches_crop_encoding_without_changing_outputs():
 
 def test_generator_batches_prompt_decoding_without_changing_outputs():
     predictor = BatchDecodeCropAwareFakePredictor()
-    generator = Sam3AutomaticMaskGenerator(
+    generator = AutomaticMaskGenerator(
         predictor,
         points_per_batch=2,
         pred_iou_thresh=0.0,
@@ -537,7 +551,7 @@ def test_generator_batches_prompt_decoding_without_changing_outputs():
 
 def test_generator_can_cross_crop_prompt_decode_when_enabled():
     predictor = BatchDecodeCropAwareFakePredictor()
-    generator = Sam3AutomaticMaskGenerator(
+    generator = AutomaticMaskGenerator(
         predictor,
         points_per_batch=2,
         pred_iou_thresh=0.0,
