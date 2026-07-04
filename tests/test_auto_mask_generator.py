@@ -9,6 +9,7 @@ from src.auto_mask_generator import (
     box_iou,
     build_point_grid,
     calculate_stability_score,
+    count_proposals_by_crop_grid,
     generate_crop_boxes,
     mask_to_box,
     nms_boxes,
@@ -321,3 +322,40 @@ def test_generator_filters_internal_crop_edge_masks():
     proposals = generator.generate(Image.new("RGB", (8, 8), color=(0, 0, 0)))
 
     assert proposals == []
+
+
+def test_count_proposals_by_crop_grid():
+    proposals = [
+        MaskProposal(
+            segmentation=np.zeros((2, 2), dtype=bool),
+            bbox=(0, 0, 1, 1),
+            area=1,
+            predicted_iou=1.0,
+            stability_score=1.0,
+            point_coords=(0.5, 0.5),
+            crop_box=(0, 0, 2, 2),
+            crop_grid=1,
+        ),
+        MaskProposal(
+            segmentation=np.zeros((2, 2), dtype=bool),
+            bbox=(0, 0, 1, 1),
+            area=1,
+            predicted_iou=1.0,
+            stability_score=1.0,
+            point_coords=(0.5, 0.5),
+            crop_box=(0, 0, 1, 1),
+            crop_grid=2,
+        ),
+        MaskProposal(
+            segmentation=np.zeros((2, 2), dtype=bool),
+            bbox=(1, 1, 2, 2),
+            area=1,
+            predicted_iou=1.0,
+            stability_score=1.0,
+            point_coords=(1.5, 1.5),
+            crop_box=(1, 1, 2, 2),
+            crop_grid=2,
+        ),
+    ]
+
+    assert count_proposals_by_crop_grid(proposals) == {1: 1, 2: 2}

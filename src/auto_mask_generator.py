@@ -407,6 +407,15 @@ def _touches_internal_crop_edge(
     return touches_left or touches_top or touches_right or touches_bottom
 
 
+def count_proposals_by_crop_grid(
+    proposals: Sequence[MaskProposal],
+) -> dict[int, int]:
+    counts: dict[int, int] = {}
+    for proposal in proposals:
+        counts[proposal.crop_grid] = counts.get(proposal.crop_grid, 0) + 1
+    return dict(sorted(counts.items()))
+
+
 def save_proposal_overlay(
     image: Image.Image,
     proposals: Sequence[MaskProposal],
