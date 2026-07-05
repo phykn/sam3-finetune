@@ -161,6 +161,7 @@ def test_video_modules_live_under_role_packages() -> None:
     assert not (root / "src" / "model" / "video" / "checkpoint.py").exists()
     assert (root / "src" / "model" / "video" / "model.py").is_file()
     assert (root / "src" / "predict" / "next_frame" / "predictor.py").is_file()
+    assert (root / "src" / "predict" / "next_frame" / "video_adapter.py").is_file()
     assert not (root / "src" / "predict" / "video.py").exists()
     assert (root / "src" / "types.py").is_file()
 
@@ -212,6 +213,25 @@ def test_video_modules_live_under_role_packages() -> None:
         assert not (root / "src" / filename).exists()
     assert not (root / "src" / "video" / "memory_inference.py").exists()
     assert not (root / "src" / "video").exists()
+
+
+def test_next_frame_private_video_calls_are_isolated_in_adapter() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    predictor_text = (
+        root / "src" / "predict" / "next_frame" / "predictor.py"
+    ).read_text()
+    adapter_text = (
+        root / "src" / "predict" / "next_frame" / "video_adapter.py"
+    ).read_text()
+
+    assert "._run_single_frame_inference" not in predictor_text
+    assert "._get_orig_video_res_output" not in predictor_text
+    assert "._get_obj_num" not in predictor_text
+    assert "._run_single_frame_inference" in adapter_text
+    assert "._get_orig_video_res_output" in adapter_text
+    assert "._get_obj_num" in adapter_text
 
 
 def test_transformer_attention_allows_math_sdp_fallback(monkeypatch) -> None:

@@ -16,6 +16,7 @@ from ..prompted.transforms import (
     scale_coords,
     to_rgb_pil,
 )
+from .video_adapter import VideoMemoryAdapter
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,7 @@ class NextFramePredictor:
         self.device = torch.device(device)
         self.model = model.to(self.device).eval()
         self.image_size = int(getattr(model, "image_size", 1008))
+        self.video_adapter = VideoMemoryAdapter(self.model, self.device)
 
     @classmethod
     def from_checkpoint(
@@ -272,21 +274,14 @@ class NextFramePredictor:
             "point_coords": points.to(self.device),
             "point_labels": labels.to(self.device),
         }
-        current_out, pred_masks = self.model._run_single_frame_inference(
+        (
+            current_out,
+            video_res_masks,
+        ) = self._video_adapter().run_single_frame_with_memory(
             inference_state=inference_state,
-            output_dict=inference_state["output_dict"],
             frame_idx=frame_idx,
-            batch_size=self.model._get_obj_num(inference_state),
-            is_init_cond_frame=False,
+            obj_idx=obj_idx,
             point_inputs=point_inputs,
-            mask_inputs=None,
-            reverse=False,
-            run_mem_encoder=False,
-            objects_to_interact=[obj_idx],
-        )
-        _low_res_masks, video_res_masks = self.model._get_orig_video_res_output(
-            inference_state,
-            pred_masks,
         )
         masks = (video_res_masks > 0).detach().cpu().numpy()
         scores = current_out["object_score_logits"].detach().float().cpu().numpy()
@@ -296,6 +291,13 @@ class NextFramePredictor:
             masks=masks,
             scores=scores,
         )
+
+    def _video_adapter(self) -> VideoMemoryAdapter:
+        adapter = getattr(self, "video_adapter", None)
+        if adapter is None:
+            adapter = VideoMemoryAdapter(self.model, self.device)
+            self.video_adapter = adapter
+        return adapter
 
     def preprocess_image_sequence(
         self,
