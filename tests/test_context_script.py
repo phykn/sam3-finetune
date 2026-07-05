@@ -126,6 +126,22 @@ def test_summarize_predictions_returns_every_context_prediction():
     assert summary[1]["bbox"] == [4, 4, 7, 7]
 
 
+def test_apply_visual_nms_keeps_best_non_overlapping_predictions():
+    script = load_context_script()
+    predictions = [
+        _prediction((1, 1, 6, 6), score=0.9),
+        _prediction((2, 2, 7, 7), score=0.8),
+        _prediction((7, 1, 9, 3), score=0.7),
+    ]
+
+    kept = script.apply_visual_nms(predictions)
+
+    assert [prediction.bbox for prediction in kept] == [
+        (1, 1, 6, 6),
+        (7, 1, 9, 3),
+    ]
+
+
 def test_predict_reference_mask_uses_stateless_embedding_api():
     script = load_context_script()
     predictor = FakeStatelessPredictor()
@@ -144,13 +160,14 @@ def test_predict_reference_mask_uses_stateless_embedding_api():
     assert not hasattr(predictor, "predict")
 
 
-def test_save_context_visualization_writes_reference_and_target_sheet(tmp_path):
+def test_save_context_visualization_writes_reference_target_and_nms_sheet(tmp_path):
     script = load_context_script()
     reference = Image.new("RGB", (10, 8), (30, 40, 50))
     target = Image.new("RGB", (10, 8), (60, 70, 80))
     reference_mask = np.zeros((8, 10), dtype=bool)
     reference_mask[2:6, 3:9] = True
     predictions = [_prediction((2, 2, 6, 6), score=0.9)]
+    nms_predictions = [_prediction((3, 2, 7, 6), score=0.8)]
     output_path = tmp_path / "context.png"
 
     script.save_context_visualization(
@@ -158,12 +175,12 @@ def test_save_context_visualization_writes_reference_and_target_sheet(tmp_path):
         reference_mask,
         target,
         predictions,
+        nms_predictions,
         output_path,
     )
 
     saved = Image.open(output_path)
-    assert saved.size[0] > reference.width
-    assert saved.size[1] > reference.height
+    assert saved.size == (1380, 416)
 
 
 class FakeStatelessPredictor:

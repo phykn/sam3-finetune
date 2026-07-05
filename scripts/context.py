@@ -13,11 +13,15 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.predict.context.postprocess import context_prediction_to_full_mask
+from src.predict.context.postprocess import (
+    context_prediction_to_full_mask,
+    nms_context_predictions,
+)
 from src.predict.refine import MaskRefiner, select_best_mask
 from src.types import ContextPrediction, ContextReference
 
 REFERENCE_BOX = (270.0, 450.0, 610.0, 900.0)
+VISUAL_NMS_IOU_THRESHOLD = 0.35
 
 
 @dataclass
@@ -154,11 +158,22 @@ def summarize_predictions(
     return summaries
 
 
+def apply_visual_nms(
+    predictions: list[ContextPrediction],
+) -> list[ContextPrediction]:
+    return nms_context_predictions(
+        predictions,
+        iou_threshold=VISUAL_NMS_IOU_THRESHOLD,
+        max_masks=None,
+    )
+
+
 def save_context_visualization(
     reference_image: Image.Image,
     reference_mask: np.ndarray,
     target_image: Image.Image,
     predictions: list[ContextPrediction],
+    nms_predictions: list[ContextPrediction],
     path: Path,
 ) -> None:
     panel_width = 440
@@ -173,9 +188,16 @@ def save_context_visualization(
         target_image,
         predictions,
         panel_width,
+        "target all predictions",
     )
-    panels = [reference_panel, target_panel]
-    canvas_width = padding * 2 + sum(panel.width for panel in panels) + gap
+    nms_panel = _make_prediction_panel(
+        target_image,
+        nms_predictions,
+        panel_width,
+        f"target nms {VISUAL_NMS_IOU_THRESHOLD:.2f}",
+    )
+    panels = [reference_panel, target_panel, nms_panel]
+    canvas_width = padding * 2 + sum(panel.width for panel in panels) + gap * 2
     canvas_height = padding * 2 + max(panel.height for panel in panels)
     canvas = Image.new("RGB", (canvas_width, canvas_height), (246, 246, 242))
     x = padding
@@ -199,6 +221,7 @@ def _make_prediction_panel(
     image: Image.Image,
     predictions: list[ContextPrediction],
     width: int,
+    title: str,
 ) -> Image.Image:
     body = _resize_image(image, width)
     overlay = body.convert("RGBA")
@@ -222,7 +245,7 @@ def _make_prediction_panel(
             f"{index + 1} c={prediction.context_score:.2f}",
             fill=(*color, 255),
         )
-    return _with_header(overlay.convert("RGB"), "target context predictions")
+    return _with_header(overlay.convert("RGB"), title)
 
 
 def _resize_image(image: Image.Image, width: int) -> Image.Image:
@@ -327,12 +350,14 @@ def main(argv: list[str] | None = None) -> None:
             ],
         )
     elapsed = time.perf_counter() - started_at
+    nms_predictions = apply_visual_nms(predictions)
 
     save_context_visualization(
         reference_image,
         reference_mask.mask,
         target_image,
         predictions,
+        nms_predictions,
         paths.output,
     )
 
@@ -352,6 +377,11 @@ def main(argv: list[str] | None = None) -> None:
                 "elapsed_sec": round(elapsed, 3),
                 "prediction_count": len(predictions),
                 "predictions": summarize_predictions(predictions),
+                "visual_nms": {
+                    "iou_threshold": VISUAL_NMS_IOU_THRESHOLD,
+                    "prediction_count": len(nms_predictions),
+                    "predictions": summarize_predictions(nms_predictions),
+                },
                 "output": str(paths.output),
             },
             indent=2,
