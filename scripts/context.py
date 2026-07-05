@@ -13,15 +13,14 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.predict.context.postprocess import (
-    context_prediction_to_full_mask,
-    nms_context_predictions,
-)
+from src.predict.context.postprocess import context_prediction_to_full_mask
 from src.predict.refine import MaskRefiner, select_best_mask
 from src.types import ContextPrediction, ContextReference
 
 REFERENCE_BOX = (270.0, 450.0, 610.0, 900.0)
-VISUAL_NMS_IOU_THRESHOLD = 0.35
+TARGET_POINT = (640.0, 450.0)
+REFERENCE_MASK_COLOR = (255, 0, 110)
+TARGET_POINT_COLOR = (255, 220, 0)
 
 
 @dataclass
@@ -100,6 +99,18 @@ def describe_reference_context() -> dict[str, object]:
     }
 
 
+def target_point_array() -> np.ndarray:
+    return np.asarray([TARGET_POINT], dtype=np.float32)
+
+
+def describe_target_prompt() -> dict[str, object]:
+    x, y = TARGET_POINT
+    return {
+        "type": "point",
+        "points": [{"x": float(x), "y": float(y), "label": 1}],
+    }
+
+
 def predict_reference_mask(
     predictor,
     reference_image: Image.Image,
@@ -158,22 +169,13 @@ def summarize_predictions(
     return summaries
 
 
-def apply_visual_nms(
-    predictions: list[ContextPrediction],
-) -> list[ContextPrediction]:
-    return nms_context_predictions(
-        predictions,
-        iou_threshold=VISUAL_NMS_IOU_THRESHOLD,
-        max_masks=None,
-    )
-
-
 def save_context_visualization(
     reference_image: Image.Image,
     reference_mask: np.ndarray,
     target_image: Image.Image,
-    predictions: list[ContextPrediction],
-    nms_predictions: list[ContextPrediction],
+    image_only_predictions: list[ContextPrediction],
+    point_predictions: list[ContextPrediction],
+    target_point_coords: np.ndarray,
     path: Path,
 ) -> None:
     panel_width = 440
@@ -186,17 +188,18 @@ def save_context_visualization(
     )
     target_panel = _make_prediction_panel(
         target_image,
-        predictions,
+        image_only_predictions,
         panel_width,
-        "target all predictions",
+        "target image only",
     )
-    nms_panel = _make_prediction_panel(
+    point_panel = _make_prediction_panel(
         target_image,
-        nms_predictions,
+        point_predictions,
         panel_width,
-        f"target nms {VISUAL_NMS_IOU_THRESHOLD:.2f}",
+        "target point prompt",
+        target_point_coords=target_point_coords,
     )
-    panels = [reference_panel, target_panel, nms_panel]
+    panels = [reference_panel, target_panel, point_panel]
     canvas_width = padding * 2 + sum(panel.width for panel in panels) + gap * 2
     canvas_height = padding * 2 + max(panel.height for panel in panels)
     canvas = Image.new("RGB", (canvas_width, canvas_height), (246, 246, 242))
@@ -213,7 +216,12 @@ def _make_reference_panel(
     width: int,
 ) -> Image.Image:
     body = _resize_image(image, width)
-    overlay = _overlay_full_mask(body, _resize_mask(mask, body.size), (0, 210, 255), 90)
+    overlay = _overlay_full_mask(
+        body,
+        _resize_mask(mask, body.size),
+        REFERENCE_MASK_COLOR,
+        90,
+    )
     return _with_header(overlay, "reference mask")
 
 
@@ -222,6 +230,8 @@ def _make_prediction_panel(
     predictions: list[ContextPrediction],
     width: int,
     title: str,
+    *,
+    target_point_coords: np.ndarray | None = None,
 ) -> Image.Image:
     body = _resize_image(image, width)
     overlay = body.convert("RGBA")
@@ -245,6 +255,15 @@ def _make_prediction_panel(
             f"{index + 1} c={prediction.context_score:.2f}",
             fill=(*color, 255),
         )
+    if target_point_coords is not None:
+        draw = ImageDraw.Draw(overlay)
+        for x, y in np.asarray(target_point_coords, dtype=np.float32).reshape(-1, 2):
+            px = float(x) * scale_x
+            py = float(y) * scale_y
+            color = (*TARGET_POINT_COLOR, 255)
+            draw.ellipse((px - 6, py - 6, px + 6, py + 6), outline=color, width=3)
+            draw.line((px - 10, py, px + 10, py), fill=color, width=2)
+            draw.line((px, py - 10, px, py + 10), fill=color, width=2)
     return _with_header(overlay.convert("RGB"), title)
 
 
@@ -294,13 +313,13 @@ def _overlay_full_mask(
 def _vis_color(index: int) -> tuple[int, int, int]:
     palette = [
         (230, 57, 70),
-        (42, 157, 143),
-        (69, 123, 157),
+        (67, 97, 238),
         (244, 162, 97),
         (131, 56, 236),
         (255, 190, 11),
-        (6, 214, 160),
         (239, 71, 111),
+        (58, 12, 163),
+        (255, 0, 110),
     ]
     return palette[index % len(palette)]
 
@@ -340,7 +359,7 @@ def main(argv: list[str] | None = None) -> None:
     started_at = time.perf_counter()
     with torch.inference_mode(), autocast_context:
         reference_mask = predict_reference_mask(predictor, reference_image)
-        predictions = matcher.predict(
+        image_only_predictions = matcher.predict(
             target_image=target_image,
             references=[
                 ContextReference(
@@ -349,15 +368,26 @@ def main(argv: list[str] | None = None) -> None:
                 )
             ],
         )
+        target_point_coords = target_point_array()
+        point_predictions = matcher.predict(
+            target_image=target_image,
+            references=[
+                ContextReference(
+                    image=reference_image,
+                    mask=reference_mask.mask,
+                )
+            ],
+            target_point_coords=target_point_coords,
+        )
     elapsed = time.perf_counter() - started_at
-    nms_predictions = apply_visual_nms(predictions)
 
     save_context_visualization(
         reference_image,
         reference_mask.mask,
         target_image,
-        predictions,
-        nms_predictions,
+        image_only_predictions,
+        point_predictions,
+        target_point_coords,
         paths.output,
     )
 
@@ -375,12 +405,14 @@ def main(argv: list[str] | None = None) -> None:
                 "context_input": describe_reference_context(),
                 "reference_mask": summarize_reference_mask(reference_mask),
                 "elapsed_sec": round(elapsed, 3),
-                "prediction_count": len(predictions),
-                "predictions": summarize_predictions(predictions),
-                "visual_nms": {
-                    "iou_threshold": VISUAL_NMS_IOU_THRESHOLD,
-                    "prediction_count": len(nms_predictions),
-                    "predictions": summarize_predictions(nms_predictions),
+                "target_image_only": {
+                    "prediction_count": len(image_only_predictions),
+                    "predictions": summarize_predictions(image_only_predictions),
+                },
+                "target_point_prompt": {
+                    "prompt": describe_target_prompt(),
+                    "prediction_count": len(point_predictions),
+                    "predictions": summarize_predictions(point_predictions),
                 },
                 "output": str(paths.output),
             },

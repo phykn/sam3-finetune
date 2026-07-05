@@ -126,20 +126,29 @@ def test_summarize_predictions_returns_every_context_prediction():
     assert summary[1]["bbox"] == [4, 4, 7, 7]
 
 
-def test_apply_visual_nms_keeps_best_non_overlapping_predictions():
+def test_target_prompt_description_shows_single_positive_point():
     script = load_context_script()
-    predictions = [
-        _prediction((1, 1, 6, 6), score=0.9),
-        _prediction((2, 2, 7, 7), score=0.8),
-        _prediction((7, 1, 9, 3), score=0.7),
-    ]
 
-    kept = script.apply_visual_nms(predictions)
+    prompt = script.describe_target_prompt()
 
-    assert [prediction.bbox for prediction in kept] == [
-        (1, 1, 6, 6),
-        (7, 1, 9, 3),
-    ]
+    assert prompt == {
+        "type": "point",
+        "points": [{"x": 640.0, "y": 450.0, "label": 1}],
+    }
+    np.testing.assert_allclose(
+        script.target_point_array(),
+        np.array([[640.0, 450.0]], dtype=np.float32),
+    )
+
+
+def test_visual_mask_colors_avoid_green_hues():
+    script = load_context_script()
+
+    colors = [script.REFERENCE_MASK_COLOR]
+    colors.extend(script._vis_color(index) for index in range(8))
+
+    for red, green, blue in colors:
+        assert not (green > red and green > blue)
 
 
 def test_predict_reference_mask_uses_stateless_embedding_api():
@@ -160,22 +169,23 @@ def test_predict_reference_mask_uses_stateless_embedding_api():
     assert not hasattr(predictor, "predict")
 
 
-def test_save_context_visualization_writes_reference_target_and_nms_sheet(tmp_path):
+def test_save_context_visualization_writes_image_only_and_point_prompt_sheet(tmp_path):
     script = load_context_script()
     reference = Image.new("RGB", (10, 8), (30, 40, 50))
     target = Image.new("RGB", (10, 8), (60, 70, 80))
     reference_mask = np.zeros((8, 10), dtype=bool)
     reference_mask[2:6, 3:9] = True
-    predictions = [_prediction((2, 2, 6, 6), score=0.9)]
-    nms_predictions = [_prediction((3, 2, 7, 6), score=0.8)]
+    image_only_predictions = [_prediction((2, 2, 6, 6), score=0.9)]
+    point_predictions = [_prediction((3, 2, 7, 6), score=0.8)]
     output_path = tmp_path / "context.png"
 
     script.save_context_visualization(
         reference,
         reference_mask,
         target,
-        predictions,
-        nms_predictions,
+        image_only_predictions,
+        point_predictions,
+        np.array([[5.0, 4.0]], dtype=np.float32),
         output_path,
     )
 
