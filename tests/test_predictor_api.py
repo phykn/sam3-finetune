@@ -1,9 +1,9 @@
-import numpy as np
-import torch
-from PIL import Image
 import importlib
 
+import numpy as np
 import pytest
+import torch
+from PIL import Image
 from src.predict.prompted import Sam3Predictor
 from src.types import Sam3ImageEmbedding, Sam3PromptBatch
 
