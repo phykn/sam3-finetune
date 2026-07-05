@@ -213,12 +213,6 @@ def main() -> None:
             ),
             "target_point": args.target_point,
             "target_point_mode": args.target_point_mode,
-            "loaded_keys": (
-                predictor.load_report.loaded_keys if predictor.load_report else None
-            ),
-            "ignored_keys": (
-                predictor.load_report.ignored_keys if predictor.load_report else None
-            ),
         }
     )
 

@@ -1,7 +1,7 @@
 import numpy as np
 
-from ...metrics.mask import mask_iou
-from ...types import GroundingPrediction
+from ...ops.mask import calc_iou
+from .types import GroundingPrediction
 
 
 def filter_grounding_prediction(
@@ -22,7 +22,7 @@ def filter_grounding_prediction(
         if float(prediction.scores[index]) < float(score_threshold):
             continue
         if mask_nms_thresh is not None and any(
-            mask_iou(prediction.masks[index], prediction.masks[kept]) > mask_nms_thresh
+            calc_iou(prediction.masks[index], prediction.masks[kept]) > mask_nms_thresh
             for kept in selected
         ):
             continue

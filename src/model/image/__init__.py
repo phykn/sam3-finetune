@@ -1,1 +1,1 @@
-from .builder import build_model, Sam3PromptedSegmenter
+from .model import Sam3ImageModel

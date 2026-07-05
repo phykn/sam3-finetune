@@ -1,5 +1,4 @@
 from collections.abc import Sequence
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -7,8 +6,8 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
-from ...types import ContextPrediction, ContextReference, Sam3ImageEmbedding
 from ..image import Sam3Predictor
+from ..image_types import Sam3ImageEmbedding
 from ..masks.geometry import calculate_stability_score, mask_to_box
 from .postprocess import nms_context_predictions
 from .prototype import (
@@ -19,13 +18,7 @@ from .prototype import (
     similarity_map,
 )
 from .scoring import area_ratio_score
-
-
-@dataclass(frozen=True)
-class _ReferenceShapePrior:
-    roi_mask: np.ndarray
-    width_ratio: float
-    height_ratio: float
+from .types import ContextPrediction, ContextReference, ReferenceShapePrior
 
 
 class ContextMatcher:
@@ -99,12 +92,12 @@ class ContextMatcher:
     @classmethod
     def from_checkpoint(
         cls,
-        checkpoint_path: str | Path,
+        path: str | Path,
         device: torch.device | str = "cuda",
         **kwargs,
     ) -> "ContextMatcher":
         return cls(
-            predictor=Sam3Predictor.from_checkpoint(checkpoint_path, device=device),
+            predictor=Sam3Predictor.from_checkpoint(path, device=device),
             **kwargs,
         )
 
@@ -173,7 +166,7 @@ class ContextMatcher:
         self,
         similarity_map: torch.Tensor,
         *,
-        shape_prior: _ReferenceShapePrior | None,
+        shape_prior: ReferenceShapePrior | None,
         target_hw: tuple[int, int],
     ) -> torch.Tensor:
         if self.candidate_score_mode == "point":
@@ -228,7 +221,7 @@ class ContextMatcher:
         similarity_map: torch.Tensor,
         *,
         reference_area_ratio: float,
-        shape_prior: _ReferenceShapePrior | None,
+        shape_prior: ReferenceShapePrior | None,
         max_masks: int,
     ) -> list[ContextPrediction]:
         labels = np.ones((len(point_coords), 1), dtype=np.int64)
@@ -364,7 +357,7 @@ def _target_points_array(
 
 def _shape_anchor_score_map(
     similarity_map: torch.Tensor,
-    shape_prior: _ReferenceShapePrior,
+    shape_prior: ReferenceShapePrior,
     *,
     target_hw: tuple[int, int],
 ) -> torch.Tensor:
@@ -431,7 +424,7 @@ def _ensure_decode_batch_shapes(
 def _reference_shape_prior(
     references: Sequence[ContextReference],
     reference_embeddings: Sequence[Sam3ImageEmbedding],
-) -> _ReferenceShapePrior:
+) -> ReferenceShapePrior:
     reference_index = max(
         range(len(references)),
         key=lambda index: references[index].weight,
@@ -452,7 +445,7 @@ def _reference_shape_prior(
         raise ValueError("reference mask must contain at least one foreground pixel")
     x0, y0, x1, y1 = bbox
     orig_h, orig_w = embedding.orig_hw
-    return _ReferenceShapePrior(
+    return ReferenceShapePrior(
         roi_mask=mask_array[y0:y1, x0:x1].copy(),
         width_ratio=(x1 - x0) / float(orig_w),
         height_ratio=(y1 - y0) / float(orig_h),
@@ -460,7 +453,7 @@ def _reference_shape_prior(
 
 
 def _make_mask_prior_batch(
-    shape_prior: _ReferenceShapePrior,
+    shape_prior: ReferenceShapePrior,
     point_batch: np.ndarray,
     *,
     target_hw: tuple[int, int],

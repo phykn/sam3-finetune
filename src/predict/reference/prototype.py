@@ -1,19 +1,12 @@
 from collections.abc import Sequence
-from dataclasses import dataclass
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 
-from ...types import ContextReference, Sam3ImageEmbedding
+from ..image_types import Sam3ImageEmbedding
 from ..masks.geometry import mask_to_box
-
-
-@dataclass(frozen=True)
-class _ContextPrototype:
-    positive: torch.Tensor
-    negative: torch.Tensor | None
-    reference_area_ratio: float
+from .types import ContextPrototype, ContextReference
 
 
 def build_context_prototype(
@@ -23,7 +16,7 @@ def build_context_prototype(
     feature_layer: str | int,
     negative_context_mode: str,
     negative_context_scale: float,
-) -> _ContextPrototype:
+) -> ContextPrototype:
     positive_sum: torch.Tensor | None = None
     negative_sum: torch.Tensor | None = None
     total_weight = 0.0
@@ -68,7 +61,7 @@ def build_context_prototype(
         if negative_sum is not None and negative_total_weight > 0.0
         else None
     )
-    return _ContextPrototype(
+    return ContextPrototype(
         positive=F.normalize(positive_sum / total_weight, dim=0),
         negative=negative_prototype,
         reference_area_ratio=weighted_area_ratio / total_weight,
@@ -92,7 +85,7 @@ def select_feature(
 
 def similarity_map(
     target_features: torch.Tensor,
-    prototype: _ContextPrototype,
+    prototype: ContextPrototype,
     *,
     negative_context_weight: float,
 ) -> torch.Tensor:

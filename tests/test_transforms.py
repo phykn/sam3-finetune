@@ -1,11 +1,11 @@
 import numpy as np
 import torch
 from PIL import Image
-from src.transforms import Sam3Transforms
+from src.predict.image_transform import ImageTransforms
 
 
 def test_transform_coords_scales_pixel_points_to_model_resolution():
-    transforms = Sam3Transforms(resolution=1008)
+    transforms = ImageTransforms(resolution=1008)
     coords = np.array([[50.0, 25.0]], dtype=np.float32)
 
     out = transforms.transform_coords(coords, orig_hw=(100, 200))
@@ -15,7 +15,7 @@ def test_transform_coords_scales_pixel_points_to_model_resolution():
 
 
 def test_transform_box_scales_xyxy_to_two_corner_points():
-    transforms = Sam3Transforms(resolution=1008)
+    transforms = ImageTransforms(resolution=1008)
     box = np.array([20.0, 10.0, 180.0, 90.0], dtype=np.float32)
 
     out = transforms.transform_box(box, orig_hw=(100, 200))
@@ -26,7 +26,7 @@ def test_transform_box_scales_xyxy_to_two_corner_points():
 
 
 def test_transform_box_accepts_batched_xyxy_boxes():
-    transforms = Sam3Transforms(resolution=1008)
+    transforms = ImageTransforms(resolution=1008)
     boxes = np.array(
         [
             [20.0, 10.0, 180.0, 90.0],
@@ -43,7 +43,7 @@ def test_transform_box_accepts_batched_xyxy_boxes():
 
 
 def test_preprocess_image_returns_batch_tensor_and_original_hw():
-    transforms = Sam3Transforms(resolution=1008)
+    transforms = ImageTransforms(resolution=1008)
     image = Image.new("RGB", (20, 10), color=(255, 0, 0))
 
     tensor, orig_hw = transforms.preprocess_image(image, device=torch.device("cpu"))

@@ -41,7 +41,7 @@ def main() -> None:
 
     model = build_sam3_image_model(
         bpe_path=str(bpe),
-        checkpoint_path=str(checkpoint),
+        path=str(checkpoint),
         load_from_HF=False,
         enable_inst_interactivity=False,
         device=device,

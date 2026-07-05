@@ -5,9 +5,9 @@ import numpy as np
 import torch
 from PIL import Image
 
-from ...ops.box import nms_boxes_xyxy
-from ...types import mask_instances_from_proposals, MaskInstance, Sam3PromptBatch
+from ...ops.box import filter_boxes
 from ..image import Sam3Predictor
+from ..image_types import Sam3PromptBatch
 from .geometry import (
     batched,
     build_point_grid,
@@ -19,6 +19,7 @@ from .geometry import (
     touches_internal_crop_edge,
 )
 from .proposals import MaskProposal
+from .types import mask_instances_from_proposals, MaskInstance
 
 
 class AutomaticMaskGenerator:
@@ -102,11 +103,11 @@ class AutomaticMaskGenerator:
     @classmethod
     def from_checkpoint(
         cls,
-        checkpoint_path: str | Path,
+        path: str | Path,
         device: str = "cuda",
         **kwargs,
     ) -> "AutomaticMaskGenerator":
-        predictor = Sam3Predictor.from_checkpoint(checkpoint_path, device=device)
+        predictor = Sam3Predictor.from_checkpoint(path, device=device)
         return cls(predictor, **kwargs)
 
     def generate(self, image: Image.Image | np.ndarray) -> list[MaskProposal]:
@@ -552,5 +553,5 @@ class AutomaticMaskGenerator:
             dtype=np.float32,
         )
         boxes = np.array([proposal.bbox for proposal in proposals], dtype=np.float32)
-        keep = nms_boxes_xyxy(boxes, scores, threshold)
+        keep = filter_boxes(boxes, scores, threshold)
         return [proposals[index] for index in keep]

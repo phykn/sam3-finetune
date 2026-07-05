@@ -364,7 +364,7 @@ def main() -> None:
         raise RuntimeError("CUDA is required for profiling.")
 
     image_path = ROOT / "asset" / "sample.jpg"
-    checkpoint_path = ROOT / "weight" / "sam3.1_multiplex.pt"
+    path = ROOT / "weight" / "sam3.1_multiplex.pt"
 
     profiler = StageProfiler(sync_cuda=not args.no_sync_cuda)
     image = Image.open(image_path).convert("RGB")
@@ -379,7 +379,7 @@ def main() -> None:
         else args.prompt_batch_size
     )
     generator = ProfilingAutomaticMaskGenerator.from_checkpoint(
-        checkpoint_path,
+        path,
         device="cuda",
         points_per_side=args.points_per_side,
         points_per_batch=args.points_per_batch,
@@ -422,7 +422,7 @@ def main() -> None:
         torch.cuda.synchronize()
     elapsed = time.perf_counter() - started_at
 
-    print(f"checkpoint: {checkpoint_path}")
+    print(f"checkpoint: {path}")
     print(f"device: {torch.cuda.get_device_name(0)}")
     print(f"crop_grids: {args.crop_grids}")
     print(f"crop_points_per_side: {args.crop_points_per_side}")

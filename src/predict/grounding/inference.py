@@ -6,12 +6,12 @@ import PIL.Image
 import torch
 from torchvision.transforms import v2
 
-from ...data.structures import FindStage, interpolate
-from ...model.grounding import build_grounding_model
-from ...model.grounding.geometry import Prompt
-from ...ops.box import box_cxcywh_to_xyxy
-from ...types import GroundingPrediction
-from .cache import VisualLanguageCache
+from ...model.build import build_model
+from ...model.grounding.prompt import Prompt
+from ...model.types import FindStage
+from ...ops.box import convert_to_xyxy
+from ...ops.tensor import interpolate
+from .types import GroundingPrediction, VisualLanguageCache
 
 
 class GroundingInference:
@@ -22,13 +22,11 @@ class GroundingInference:
         *,
         device: torch.device | str = "cuda",
         confidence_threshold: float = 0.5,
-        load_report=None,
     ) -> None:
         self.device = torch.device(device)
         self.model = model.to(self.device).eval()
         self.visual_cache = visual_cache
         self.confidence_threshold = confidence_threshold
-        self.load_report = load_report
         self.transform = v2.Compose(
             [
                 v2.ToDtype(torch.uint8, scale=True),
@@ -50,20 +48,19 @@ class GroundingInference:
     @classmethod
     def from_checkpoint(
         cls,
-        checkpoint_path: str | Path,
+        path: str | Path,
         visual_cache_path: str | Path,
         *,
         device: torch.device | str = "cuda",
         confidence_threshold: float = 0.5,
     ) -> "GroundingInference":
-        model, report = build_grounding_model(checkpoint_path, device=device)
+        model = build_model(path, device=device)
         visual_cache = VisualLanguageCache.from_file(visual_cache_path)
         return cls(
-            model=model,
+            model=model.grounding,
             visual_cache=visual_cache,
             device=device,
             confidence_threshold=confidence_threshold,
-            load_report=report,
         )
 
     @torch.inference_mode()
@@ -203,7 +200,7 @@ class GroundingInference:
         out_masks = out_masks[keep]
         out_bbox = out_bbox[keep]
 
-        boxes = box_cxcywh_to_xyxy(out_bbox)
+        boxes = convert_to_xyxy(out_bbox)
         img_h, img_w = original_hw
         scale_fct = torch.tensor(
             [img_w, img_h, img_w, img_h],

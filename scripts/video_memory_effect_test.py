@@ -63,7 +63,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def box_mask(size: tuple[int, int], box: list[int]) -> np.ndarray:
+def make_mask(size: tuple[int, int], box: list[int]) -> np.ndarray:
     width, height = size
     x0, y0, x1, y1 = box
     mask = np.zeros((height, width), dtype=bool)
@@ -97,7 +97,7 @@ def mask_bbox(mask: np.ndarray) -> list[int] | None:
     return [int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1]
 
 
-def mask_iou(a: np.ndarray, b: np.ndarray) -> float:
+def calc_iou(a: np.ndarray, b: np.ndarray) -> float:
     intersection = np.logical_and(a, b).sum()
     union = np.logical_or(a, b).sum()
     if union == 0:
@@ -134,7 +134,7 @@ def run_case(
         "mask_area": int(mask.sum()),
         "mask_area_ratio": float(mask.mean()),
         "mask_bbox": mask_bbox(mask),
-        "weak_target_box_iou": mask_iou(mask, target_box_mask),
+        "weak_target_box_iou": calc_iou(mask, target_box_mask),
         "output": str(output_path),
     }, mask
 
@@ -148,7 +148,7 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     reference_image = Image.open(args.reference_image).convert("RGB")
     target_image = Image.open(args.target_image).convert("RGB")
-    target_box = box_mask(target_image.size, args.target_frog_box)
+    target_box = make_mask(target_image.size, args.target_frog_box)
     target_box_overlay = overlay_mask(target_image, target_box, color=(255, 190, 0))
     target_box_overlay.save(output_dir / "weak_target_box.png")
 
@@ -196,7 +196,7 @@ def main() -> None:
         args.reference_repeat,
         output_dir,
     )
-    pairwise_iou = mask_iou(correct_pred_mask, control_pred_mask)
+    pairwise_iou = calc_iou(correct_pred_mask, control_pred_mask)
     results = [correct_result, control_result]
     report = {
         "plan": [

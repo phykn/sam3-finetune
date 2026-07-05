@@ -91,7 +91,7 @@ def test_package_public_surface_exposes_only_main_predictor():
         "VideoMemoryInference",
         "GroundingInference",
         "VisualLanguageCache",
-        "build_video_memory_model",
+        "build_model",
         "filter_grounding_prediction",
     ):
         assert not hasattr(src, name)

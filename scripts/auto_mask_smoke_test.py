@@ -42,7 +42,7 @@ def main() -> None:
         raise RuntimeError("CUDA is required for this smoke test.")
 
     image_path = ROOT / "asset" / "sample.jpg"
-    checkpoint_path = ROOT / "weight" / "sam3.1_multiplex.pt"
+    path = ROOT / "weight" / "sam3.1_multiplex.pt"
     output_dir = ROOT / "outputs"
     output_dir.mkdir(exist_ok=True)
 
@@ -63,7 +63,7 @@ def main() -> None:
         else args.prompt_batch_size
     )
     generator = AutomaticMaskGenerator.from_checkpoint(
-        checkpoint_path,
+        path,
         device="cuda",
         points_per_side=args.points_per_side,
         points_per_batch=args.points_per_batch,
@@ -90,7 +90,7 @@ def main() -> None:
     save_proposal_overlay(image, proposals, overlay_path, max_masks=50)
     save_proposal_grid(image, proposals, grid_path, max_masks=24, columns=6)
 
-    print(f"checkpoint: {checkpoint_path}")
+    print(f"checkpoint: {path}")
     print(f"device: {torch.cuda.get_device_name(0)}")
     print(f"crop_grids: {crop_grids}")
     print(f"crop_points_per_side: {crop_points_per_side}")

@@ -1,11 +1,11 @@
 import numpy as np
 from src.predict.masks.proposals import MaskProposal
-from src.types import (
+from src.predict.masks.types import (
     mask_instance_from_proposal,
     mask_instances_from_proposals,
     MaskInstance,
-    ReferenceExample,
 )
+from src.predict.reference.types import ReferenceExample
 
 
 def _proposal(

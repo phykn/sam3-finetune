@@ -2,8 +2,8 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from ...ops.box import box_iou_xyxy
-from ...types import ContextPrediction
+from ...ops.box import calc_iou
+from .types import ContextPrediction
 
 
 def nms_context_predictions(
@@ -14,7 +14,7 @@ def nms_context_predictions(
     kept: list[ContextPrediction] = []
     for prediction in predictions:
         if all(
-            box_iou_xyxy(prediction.bbox, existing.bbox) <= iou_threshold
+            calc_iou(prediction.bbox, existing.bbox) <= iou_threshold
             for existing in kept
         ):
             kept.append(prediction)

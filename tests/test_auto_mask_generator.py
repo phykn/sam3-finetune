@@ -1,6 +1,6 @@
 import numpy as np
 from PIL import Image
-from src.ops.box import box_area_xyxy, box_iou_xyxy, nms_boxes_xyxy
+from src.ops.box import calc_area, calc_iou, filter_boxes
 from src.predict.masks.generator import AutomaticMaskGenerator
 from src.predict.masks.geometry import (
     batched,
@@ -17,7 +17,7 @@ from src.predict.masks.proposals import (
     save_proposal_grid,
     save_proposal_overlay,
 )
-from src.types import MaskInstance
+from src.predict.masks.types import MaskInstance
 
 
 def test_mask_generator_lives_under_masks_package() -> None:
@@ -32,7 +32,7 @@ def test_mask_generator_lives_under_masks_package() -> None:
 
 def test_mask_helpers_are_split_by_responsibility() -> None:
     assert build_point_grid.__module__ == "src.predict.masks.geometry"
-    assert MaskProposal.__module__ == "src.types"
+    assert MaskProposal.__module__ == "src.predict.masks.types"
 
 
 def test_masks_package_exports_user_facing_api() -> None:
@@ -101,9 +101,9 @@ def test_box_iou_and_nms_boxes_remove_lower_scoring_duplicate():
     )
     scores = np.array([0.9, 0.8, 0.7], dtype=np.float32)
 
-    assert box_area_xyxy((0, 0, 10, 10)) == 100
-    assert box_iou_xyxy((0, 0, 10, 10), (20, 20, 30, 30)) == 0.0
-    assert nms_boxes_xyxy(boxes, scores, iou_threshold=0.6) == [0, 2]
+    assert calc_area((0, 0, 10, 10)) == 100
+    assert calc_iou((0, 0, 10, 10), (20, 20, 30, 30)) == 0.0
+    assert filter_boxes(boxes, scores, iou_threshold=0.6) == [0, 2]
 
 
 def test_batched_splits_sequence_without_dropping_items():

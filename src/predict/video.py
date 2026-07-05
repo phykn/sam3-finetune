@@ -1,6 +1,5 @@
 from collections.abc import Sequence
 from contextlib import nullcontext
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -8,14 +7,8 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
-from ..model.video.builder import build_video_memory_model
-from ..types import LoadReport, MemoryPrediction, MemoryReference
-
-
-@dataclass(frozen=True)
-class _PreparedReference:
-    reference: MemoryReference
-    frame_index: int
+from ..model.build import build_model
+from .video_types import MemoryPrediction, MemoryReference, PreparedReference
 
 
 class VideoMemoryInference:
@@ -23,37 +16,35 @@ class VideoMemoryInference:
         self,
         model: torch.nn.Module,
         device: torch.device | str = "cuda",
-        load_report: LoadReport | None = None,
     ) -> None:
         self.device = torch.device(device)
         self.model = model.to(self.device).eval()
-        self.load_report = load_report
         self.image_size = int(getattr(model, "image_size", 1008))
 
     @classmethod
     def from_checkpoint(
         cls,
-        checkpoint_path: str | Path,
+        path: str | Path,
         device: torch.device | str = "cuda",
         multiplex_count: int = 16,
         max_num_objects: int = 16,
     ) -> "VideoMemoryInference":
-        model, report = build_video_memory_model(
-            checkpoint_path=checkpoint_path,
+        model = build_model(
+            path=path,
             device=device,
             multiplex_count=multiplex_count,
             max_num_objects=max_num_objects,
         )
-        return cls(model=model, device=device, load_report=report)
+        return cls(model=model.video, device=device)
 
     @staticmethod
     def prepare_references(
         references: Sequence[MemoryReference],
-    ) -> list[_PreparedReference]:
+    ) -> list[PreparedReference]:
         if not references:
             raise ValueError("references must be non-empty")
         return [
-            _PreparedReference(reference=reference, frame_index=index)
+            PreparedReference(reference=reference, frame_index=index)
             for index, reference in enumerate(references)
         ]
 
@@ -77,7 +68,7 @@ class VideoMemoryInference:
             raise ValueError("references must be non-empty")
         images = [item.reference.image for item in prepared] + [target_image]
         target_frame_index = len(prepared)
-        frame_tensor, orig_hw, frame_hws = self._preprocess_image_sequence(
+        frame_tensor, orig_hw, frame_hws = self.preprocess_image_sequence(
             images,
             output_image_index=target_frame_index,
         )
@@ -101,7 +92,7 @@ class VideoMemoryInference:
         )
         with autocast_context:
             for item in prepared:
-                mask = self._mask_to_tensor(
+                mask = self.mask_to_tensor(
                     item.reference.mask,
                     source_hw=frame_hws[item.frame_index],
                     target_hw=orig_hw,
@@ -139,7 +130,7 @@ class VideoMemoryInference:
                     point_obj_id = int(prepared[0].reference.obj_id)
                 else:
                     point_obj_id = 1
-                point_coords, point_labels = self._target_points_to_tensors(
+                point_coords, point_labels = self.target_points_to_tensors(
                     target_point_coords,
                     target_point_labels,
                     target_hw=orig_hw,
@@ -166,7 +157,7 @@ class VideoMemoryInference:
                     if target_obj_id is not None
                     else int(prepared[0].reference.obj_id)
                 )
-                target_result = self._predict_target_points_with_memory(
+                target_result = self.predict_target_points_with_memory(
                     inference_state=inference_state,
                     frame_idx=target_frame_index,
                     obj_id=point_obj_id,
@@ -202,7 +193,7 @@ class VideoMemoryInference:
             scores=scores,
         )
 
-    def _predict_target_points_with_memory(
+    def predict_target_points_with_memory(
         self,
         inference_state: dict,
         frame_idx: int,
@@ -214,7 +205,7 @@ class VideoMemoryInference:
         if obj_id not in inference_state["obj_id_to_idx"]:
             raise ValueError(f"target obj_id {obj_id} is not present in references")
         obj_idx = int(inference_state["obj_id_to_idx"][obj_id])
-        points, labels = self._target_points_to_tensors(
+        points, labels = self.target_points_to_tensors(
             point_coords,
             point_labels,
             target_hw=target_hw,
@@ -248,12 +239,12 @@ class VideoMemoryInference:
             scores=scores,
         )
 
-    def _preprocess_image_sequence(
+    def preprocess_image_sequence(
         self,
         images: Sequence[Image.Image | np.ndarray],
         output_image_index: int = -1,
     ) -> tuple[torch.Tensor, tuple[int, int], list[tuple[int, int]]]:
-        pil_images = [self._to_pil(image) for image in images]
+        pil_images = [self.to_pil(image) for image in images]
         if not pil_images:
             raise ValueError("images must be non-empty")
         if output_image_index < 0:
@@ -273,7 +264,7 @@ class VideoMemoryInference:
             tensors.append((tensor - mean) / std)
         return torch.stack(tensors, dim=0), orig_hw, frame_hws
 
-    def _mask_to_tensor(
+    def mask_to_tensor(
         self,
         mask: np.ndarray | torch.Tensor,
         source_hw: tuple[int, int],
@@ -297,7 +288,7 @@ class VideoMemoryInference:
             )[0]
         return mask_tensor
 
-    def _target_points_to_tensors(
+    def target_points_to_tensors(
         self,
         point_coords: np.ndarray | torch.Tensor,
         point_labels: np.ndarray | torch.Tensor,
@@ -324,7 +315,7 @@ class VideoMemoryInference:
         return coords * scale, labels
 
     @staticmethod
-    def _to_pil(image: Image.Image | np.ndarray) -> Image.Image:
+    def to_pil(image: Image.Image | np.ndarray) -> Image.Image:
         if isinstance(image, Image.Image):
             return image.convert("RGB")
         return Image.fromarray(np.asarray(image).astype(np.uint8)).convert("RGB")

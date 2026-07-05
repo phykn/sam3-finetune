@@ -1,6 +1,8 @@
 import numpy as np
 import torch
-from src.types import MaskInstance, ReferenceExample, Sam3ImageEmbedding
+from src.predict.image_types import Sam3ImageEmbedding
+from src.predict.masks.types import MaskInstance
+from src.predict.reference.types import ReferenceExample
 
 
 def _embedding_from_feature_map(feature_map: torch.Tensor) -> Sam3ImageEmbedding:

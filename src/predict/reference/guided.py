@@ -5,8 +5,8 @@ import numpy as np
 import torch
 from PIL import Image
 
-from ...types import ContextReference, MaskInstance, ReferenceExample
 from ..image import Sam3Predictor
+from ..masks.types import MaskInstance
 from .prototype import (
     build_context_prototype,
     mean_score_over_mask,
@@ -14,6 +14,7 @@ from .prototype import (
     select_feature,
     similarity_map,
 )
+from .types import ContextReference, ReferenceExample
 
 
 class ReferenceGuidedMaskGenerator:
@@ -51,12 +52,12 @@ class ReferenceGuidedMaskGenerator:
     @classmethod
     def from_checkpoint(
         cls,
-        checkpoint_path: str | Path,
+        path: str | Path,
         device: torch.device | str = "cuda",
         **kwargs,
     ) -> "ReferenceGuidedMaskGenerator":
         return cls(
-            predictor=Sam3Predictor.from_checkpoint(checkpoint_path, device=device),
+            predictor=Sam3Predictor.from_checkpoint(path, device=device),
             **kwargs,
         )
 

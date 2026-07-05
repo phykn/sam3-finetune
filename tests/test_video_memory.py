@@ -13,52 +13,189 @@ def _tiny_mask() -> np.ndarray:
     return mask
 
 
+class _TinyMuxTransformer(torch.nn.Module):
+    def forward(self, src, pos_src, tokens):
+        return tokens, src.flatten(2).transpose(1, 2)
+
+
 def test_video_memory_public_api_imports() -> None:
     import src.predict as video
-    from src.model.video.builder import build_video_memory_model
+    from src.model.build import build_model
     from src.predict import MemoryReference, VideoMemoryInference
 
     assert VideoMemoryInference.__name__ == "VideoMemoryInference"
     assert MemoryReference.__name__ == "MemoryReference"
-    assert MemoryReference.__module__ == "src.types"
-    assert callable(build_video_memory_model)
+    assert MemoryReference.__module__ == "src.predict.video_types"
+    assert callable(build_model)
     assert video.VideoMemoryInference is VideoMemoryInference
     assert video.MemoryReference is MemoryReference
     assert not hasattr(video, "__all__")
 
 
-def test_video_memory_modules_import_without_triton() -> None:
-    import src.model.video._tracker.demo
-    import src.model.video._tracker.tracker_utils
-    import src.model.video._tracker.tracking
+def test_multiplex_mask_decoder_dynamic_single_mask_output() -> None:
+    from src.model.video.tracker.decoder.multiplex import MultiplexMaskDecoder
 
-    assert hasattr(src.model.video._tracker.tracker_utils, "select_closest_cond_frames")
-    assert hasattr(src.model.video._tracker.tracking, "VideoTrackingDynamicMultiplex")
-    assert hasattr(src.model.video._tracker.demo, "Sam3VideoTrackingMultiplexDemo")
+    decoder = MultiplexMaskDecoder(
+        transformer_dim=8,
+        transformer=_TinyMuxTransformer(),
+        multiplex_count=2,
+        dynamic_multimask_via_stability=True,
+    )
+    decoder.eval()
+
+    out = decoder(
+        image_embeddings=torch.zeros(1, 8, 2, 2),
+        image_pe=torch.zeros(1, 8, 2, 2),
+        multimask_output=False,
+    )
+
+    assert out["masks"].shape == (1, 2, 1, 8, 8)
+    assert out["iou_pred"].shape == (1, 2, 1)
+    assert out["sam_tokens_out"].shape == (1, 2, 1, 8)
+
+
+def test_multiplex_mask_decoder_shared_attribute_tokens() -> None:
+    from src.model.video.tracker.decoder.multiplex import MultiplexMaskDecoder
+
+    decoder = MultiplexMaskDecoder(
+        transformer_dim=8,
+        transformer=_TinyMuxTransformer(),
+        multiplex_count=2,
+        pred_obj_scores=True,
+        decode_mask_attribute_with_shared_tokens=True,
+        use_multimask_token_for_obj_ptr=True,
+    )
+
+    out = decoder(
+        image_embeddings=torch.zeros(1, 8, 2, 2),
+        image_pe=torch.zeros(1, 8, 2, 2),
+        multimask_output=True,
+    )
+
+    assert out["masks"].shape == (1, 2, 3, 8, 8)
+    assert out["iou_pred"].shape == (1, 2, 3)
+    assert out["sam_tokens_out"].shape == (1, 2, 3, 8)
+    assert out["object_score_logits"].shape == (1, 2, 1)
+
+
+def test_consolidation_preserves_late_object_after_frame_copy() -> None:
+    from src.model.video.tracker.consolidation.merge import (
+        consolidate_temp_output_across_obj,
+    )
+
+    class Model:
+        low_res_mask_size = 4
+        use_memory_selection = False
+
+        def _get_obj_num(self, inference_state) -> int:
+            return 1
+
+    frame_out = {
+        "pred_masks": torch.ones(1, 1, 4, 4),
+        "obj_ptr": torch.zeros(1, 8),
+        "object_score_logits": torch.zeros(1, 1),
+    }
+    late_obj_out = {
+        "pred_masks": torch.full((1, 1, 4, 4), 7.0),
+        "object_score_logits": torch.ones(1, 1),
+    }
+    state = {
+        "device": torch.device("cpu"),
+        "storage_device": torch.device("cpu"),
+        "point_inputs_per_obj": {},
+        "mask_inputs_per_obj": {},
+        "output_dict": {
+            "cond_frame_outputs": {0: frame_out},
+            "non_cond_frame_outputs": {},
+        },
+        "temp_output_dict_per_obj": {
+            2: {
+                "cond_frame_outputs": {0: late_obj_out},
+                "non_cond_frame_outputs": {},
+            },
+        },
+        "output_dict_per_obj": {
+            2: {
+                "cond_frame_outputs": {},
+                "non_cond_frame_outputs": {},
+            },
+        },
+    }
+
+    out = consolidate_temp_output_across_obj(
+        Model(),
+        state,
+        frame_idx=0,
+        is_cond=True,
+        run_mem_encoder=False,
+    )
+
+    assert out["pred_masks"].shape == (3, 1, 4, 4)
+    assert torch.equal(out["pred_masks"][2], late_obj_out["pred_masks"][0])
+
+
+def test_video_memory_modules_import_without_triton() -> None:
+    import src.model.video.tracker.frame.mask_cleanup
+    import src.model.video.tracker.memory.context
+    import src.model.video.tracker.model
+    import src.model.video.tracker.prompt.sampling
+    import src.model.video.tracker.tracking
+
+    assert hasattr(src.model.video.tracker.memory.context, "select_closest_cond_frames")
+    assert hasattr(src.model.video.tracker.prompt.sampling, "get_next_point")
+    assert hasattr(
+        src.model.video.tracker.frame.mask_cleanup, "fill_holes_in_mask_scores"
+    )
+    assert hasattr(src.model.video.tracker.tracking, "VideoTrackingDynamicMultiplex")
+    assert hasattr(src.model.video.tracker.model, "Sam3VideoTrackingMultiplexDemo")
 
 
 def test_video_modules_live_under_role_packages() -> None:
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
-    for filename in (
-        "builder.py",
-        "checkpoint.py",
-    ):
-        assert (root / "src" / "model" / "video" / filename).is_file()
+    tracker_root = root / "src" / "model" / "video" / "tracker"
+
+    assert not (root / "src" / "model" / "video" / "_tracker").exists()
+    assert not (root / "src" / "model" / "video" / "builder.py").exists()
+    assert not (root / "src" / "model" / "video" / "checkpoint.py").exists()
+    assert (root / "src" / "model" / "video" / "model.py").is_file()
     assert (root / "src" / "predict" / "video.py").is_file()
-    assert (root / "src" / "types.py").is_file()
+    assert (root / "src" / "predict" / "video_types.py").is_file()
+
+    for path in (
+        "consolidation/merge.py",
+        "decoder/heads.py",
+        "decoder/multiplex.py",
+        "frame/features.py",
+        "frame/mask_cleanup.py",
+        "interaction/masks.py",
+        "memory/conditioning.py",
+        "memory/context.py",
+        "memory/encoder.py",
+        "memory/encoding.py",
+        "multiplex/assignments.py",
+        "multiplex/state.py",
+        "prompt/inputs.py",
+        "prompt/sampling.py",
+        "runtime/init.py",
+        "runtime/params.py",
+        "runtime/step.py",
+        "tracking.py",
+        "model.py",
+    ):
+        assert (tracker_root / path).is_file()
+
     for filename in (
-        "memory.py",
         "decoder.py",
+        "memory.py",
         "multiplex.py",
         "multiplex_mask_decoder.py",
-        "tracker_utils.py",
-        "tracking.py",
-        "demo.py",
         "prompting.py",
+        "tracker_utils.py",
     ):
-        assert (root / "src" / "model" / "video" / "_tracker" / filename).is_file()
+        assert not (tracker_root / filename).exists()
+
     for filename in (
         "video_builder.py",
         "video_checkpoint.py",
@@ -74,38 +211,6 @@ def test_video_modules_live_under_role_packages() -> None:
         assert not (root / "src" / filename).exists()
     assert not (root / "src" / "video" / "memory_inference.py").exists()
     assert not (root / "src" / "video").exists()
-
-
-def test_video_checkpoint_remap_keeps_tracker_memory_and_backbone_keys() -> None:
-    from src.model.video.checkpoint import filter_and_remap_video_state_dict
-
-    checkpoint = {
-        "model": {
-            "tracker.model.maskmem_backbone.mask_downsampler.encoder.0.weight": torch.zeros(
-                1
-            ),
-            "tracker.model.sam_mask_decoder.iou_token.weight": torch.zeros(1),
-            "tracker.model.transformer.encoder.layers.0.self_attn_q_proj.weight": torch.zeros(
-                1
-            ),
-            "tracker.model.interactive_sam_prompt_encoder.no_mask_embed.weight": torch.zeros(
-                1
-            ),
-            "detector.backbone.vision_backbone.trunk.patch_embed.proj.weight": torch.zeros(
-                1
-            ),
-            "detector.backbone.language_backbone.encoder.foo": torch.zeros(1),
-        }
-    }
-
-    remapped, ignored = filter_and_remap_video_state_dict(checkpoint)
-
-    assert "maskmem_backbone.mask_downsampler.encoder.0.weight" in remapped
-    assert "sam_mask_decoder.iou_token.weight" in remapped
-    assert "transformer.encoder.layers.0.self_attn_q_proj.weight" in remapped
-    assert "interactive_sam_prompt_encoder.no_mask_embed.weight" in remapped
-    assert "backbone.vision_backbone.trunk.patch_embed.proj.weight" in remapped
-    assert ignored == ["detector.backbone.language_backbone.encoder.foo"]
 
 
 def test_memory_references_preserve_order_for_same_object_id() -> None:
@@ -131,7 +236,7 @@ def test_preprocess_sequence_uses_target_size_for_mixed_image_sizes() -> None:
     reference = Image.fromarray(np.zeros((8, 10, 3), dtype=np.uint8))
     target = Image.fromarray(np.zeros((12, 20, 3), dtype=np.uint8))
 
-    batch, orig_hw, frame_hws = predictor._preprocess_image_sequence(
+    batch, orig_hw, frame_hws = predictor.preprocess_image_sequence(
         [reference, target],
         output_image_index=1,
     )
@@ -148,7 +253,7 @@ def test_mask_to_tensor_resizes_reference_mask_to_target_size() -> None:
     mask = np.zeros((8, 10), dtype=bool)
     mask[2:6, 3:7] = True
 
-    resized = predictor._mask_to_tensor(
+    resized = predictor.mask_to_tensor(
         mask,
         source_hw=(8, 10),
         target_hw=(12, 20),
@@ -171,16 +276,16 @@ def test_memory_predictor_adds_target_points_after_reference_masks() -> None:
         def init_state(self, **kwargs):
             return {"device": torch.device("cpu"), **kwargs}
 
-        def add_new_masks(self, *args, **kwargs) -> None:
+        def add_new_masks(self, *_args, **kwargs) -> None:
             pass
 
-        def add_new_points(self, *args, **kwargs) -> None:
+        def add_new_points(self, *_args, **kwargs) -> None:
             self.added_points = kwargs
 
-        def propagate_in_video_preflight(self, *args, **kwargs) -> None:
+        def propagate_in_video_preflight(self, *_args, **kwargs) -> None:
             pass
 
-        def propagate_in_video(self, *args, **kwargs):
+        def propagate_in_video(self, *_args, **kwargs):
             yield (
                 1,
                 [7],
@@ -194,7 +299,6 @@ def test_memory_predictor_adds_target_points_after_reference_masks() -> None:
     predictor.model = model
     predictor.device = torch.device("cpu")
     predictor.image_size = 16
-    predictor.load_report = None
     reference = MemoryReference(
         image=Image.fromarray(np.zeros((8, 10, 3), dtype=np.uint8)),
         mask=np.ones((8, 10), dtype=bool),
@@ -236,16 +340,16 @@ def test_memory_predictor_allows_target_points_without_references() -> None:
         def init_state(self, **kwargs):
             return {"device": torch.device("cpu"), **kwargs}
 
-        def add_new_masks(self, *args, **kwargs) -> None:
+        def add_new_masks(self, *_args, **kwargs) -> None:
             self.added_masks += 1
 
-        def add_new_points(self, *args, **kwargs) -> None:
+        def add_new_points(self, *_args, **kwargs) -> None:
             self.added_points = kwargs
 
-        def propagate_in_video_preflight(self, *args, **kwargs) -> None:
+        def propagate_in_video_preflight(self, *_args, **kwargs) -> None:
             pass
 
-        def propagate_in_video(self, *args, **kwargs):
+        def propagate_in_video(self, *_args, **kwargs):
             yield (
                 0,
                 [5],
@@ -259,7 +363,6 @@ def test_memory_predictor_allows_target_points_without_references() -> None:
     predictor.model = model
     predictor.device = torch.device("cpu")
     predictor.image_size = 16
-    predictor.load_report = None
     target = Image.fromarray(np.zeros((12, 20, 3), dtype=np.uint8))
 
     prediction = predictor.predict(
@@ -300,16 +403,16 @@ def test_memory_predictor_can_combine_reference_memory_with_target_points() -> N
             inference_state["obj_id_to_idx"] = {7: 0}
             inference_state["obj_ids"] = [7]
 
-        def add_new_points(self, *args, **kwargs) -> None:
+        def add_new_points(self, *_args, **kwargs) -> None:
             self.added_points = kwargs
 
-        def propagate_in_video_preflight(self, *args, **kwargs) -> None:
+        def propagate_in_video_preflight(self, *_args, **kwargs) -> None:
             pass
 
         def _get_obj_num(self, inference_state) -> int:
             return len(inference_state["obj_ids"])
 
-        def _run_single_frame_inference(self, *args, **kwargs):
+        def _run_single_frame_inference(self, *_args, **kwargs):
             self.run_single_frame_kwargs = kwargs
             return (
                 {"object_score_logits": torch.tensor([[0.25]])},
@@ -324,7 +427,6 @@ def test_memory_predictor_can_combine_reference_memory_with_target_points() -> N
     predictor.model = model
     predictor.device = torch.device("cpu")
     predictor.image_size = 16
-    predictor.load_report = None
     reference = MemoryReference(
         image=Image.fromarray(np.zeros((8, 10, 3), dtype=np.uint8)),
         mask=np.ones((8, 10), dtype=bool),
