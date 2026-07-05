@@ -10,7 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.video_memory_reference import build_reference_mask, ReferenceMaskResult
-from src.predict import MemoryReference, VideoMemoryInference
+from src.predict.next_frame import MemoryReference, NextFramePredictor
 
 
 def parse_args() -> argparse.Namespace:
@@ -167,7 +167,7 @@ def main() -> None:
         for image, result in zip(reference_images, mask_results)
     ]
 
-    predictor = VideoMemoryInference.from_checkpoint(
+    predictor = NextFramePredictor.from_checkpoint(
         args.checkpoint,
         device=args.device,
     )

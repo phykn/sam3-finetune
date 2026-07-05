@@ -18,18 +18,18 @@ class _TinyMuxTransformer(torch.nn.Module):
         return tokens, src.flatten(2).transpose(1, 2)
 
 
-def test_video_memory_public_api_imports() -> None:
-    import src.predict as video
+def test_next_frame_public_api_imports() -> None:
+    import src.predict.next_frame as next_frame
     from src.model.build import build_model
-    from src.predict import MemoryReference, VideoMemoryInference
+    from src.predict.next_frame import MemoryReference, NextFramePredictor
 
-    assert VideoMemoryInference.__name__ == "VideoMemoryInference"
+    assert NextFramePredictor.__name__ == "NextFramePredictor"
     assert MemoryReference.__name__ == "MemoryReference"
     assert MemoryReference.__module__ == "src.types"
     assert callable(build_model)
-    assert video.VideoMemoryInference is VideoMemoryInference
-    assert video.MemoryReference is MemoryReference
-    assert not hasattr(video, "__all__")
+    assert next_frame.NextFramePredictor is NextFramePredictor
+    assert next_frame.MemoryReference is MemoryReference
+    assert not hasattr(next_frame, "__all__")
 
 
 def test_multiplex_mask_decoder_dynamic_single_mask_output() -> None:
@@ -160,7 +160,8 @@ def test_video_modules_live_under_role_packages() -> None:
     assert not (root / "src" / "model" / "video" / "builder.py").exists()
     assert not (root / "src" / "model" / "video" / "checkpoint.py").exists()
     assert (root / "src" / "model" / "video" / "model.py").is_file()
-    assert (root / "src" / "predict" / "video.py").is_file()
+    assert (root / "src" / "predict" / "next_frame" / "predictor.py").is_file()
+    assert not (root / "src" / "predict" / "video.py").exists()
     assert (root / "src" / "types.py").is_file()
 
     for path in (
@@ -214,7 +215,7 @@ def test_video_modules_live_under_role_packages() -> None:
 
 
 def test_memory_references_preserve_order_for_same_object_id() -> None:
-    from src.predict import MemoryReference, VideoMemoryInference
+    from src.predict.next_frame import MemoryReference, NextFramePredictor
 
     references = [
         MemoryReference(image=_tiny_image(), mask=_tiny_mask(), obj_id=3),
@@ -222,16 +223,16 @@ def test_memory_references_preserve_order_for_same_object_id() -> None:
         MemoryReference(image=_tiny_image(), mask=_tiny_mask(), obj_id=9),
     ]
 
-    prepared = VideoMemoryInference.prepare_references(references)
+    prepared = NextFramePredictor.prepare_references(references)
 
     assert [item.frame_index for item in prepared] == [0, 1, 2]
     assert [item.reference.obj_id for item in prepared] == [3, 3, 9]
 
 
 def test_preprocess_sequence_uses_target_size_for_mixed_image_sizes() -> None:
-    from src.predict import VideoMemoryInference
+    from src.predict.next_frame import NextFramePredictor
 
-    predictor = object.__new__(VideoMemoryInference)
+    predictor = object.__new__(NextFramePredictor)
     predictor.image_size = 16
     reference = Image.fromarray(np.zeros((8, 10, 3), dtype=np.uint8))
     target = Image.fromarray(np.zeros((12, 20, 3), dtype=np.uint8))
@@ -247,9 +248,9 @@ def test_preprocess_sequence_uses_target_size_for_mixed_image_sizes() -> None:
 
 
 def test_preprocess_sequence_preserves_float_numpy_unit_range_values() -> None:
-    from src.predict import VideoMemoryInference
+    from src.predict.next_frame import NextFramePredictor
 
-    predictor = object.__new__(VideoMemoryInference)
+    predictor = object.__new__(NextFramePredictor)
     predictor.image_size = 8
     image = np.full((4, 4, 3), 0.5, dtype=np.float32)
 
@@ -261,9 +262,9 @@ def test_preprocess_sequence_preserves_float_numpy_unit_range_values() -> None:
 
 
 def test_mask_to_tensor_resizes_reference_mask_to_target_size() -> None:
-    from src.predict import VideoMemoryInference
+    from src.predict.next_frame import NextFramePredictor
 
-    predictor = object.__new__(VideoMemoryInference)
+    predictor = object.__new__(NextFramePredictor)
     mask = np.zeros((8, 10), dtype=bool)
     mask[2:6, 3:7] = True
 
@@ -279,7 +280,7 @@ def test_mask_to_tensor_resizes_reference_mask_to_target_size() -> None:
 
 
 def test_memory_predictor_adds_target_points_after_reference_masks() -> None:
-    from src.predict import MemoryReference, VideoMemoryInference
+    from src.predict.next_frame import MemoryReference, NextFramePredictor
 
     class FakeVideoModel:
         image_size = 16
@@ -311,7 +312,7 @@ def test_memory_predictor_adds_target_points_after_reference_masks() -> None:
             )
 
     model = FakeVideoModel()
-    predictor = object.__new__(VideoMemoryInference)
+    predictor = object.__new__(NextFramePredictor)
     predictor.model = model
     predictor.device = torch.device("cpu")
     predictor.image_size = 16
@@ -345,7 +346,7 @@ def test_memory_predictor_adds_target_points_after_reference_masks() -> None:
 
 
 def test_memory_predictor_allows_target_points_without_references() -> None:
-    from src.predict import VideoMemoryInference
+    from src.predict.next_frame import NextFramePredictor
 
     class FakeVideoModel:
         image_size = 16
@@ -376,7 +377,7 @@ def test_memory_predictor_allows_target_points_without_references() -> None:
             )
 
     model = FakeVideoModel()
-    predictor = object.__new__(VideoMemoryInference)
+    predictor = object.__new__(NextFramePredictor)
     predictor.model = model
     predictor.device = torch.device("cpu")
     predictor.image_size = 16
@@ -398,7 +399,7 @@ def test_memory_predictor_allows_target_points_without_references() -> None:
 
 
 def test_memory_predictor_can_combine_reference_memory_with_target_points() -> None:
-    from src.predict import MemoryReference, VideoMemoryInference
+    from src.predict.next_frame import MemoryReference, NextFramePredictor
 
     class FakeVideoModel:
         image_size = 16
@@ -440,7 +441,7 @@ def test_memory_predictor_can_combine_reference_memory_with_target_points() -> N
             return None, pred_masks
 
     model = FakeVideoModel()
-    predictor = object.__new__(VideoMemoryInference)
+    predictor = object.__new__(NextFramePredictor)
     predictor.model = model
     predictor.device = torch.device("cpu")
     predictor.image_size = 16

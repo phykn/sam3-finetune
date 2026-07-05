@@ -8,9 +8,9 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
-from ..model.build import build_model
-from ..types import MemoryPrediction, MemoryReference
-from .prompted.transforms import preprocess_rgb_images, scale_coords, to_rgb_pil
+from ...model.build import build_model
+from ...types import MemoryPrediction, MemoryReference
+from ..prompted.transforms import preprocess_rgb_images, scale_coords, to_rgb_pil
 
 
 @dataclass(frozen=True)
@@ -19,7 +19,7 @@ class PreparedReference:
     frame_index: int
 
 
-class VideoMemoryInference:
+class NextFramePredictor:
     def __init__(
         self,
         model: torch.nn.Module,
@@ -36,7 +36,7 @@ class VideoMemoryInference:
         device: torch.device | str = "cuda",
         multiplex_count: int = 16,
         max_num_objects: int = 16,
-    ) -> "VideoMemoryInference":
+    ) -> "NextFramePredictor":
         model = build_model(
             path=path,
             device=device,

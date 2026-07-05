@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.video_memory_reference import build_reference_mask, make_box_mask
-from src.predict import MemoryReference, VideoMemoryInference
+from src.predict.next_frame import MemoryReference, NextFramePredictor
 
 
 def parse_args() -> argparse.Namespace:
@@ -106,7 +106,7 @@ def calc_iou(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def run_case(
-    predictor: VideoMemoryInference,
+    predictor: NextFramePredictor,
     name: str,
     reference_image: Image.Image,
     target_image: Image.Image,
@@ -170,7 +170,7 @@ def main() -> None:
         control_reference_overlay_path
     )
 
-    predictor = VideoMemoryInference.from_checkpoint(
+    predictor = NextFramePredictor.from_checkpoint(
         args.checkpoint,
         device=args.device,
     )
