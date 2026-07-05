@@ -93,7 +93,7 @@ class SegmentationHead(nn.Module):
         return super().to(*args, **kwargs)
 
     def _unwrap_feats(self, backbone_feats: list[torch.Tensor]) -> list[torch.Tensor]:
-        from ..types import NestedTensor
+        from ..structures import NestedTensor
 
         return [
             feat.tensors if isinstance(feat, NestedTensor) else feat

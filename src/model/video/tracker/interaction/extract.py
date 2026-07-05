@@ -203,6 +203,7 @@ def _init_singleton_state(model, source_state, obj_id, point_inputs, mask_inputs
         video_height=source_state["video_height"],
         video_width=source_state["video_width"],
         num_frames=source_state["num_frames"],
+        device=source_state["device"],
     )
 
     singleton_state["obj_id_to_idx"] = {obj_id: 0}

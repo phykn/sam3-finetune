@@ -1,6 +1,7 @@
 import torch
 from src.model.build import build_model
 from src.model.components.backbone.encoder import ImageEncoder
+from torch import nn
 
 
 class _FakeBackbone(torch.nn.Module):
@@ -72,3 +73,47 @@ def test_interactive_image_encoder_adds_interactivity_no_mem_embed():
     )
 
     assert torch.all(features["image_embed"] == 2.0)
+
+
+def test_build_model_can_return_checkpoint_report(monkeypatch):
+    from src.model import build as build_module
+
+    class FakeModel(nn.Module):
+        def __init__(self, **_kwargs):
+            super().__init__()
+            self.share_calls = 0
+            self.loaded_state = None
+
+        def share(self):
+            self.share_calls += 1
+            return self
+
+        def load_state_dict(self, state, strict):
+            self.loaded_state = state
+            assert strict is False
+            return nn.modules.module._IncompatibleKeys(
+                ["missing.weight"], ["extra.weight"]
+            )
+
+    monkeypatch.setattr(build_module, "Sam3Model", FakeModel)
+    monkeypatch.setattr(build_module, "load_pth", lambda path: {"raw": torch.ones(1)})
+    monkeypatch.setattr(
+        build_module,
+        "remap_model",
+        lambda checkpoint: (
+            {"video.weight": checkpoint["raw"]},
+            ["detector.backbone.language_backbone.weight"],
+        ),
+    )
+
+    model, report = build_module.build_model(
+        path="checkpoint.pt",
+        device=torch.device("cpu"),
+        return_report=True,
+    )
+
+    assert model.share_calls == 1
+    assert model.loaded_state == {"video.weight": torch.ones(1)}
+    assert report.ignored == ["detector.backbone.language_backbone.weight"]
+    assert report.missing == ["missing.weight"]
+    assert report.unexpected == ["extra.weight"]

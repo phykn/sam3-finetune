@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from contextlib import nullcontext
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -8,7 +9,14 @@ import torch.nn.functional as F
 from PIL import Image
 
 from ..model.build import build_model
-from .video_types import MemoryPrediction, MemoryReference, PreparedReference
+from ..types import MemoryPrediction, MemoryReference
+from .image_transform import preprocess_rgb_images, scale_coords, to_rgb_pil
+
+
+@dataclass(frozen=True)
+class PreparedReference:
+    reference: MemoryReference
+    frame_index: int
 
 
 class VideoMemoryInference:
@@ -78,6 +86,7 @@ class VideoMemoryInference:
             video_width=orig_hw[1],
             num_frames=len(images),
             cached_features=None,
+            device=self.device,
             offload_video_to_cpu=True,
             offload_state_to_cpu=False,
         )
@@ -244,25 +253,12 @@ class VideoMemoryInference:
         images: Sequence[Image.Image | np.ndarray],
         output_image_index: int = -1,
     ) -> tuple[torch.Tensor, tuple[int, int], list[tuple[int, int]]]:
-        pil_images = [self.to_pil(image) for image in images]
-        if not pil_images:
-            raise ValueError("images must be non-empty")
-        if output_image_index < 0:
-            output_image_index = len(pil_images) + output_image_index
-        if output_image_index < 0 or output_image_index >= len(pil_images):
-            raise IndexError("output_image_index is out of range")
-        frame_hws = [(image.height, image.width) for image in pil_images]
-        orig_hw = frame_hws[output_image_index]
-
-        tensors = []
-        mean = torch.tensor((0.5, 0.5, 0.5), dtype=torch.float16)[:, None, None]
-        std = torch.tensor((0.5, 0.5, 0.5), dtype=torch.float16)[:, None, None]
-        for image in pil_images:
-            resized = image.resize((self.image_size, self.image_size))
-            array = np.asarray(resized, dtype=np.float32) / 255.0
-            tensor = torch.from_numpy(array).permute(2, 0, 1).to(torch.float16)
-            tensors.append((tensor - mean) / std)
-        return torch.stack(tensors, dim=0), orig_hw, frame_hws
+        return preprocess_rgb_images(
+            list(images),
+            resolution=self.image_size,
+            output_image_index=output_image_index,
+            dtype=torch.float16,
+        )
 
     def mask_to_tensor(
         self,
@@ -307,15 +303,8 @@ class VideoMemoryInference:
         if coords.shape[:2] != labels.shape:
             raise ValueError("target point coordinates and labels must align")
 
-        height, width = target_hw
-        scale = torch.tensor(
-            [self.image_size / width, self.image_size / height],
-            dtype=torch.float32,
-        )
-        return coords * scale, labels
+        return scale_coords(coords, target_hw, self.image_size), labels
 
     @staticmethod
     def to_pil(image: Image.Image | np.ndarray) -> Image.Image:
-        if isinstance(image, Image.Image):
-            return image.convert("RGB")
-        return Image.fromarray(np.asarray(image).astype(np.uint8)).convert("RGB")
+        return to_rgb_pil(image)

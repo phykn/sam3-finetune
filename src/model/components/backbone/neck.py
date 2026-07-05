@@ -3,7 +3,7 @@ from copy import deepcopy
 import torch
 import torch.nn as nn
 
-from ...types import NestedTensor
+from ...structures import NestedTensor
 
 
 def _make_scale_convs(

@@ -1,12 +1,19 @@
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 
-from ..image_types import Sam3ImageEmbedding
+from ...types import ContextReference, Sam3ImageEmbedding
 from ..masks.geometry import mask_to_box
-from .types import ContextPrototype, ContextReference
+
+
+@dataclass(frozen=True)
+class ContextPrototype:
+    positive: torch.Tensor
+    negative: torch.Tensor | None
+    reference_area_ratio: float
 
 
 def build_context_prototype(
@@ -17,6 +24,13 @@ def build_context_prototype(
     negative_context_mode: str,
     negative_context_scale: float,
 ) -> ContextPrototype:
+    if not references:
+        raise ValueError("references must be non-empty")
+    if len(references) != len(reference_embeddings):
+        raise ValueError(
+            "references and reference_embeddings must have the same length"
+        )
+
     positive_sum: torch.Tensor | None = None
     negative_sum: torch.Tensor | None = None
     total_weight = 0.0
@@ -55,7 +69,6 @@ def build_context_prototype(
             reference.mask,
             embedding.orig_hw,
         ) * float(reference.weight)
-    assert positive_sum is not None
     negative_prototype = (
         F.normalize(negative_sum / negative_total_weight, dim=0)
         if negative_sum is not None and negative_total_weight > 0.0

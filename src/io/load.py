@@ -12,6 +12,7 @@ def load_frames(
     path,
     image_size,
     offload_video_to_cpu,
+    device: torch.device | str = "cuda",
     img_mean=(0.5, 0.5, 0.5),
     img_std=(0.5, 0.5, 0.5),
     async_loading_frames=False,
@@ -54,10 +55,11 @@ def load_frames(
     mean = torch.tensor(img_mean, dtype=torch.float16)[:, None, None]
     std = torch.tensor(img_std, dtype=torch.float16)[:, None, None]
 
+    device = torch.device(device)
     if not offload_video_to_cpu:
-        batch = batch.cuda()
-        mean = mean.cuda()
-        std = std.cuda()
+        batch = batch.to(device)
+        mean = mean.to(device)
+        std = std.to(device)
 
     batch = (batch - mean) / std
 

@@ -25,7 +25,7 @@ def test_video_memory_public_api_imports() -> None:
 
     assert VideoMemoryInference.__name__ == "VideoMemoryInference"
     assert MemoryReference.__name__ == "MemoryReference"
-    assert MemoryReference.__module__ == "src.predict.video_types"
+    assert MemoryReference.__module__ == "src.types"
     assert callable(build_model)
     assert video.VideoMemoryInference is VideoMemoryInference
     assert video.MemoryReference is MemoryReference
@@ -161,7 +161,7 @@ def test_video_modules_live_under_role_packages() -> None:
     assert not (root / "src" / "model" / "video" / "checkpoint.py").exists()
     assert (root / "src" / "model" / "video" / "model.py").is_file()
     assert (root / "src" / "predict" / "video.py").is_file()
-    assert (root / "src" / "predict" / "video_types.py").is_file()
+    assert (root / "src" / "types.py").is_file()
 
     for path in (
         "consolidation/merge.py",
@@ -246,6 +246,20 @@ def test_preprocess_sequence_uses_target_size_for_mixed_image_sizes() -> None:
     assert frame_hws == [(8, 10), (12, 20)]
 
 
+def test_preprocess_sequence_preserves_float_numpy_unit_range_values() -> None:
+    from src.predict import VideoMemoryInference
+
+    predictor = object.__new__(VideoMemoryInference)
+    predictor.image_size = 8
+    image = np.full((4, 4, 3), 0.5, dtype=np.float32)
+
+    batch, orig_hw, frame_hws = predictor.preprocess_image_sequence([image])
+
+    assert orig_hw == (4, 4)
+    assert frame_hws == [(4, 4)]
+    assert float(batch.mean()) > -0.01
+
+
 def test_mask_to_tensor_resizes_reference_mask_to_target_size() -> None:
     from src.predict import VideoMemoryInference
 
@@ -272,8 +286,10 @@ def test_memory_predictor_adds_target_points_after_reference_masks() -> None:
 
         def __init__(self) -> None:
             self.added_points = None
+            self.init_state_kwargs = None
 
         def init_state(self, **kwargs):
+            self.init_state_kwargs = kwargs
             return {"device": torch.device("cpu"), **kwargs}
 
         def add_new_masks(self, *_args, **kwargs) -> None:
@@ -315,6 +331,7 @@ def test_memory_predictor_adds_target_points_after_reference_masks() -> None:
 
     assert model.added_points["frame_idx"] == 1
     assert model.added_points["obj_id"] == 7
+    assert model.init_state_kwargs["device"] == torch.device("cpu")
     assert model.added_points["clear_old_points"] is True
     assert model.added_points["rel_coordinates"] is False
     torch.testing.assert_close(
@@ -455,3 +472,109 @@ def test_memory_predictor_can_combine_reference_memory_with_target_points() -> N
     )
     assert prediction.frame_index == 1
     assert prediction.obj_ids == [7]
+
+
+def test_video_tracking_demo_init_state_loads_frame_folder_on_cpu(tmp_path) -> None:
+    from src.model.video.tracker.model import VideoTrackingMultiplexDemo
+
+    Image.fromarray(np.full((4, 5, 3), 128, dtype=np.uint8)).save(tmp_path / "0.png")
+    model = object.__new__(VideoTrackingMultiplexDemo)
+    model.apply_sigmoid_to_mask_logits_for_mem_enc = True
+    model.image_size = 8
+
+    state = VideoTrackingMultiplexDemo.init_state(
+        model,
+        video_path=tmp_path,
+        offload_video_to_cpu=False,
+        offload_state_to_cpu=False,
+        device=torch.device("cpu"),
+    )
+
+    assert state["device"] == torch.device("cpu")
+    assert state["storage_device"] == torch.device("cpu")
+    assert state["images"].device == torch.device("cpu")
+    assert tuple(state["images"].shape) == (1, 3, 8, 8)
+    assert state["video_height"] == 4
+    assert state["video_width"] == 5
+
+
+def test_tracker_get_image_feature_uses_state_device() -> None:
+    from src.model.video.tracker.frame.features import get_image_feature
+
+    class Model:
+        def forward_image(self, img_batch, **_kwargs):
+            assert img_batch.tensors.device == torch.device("cpu")
+            return {"features": img_batch.tensors}
+
+        def _prepare_backbone_features(self, backbone_out):
+            return backbone_out
+
+    state = {
+        "cached_features": {},
+        "device": torch.device("cpu"),
+        "images": torch.zeros(1, 3, 4, 4),
+    }
+
+    image, features = get_image_feature(Model(), state, frame_idx=0, batch_size=1)
+
+    assert image.device == torch.device("cpu")
+    assert features["features"].device == torch.device("cpu")
+
+
+def test_tracker_memory_prompts_use_requested_device() -> None:
+    from src.model.video.tracker.memory.context import collect_memory_prompts
+
+    class Model:
+        num_maskmem = 2
+        maskmem_tpos_enc = [
+            torch.zeros(1, 1, 2),
+            torch.zeros(1, 1, 2),
+        ]
+        save_image_features = False
+        use_maskmem_tpos_v2 = False
+
+    prev = {
+        "maskmem_features": torch.ones(1, 2, 1, 1),
+        "maskmem_pos_enc": [torch.zeros(1, 2, 1, 1)],
+    }
+
+    prompts, prompt_pos, image_feats, image_pos = collect_memory_prompts(
+        Model(),
+        [(1, prev, False)],
+        multiplex_state=None,
+        device=torch.device("cpu"),
+    )
+
+    assert prompts[0].device == torch.device("cpu")
+    assert prompt_pos[0].device == torch.device("cpu")
+    assert image_feats == []
+    assert image_pos == []
+
+
+def test_previous_refinement_logits_use_state_device() -> None:
+    from src.model.video.tracker.interaction.point_refinement import (
+        get_previous_refinement_logits,
+    )
+
+    state = {
+        "device": torch.device("cpu"),
+        "output_dict_per_obj": {
+            0: {
+                "cond_frame_outputs": {
+                    0: {"pred_masks": torch.full((1, 1, 2, 2), 64.0)}
+                },
+                "non_cond_frame_outputs": {},
+            }
+        },
+        "temp_output_dict_per_obj": {
+            0: {
+                "cond_frame_outputs": {},
+                "non_cond_frame_outputs": {},
+            }
+        },
+    }
+
+    logits = get_previous_refinement_logits(state, frame_idx=0, is_cond=True)
+
+    assert logits.device == torch.device("cpu")
+    assert torch.max(logits).item() == 32.0

@@ -6,8 +6,8 @@ import torch
 from PIL import Image
 
 from ...ops.box import filter_boxes
+from ...types import MaskInstance, MaskProposal, Sam3PromptBatch
 from ..image import Sam3Predictor
-from ..image_types import Sam3PromptBatch
 from .geometry import (
     batched,
     build_point_grid,
@@ -18,8 +18,7 @@ from .geometry import (
     mask_to_box,
     touches_internal_crop_edge,
 )
-from .proposals import MaskProposal
-from .types import mask_instances_from_proposals, MaskInstance
+from .instances import mask_instances_from_proposals
 
 
 class AutomaticMaskGenerator:

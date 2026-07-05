@@ -1,7 +1,7 @@
 import numpy as np
 
 from ...ops.mask import calc_iou
-from .types import GroundingPrediction
+from ...types import GroundingPrediction
 
 
 def filter_grounding_prediction(

@@ -23,7 +23,10 @@ def get_previous_refinement_logits(singleton_state, frame_idx, is_cond):
     if prev_out is None or prev_out["pred_masks"] is None:
         return None
 
-    logits = prev_out["pred_masks"].cuda(non_blocking=True)
+    logits = prev_out["pred_masks"].to(
+        singleton_state["device"],
+        non_blocking=True,
+    )
     return torch.clamp(logits, -32.0, 32.0)
 
 

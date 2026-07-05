@@ -1,4 +1,4 @@
-from ....types import NestedTensor
+from ....structures import NestedTensor
 
 NECK_OUTPUTS = ("interactive", "sam2_backbone_out")
 
@@ -149,7 +149,12 @@ def get_image_feature(self, inference_state, frame_idx, batch_size):
         frame_idx, (None, None)
     )
     if backbone_out is None:
-        image = inference_state["images"][frame_idx].cuda().float().unsqueeze(0)
+        image = (
+            inference_state["images"][frame_idx]
+            .to(inference_state["device"])
+            .float()
+            .unsqueeze(0)
+        )
         backbone_out = self.forward_image(
             NestedTensor(tensors=image, mask=None),
             need_sam3_out=True,

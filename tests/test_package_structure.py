@@ -5,12 +5,8 @@ def test_shared_modules_are_grouped_by_responsibility() -> None:
     root = Path(__file__).resolve().parents[1]
 
     for path in (
-        "src/model/types.py",
-        "src/predict/image_types.py",
-        "src/predict/video_types.py",
-        "src/predict/masks/types.py",
-        "src/predict/reference/types.py",
-        "src/predict/grounding/types.py",
+        "src/types.py",
+        "src/model/structures.py",
         "src/model/components/nn/activation.py",
         "src/model/components/nn/modules.py",
         "src/model/components/nn/position.py",
@@ -27,11 +23,12 @@ def test_shared_modules_are_grouped_by_responsibility() -> None:
         "src/model/components/backbone/vit.py",
         "src/model/components/sam/prompt_encoder.py",
         "src/model/build.py",
-        "src/model/model.py",
+        "src/model/sam3.py",
         "src/model/image/model.py",
         "src/model/video/model.py",
         "src/io/checkpoint.py",
         "src/predict/image.py",
+        "src/predict/masks/instances.py",
         "src/predict/masks/generator.py",
         "src/predict/reference/matcher.py",
         "src/predict/grounding/inference.py",
@@ -59,7 +56,6 @@ def test_shared_modules_are_grouped_by_responsibility() -> None:
         "checkpoint.py",
         "transforms.py",
         "io_utils.py",
-        "types.py",
         "utils.py",
     ):
         assert not (root / "src" / filename).exists()
@@ -85,3 +81,10 @@ def test_shared_modules_are_grouped_by_responsibility() -> None:
     assert not (root / "src" / "model" / "video" / "builder.py").exists()
     assert not (root / "src" / "model" / "image" / "checkpoint.py").exists()
     assert not (root / "src" / "model" / "video" / "checkpoint.py").exists()
+    assert not (root / "src" / "model" / "model.py").exists()
+    assert not (root / "src" / "model" / "types.py").exists()
+    assert not (root / "src" / "predict" / "image_types.py").exists()
+    assert not (root / "src" / "predict" / "video_types.py").exists()
+    assert not (root / "src" / "predict" / "masks" / "types.py").exists()
+    assert not (root / "src" / "predict" / "reference" / "types.py").exists()
+    assert not (root / "src" / "predict" / "grounding" / "types.py").exists()

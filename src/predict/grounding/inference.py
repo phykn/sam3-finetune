@@ -8,10 +8,10 @@ from torchvision.transforms import v2
 
 from ...model.build import build_model
 from ...model.grounding.prompt import Prompt
-from ...model.types import FindStage
+from ...model.structures import FindStage
 from ...ops.box import convert_to_xyxy
 from ...ops.tensor import interpolate
-from .types import GroundingPrediction, VisualLanguageCache
+from ...types import GroundingPrediction, VisualLanguageCache
 
 
 class GroundingInference:

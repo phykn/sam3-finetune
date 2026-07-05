@@ -3,7 +3,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from ...ops.box import calc_iou
-from .types import ContextPrediction
+from ...types import ContextPrediction
 
 
 def nms_context_predictions(

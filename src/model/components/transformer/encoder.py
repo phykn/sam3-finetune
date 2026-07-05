@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import torch
 from torch import nn, Tensor
@@ -400,10 +400,6 @@ class TransformerEncoder(nn.Module):
             valid_ratios,
             spatial_shapes,
         ) = self._prepare_multilevel_features(src, src_key_padding_masks, pos)
-
-        reference_points = self.get_reference_points(
-            spatial_shapes, valid_ratios, device=src_flatten.device
-        )
 
         output = src_flatten
         for layer in self.layers:

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import numpy as np
-from src.predict.grounding.types import GroundingPrediction
+from src.types import GroundingPrediction
 
 
 def _prediction() -> GroundingPrediction:

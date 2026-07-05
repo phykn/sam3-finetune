@@ -1,4 +1,8 @@
-from .image import Sam3Predictor
-from .image_types import Sam3ImageEmbedding, Sam3PromptBatch
-from .video import VideoMemoryInference
-from .video_types import MemoryPrediction, MemoryReference
+from ..types import (
+    MemoryPrediction as MemoryPrediction,
+    MemoryReference as MemoryReference,
+    Sam3ImageEmbedding as Sam3ImageEmbedding,
+    Sam3PromptBatch as Sam3PromptBatch,
+)
+from .image import Sam3Predictor as Sam3Predictor
+from .video import VideoMemoryInference as VideoMemoryInference

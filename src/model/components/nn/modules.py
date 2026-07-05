@@ -1,3 +1,4 @@
+import warnings
 from typing import Optional, Tuple
 
 import torch
@@ -101,7 +102,6 @@ def multi_head_attention_forward(
 
     if is_causal:
         raise NotImplementedError("is_causal is not supported in this implem")
-        attn_mask = None
 
     if not is_batched:
         query = query.unsqueeze(1)

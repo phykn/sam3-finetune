@@ -191,14 +191,14 @@ def encode_temporal_positions(
     return model.obj_ptr_tpos_proj(pos_enc)
 
 
-def load_memory_tensor(tensor, multiplex_state):
-    tensor = tensor.cuda(non_blocking=True)
+def load_memory_tensor(tensor, multiplex_state, device):
+    tensor = tensor.to(device, non_blocking=True)
     if tensor.dim() == 5:
         return multiplex_state.demux(tensor).contiguous()
     return tensor
 
 
-def collect_memory_prompts(model, refs, multiplex_state):
+def collect_memory_prompts(model, refs, multiplex_state, device):
     prompts = []
     prompt_pos = []
     image_feats = []
@@ -212,7 +212,7 @@ def collect_memory_prompts(model, refs, multiplex_state):
         if feats is None:
             continue
 
-        feats = load_memory_tensor(feats, multiplex_state)
+        feats = load_memory_tensor(feats, multiplex_state, device)
         if feats.dim() != prev["maskmem_features"].dim():
             prev["maskmem_features"] = feats.cpu() if not feats.is_cuda else feats
         if feats.shape[0] == 0:
@@ -228,7 +228,7 @@ def collect_memory_prompts(model, refs, multiplex_state):
         if maskmem_enc is None:
             continue
 
-        maskmem_enc = load_memory_tensor(maskmem_enc, multiplex_state)
+        maskmem_enc = load_memory_tensor(maskmem_enc, multiplex_state, device)
         if maskmem_enc.dim() != maskmem_pos_list[-1].dim():
             prev["maskmem_pos_enc"][-1] = (
                 maskmem_enc.cpu() if not maskmem_enc.is_cuda else maskmem_enc
@@ -238,8 +238,8 @@ def collect_memory_prompts(model, refs, multiplex_state):
         prompt_pos.append(maskmem_enc.flatten(2).permute(2, 0, 1) + tpos_enc)
 
         if model.save_image_features:
-            image_feats.append(prev["image_features"].cuda())
-            image_pos.append(prev["image_pos_enc"].cuda() + tpos_enc)
+            image_feats.append(prev["image_features"].to(device))
+            image_pos.append(prev["image_pos_enc"].to(device) + tpos_enc)
 
     return prompts, prompt_pos, image_feats, image_pos
 
@@ -314,7 +314,11 @@ def append_object_pointer_prompts(
         return 0
 
     pos_list, out_list = zip(*filtered)
-    obj_ptrs = torch.cat([out["obj_ptr"] for out in out_list], dim=1).transpose(0, 1)
+    obj_ptrs = (
+        torch.cat([out["obj_ptr"] for out in out_list], dim=1)
+        .transpose(0, 1)
+        .to(device)
+    )
 
     if model.add_tpos_enc_to_obj_ptrs:
         obj_pos = encode_temporal_positions(
@@ -361,7 +365,10 @@ def collect_memory_context(
         )
     )
     prompts, prompt_pos, image_feats, image_pos = collect_memory_prompts(
-        model, refs, multiplex_state
+        model,
+        refs,
+        multiplex_state,
+        device,
     )
 
     num_obj_ptr_tokens = 0

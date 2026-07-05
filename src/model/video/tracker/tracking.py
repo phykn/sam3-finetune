@@ -3,7 +3,7 @@ from typing import Literal, Optional
 import torch
 import torch.nn as nn
 
-from ...types import BatchedDatapoint
+from ...structures import BatchedDatapoint
 from .decoder.heads import build_sam_heads, forward_sam_heads
 from .frame.features import (
     forward_image,

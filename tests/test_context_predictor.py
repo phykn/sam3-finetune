@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 from PIL import Image
-from src.predict.image_types import Sam3ImageEmbedding
+from src.types import Sam3ImageEmbedding
 
 
 def _embedding_from_feature_map(feature_map: torch.Tensor) -> Sam3ImageEmbedding:
@@ -12,13 +12,25 @@ def _embedding_from_feature_map(feature_map: torch.Tensor) -> Sam3ImageEmbedding
     )
 
 
+_FEATURES_BY_IMAGE_ID: dict[int, torch.Tensor] = {}
+
+
+def _image_from_feature_map(feature_map: torch.Tensor) -> np.ndarray:
+    image = np.zeros((40, 40, 3), dtype=np.uint8)
+    _FEATURES_BY_IMAGE_ID[id(image)] = feature_map
+    return image
+
+
 class FakeContextPredictor:
     def __init__(self) -> None:
         self.decode_batches = []
         self.mask_inputs = []
 
     def encode_image_batch(self, images):
-        return [_embedding_from_feature_map(image) for image in images]
+        return [
+            _embedding_from_feature_map(_FEATURES_BY_IMAGE_ID[id(image)])
+            for image in images
+        ]
 
     def predict_from_embedding(
         self,
@@ -55,7 +67,7 @@ class FakeContextPredictor:
 
 def test_context_predictor_selects_target_points_from_reference_mask_similarity():
     from src.predict.reference.matcher import ContextMatcher
-    from src.predict.reference.types import ContextReference
+    from src.types import ContextReference
 
     reference_features = torch.zeros(2, 4, 4, dtype=torch.float32)
     reference_features[0, 1:3, 1:3] = 3.0
@@ -64,6 +76,8 @@ def test_context_predictor_selects_target_points_from_reference_mask_similarity(
     target_features[0, 1, 2] = 3.0
     target_features[0, 3, 0] = 1.0
     target_features[1] = 0.1
+    reference_image = _image_from_feature_map(reference_features)
+    target_image = _image_from_feature_map(target_features)
 
     reference_mask = np.zeros((40, 40), dtype=bool)
     reference_mask[10:30, 10:30] = True
@@ -78,10 +92,10 @@ def test_context_predictor_selects_target_points_from_reference_mask_similarity(
     )
 
     predictions = predictor.predict(
-        target_image=target_features,
+        target_image=target_image,
         references=[
             ContextReference(
-                image=reference_features,
+                image=reference_image,
                 mask=reference_mask,
             )
         ],
@@ -106,7 +120,7 @@ def test_context_matcher_lives_under_context_package() -> None:
     from src.predict.reference.matcher import ContextMatcher
     from src.predict.reference.postprocess import context_prediction_to_full_mask
     from src.predict.reference.scoring import area_ratio_score
-    from src.predict.reference.types import ContextPrediction, ContextReference
+    from src.types import ContextPrediction, ContextReference
 
     root = Path(__file__).resolve().parents[1]
     assert (root / "src" / "predict" / "reference" / "matcher.py").is_file()
@@ -116,8 +130,8 @@ def test_context_matcher_lives_under_context_package() -> None:
     assert not (root / "src" / "context").exists()
     assert not (root / "src" / "context_predictor.py").exists()
     assert ContextMatcher.__module__ == "src.predict.reference.matcher"
-    assert ContextReference.__module__ == "src.predict.reference.types"
-    assert ContextPrediction.__module__ == "src.predict.reference.types"
+    assert ContextReference.__module__ == "src.types"
+    assert ContextPrediction.__module__ == "src.types"
     assert (
         context_prediction_to_full_mask.__module__
         == "src.predict.reference.postprocess"
@@ -129,7 +143,7 @@ def test_context_package_exports_user_facing_api() -> None:
     import src.predict.reference as context
     from src.predict.reference.guided import ReferenceGuidedMaskGenerator
     from src.predict.reference.matcher import ContextMatcher
-    from src.predict.reference.types import ContextPrediction, ContextReference
+    from src.types import ContextPrediction, ContextReference
 
     assert context.ContextMatcher is ContextMatcher
     assert context.ReferenceGuidedMaskGenerator is ReferenceGuidedMaskGenerator
@@ -140,7 +154,7 @@ def test_context_package_exports_user_facing_api() -> None:
 
 def test_contrastive_context_penalizes_reference_background_like_candidates():
     from src.predict.reference.matcher import ContextMatcher
-    from src.predict.reference.types import ContextReference
+    from src.types import ContextReference
 
     reference_features = torch.zeros(2, 4, 4, dtype=torch.float32)
     reference_features[:, :, :] = torch.tensor([1.0, 0.0])[:, None, None]
@@ -148,6 +162,8 @@ def test_contrastive_context_penalizes_reference_background_like_candidates():
     target_features = torch.zeros(2, 4, 4, dtype=torch.float32)
     target_features[:, 1, 2] = torch.tensor([1.0, 1.0])
     target_features[:, 3, 0] = torch.tensor([1.0, 0.0])
+    reference_image = _image_from_feature_map(reference_features)
+    target_image = _image_from_feature_map(target_features)
 
     reference_mask = np.zeros((40, 40), dtype=bool)
     reference_mask[10:30, 10:30] = True
@@ -166,10 +182,10 @@ def test_contrastive_context_penalizes_reference_background_like_candidates():
     )
 
     predictions = predictor.predict(
-        target_image=target_features,
+        target_image=target_image,
         references=[
             ContextReference(
-                image=reference_features,
+                image=reference_image,
                 mask=reference_mask,
             )
         ],
@@ -191,13 +207,15 @@ def test_contrastive_context_penalizes_reference_background_like_candidates():
 
 def test_shape_candidate_scoring_prefers_distributed_reference_match():
     from src.predict.reference.matcher import ContextMatcher
-    from src.predict.reference.types import ContextReference
+    from src.types import ContextReference
 
     reference_features = torch.zeros(2, 5, 5, dtype=torch.float32)
     reference_features[0, 1:4, 1:4] = 1.0
     target_features = torch.zeros(2, 5, 5, dtype=torch.float32)
     target_features[:, 0, 0] = torch.tensor([1.0, 0.0])
     target_features[:, 2:5, 2:5] = torch.tensor([0.8, 0.6])[:, None, None]
+    reference_image = _image_from_feature_map(reference_features)
+    target_image = _image_from_feature_map(target_features)
 
     reference_mask = np.zeros((40, 40), dtype=bool)
     reference_mask[8:32, 8:32] = True
@@ -214,10 +232,10 @@ def test_shape_candidate_scoring_prefers_distributed_reference_match():
     )
 
     predictor.predict(
-        target_image=target_features,
+        target_image=target_image,
         references=[
             ContextReference(
-                image=reference_features,
+                image=reference_image,
                 mask=reference_mask,
             )
         ],
@@ -230,11 +248,13 @@ def test_shape_candidate_scoring_prefers_distributed_reference_match():
 
 def test_context_predictor_uses_explicit_target_points_as_candidates():
     from src.predict.reference.matcher import ContextMatcher
-    from src.predict.reference.types import ContextReference
+    from src.types import ContextReference
 
     reference_features = torch.zeros(2, 4, 4, dtype=torch.float32)
     reference_features[0, 1:3, 1:3] = 3.0
     target_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    reference_image = _image_from_feature_map(reference_features)
+    target_image = _image_from_feature_map(target_features)
     reference_mask = np.zeros((40, 40), dtype=bool)
     reference_mask[10:30, 10:30] = True
     fake = FakeContextPredictor()
@@ -246,10 +266,10 @@ def test_context_predictor_uses_explicit_target_points_as_candidates():
     )
 
     predictor.predict(
-        target_image=target_features,
+        target_image=target_image,
         references=[
             ContextReference(
-                image=reference_features,
+                image=reference_image,
                 mask=reference_mask,
             )
         ],
@@ -259,19 +279,93 @@ def test_context_predictor_uses_explicit_target_points_as_candidates():
     np.testing.assert_allclose(fake.decode_batches[0][0, 0], np.array([12.0, 34.0]))
 
 
-def test_context_predictor_rejects_empty_reference_mask():
+def test_context_predictor_rejects_non_positive_predict_max_masks():
     from src.predict.reference.matcher import ContextMatcher
-    from src.predict.reference.types import ContextReference
+    from src.types import ContextReference
 
     fake = FakeContextPredictor()
     predictor = ContextMatcher(fake)
+    image = _image_from_feature_map(torch.zeros(2, 4, 4))
 
     try:
         predictor.predict(
-            target_image=torch.zeros(2, 4, 4),
+            target_image=image,
             references=[
                 ContextReference(
-                    image=torch.zeros(2, 4, 4),
+                    image=image,
+                    mask=np.ones((40, 40), dtype=bool),
+                )
+            ],
+            max_masks=0,
+        )
+    except ValueError as exc:
+        assert "max_masks" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+
+def test_context_predictor_rejects_target_points_on_image_boundary():
+    from src.predict.reference.matcher import ContextMatcher
+    from src.types import ContextReference
+
+    fake = FakeContextPredictor()
+    predictor = ContextMatcher(fake)
+    image = _image_from_feature_map(torch.zeros(2, 4, 4))
+
+    try:
+        predictor.predict(
+            target_image=image,
+            references=[
+                ContextReference(
+                    image=image,
+                    mask=np.ones((40, 40), dtype=bool),
+                )
+            ],
+            target_point_coords=np.asarray([[40.0, 10.0]], dtype=np.float32),
+        )
+    except ValueError as exc:
+        assert "target_point_coords" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+
+def test_build_context_prototype_rejects_embedding_length_mismatch():
+    from src.predict.reference.prototype import build_context_prototype
+    from src.types import ContextReference
+
+    try:
+        build_context_prototype(
+            [
+                ContextReference(
+                    image=Image.new("RGB", (40, 40)),
+                    mask=np.ones((40, 40), dtype=bool),
+                )
+            ],
+            [],
+            feature_layer="image_embed",
+            negative_context_mode="local",
+            negative_context_scale=2.0,
+        )
+    except ValueError as exc:
+        assert "same length" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+
+def test_context_predictor_rejects_empty_reference_mask():
+    from src.predict.reference.matcher import ContextMatcher
+    from src.types import ContextReference
+
+    fake = FakeContextPredictor()
+    predictor = ContextMatcher(fake)
+    image = _image_from_feature_map(torch.zeros(2, 4, 4))
+
+    try:
+        predictor.predict(
+            target_image=image,
+            references=[
+                ContextReference(
+                    image=image,
                     mask=np.zeros((40, 40), dtype=bool),
                 )
             ],
@@ -283,7 +377,7 @@ def test_context_predictor_rejects_empty_reference_mask():
 
 
 def test_context_reference_accepts_pil_images_for_public_api():
-    from src.predict.reference.types import ContextReference
+    from src.types import ContextReference
 
     reference = ContextReference(
         image=Image.new("RGB", (4, 4), color=(0, 0, 0)),
@@ -292,6 +386,20 @@ def test_context_reference_accepts_pil_images_for_public_api():
     )
 
     assert reference.weight == 2.0
+
+
+def test_context_reference_rejects_tensor_images():
+    from src.types import ContextReference
+
+    try:
+        ContextReference(
+            image=torch.zeros(3, 4, 4),
+            mask=np.ones((4, 4), dtype=bool),
+        )
+    except TypeError as exc:
+        assert "image" in str(exc)
+    else:
+        raise AssertionError("Expected TypeError")
 
 
 def test_context_smoke_script_loads_binary_reference_mask(tmp_path):
@@ -387,7 +495,7 @@ def test_reference_prompt_refinement_keeps_original_prompts(monkeypatch):
 
 def test_context_predictor_can_send_reference_shape_as_mask_prior():
     from src.predict.reference.matcher import ContextMatcher
-    from src.predict.reference.types import ContextReference
+    from src.types import ContextReference
 
     reference_features = torch.zeros(2, 4, 4, dtype=torch.float32)
     reference_features[0, 1:3, 1:3] = 3.0
@@ -395,6 +503,8 @@ def test_context_predictor_can_send_reference_shape_as_mask_prior():
     target_features = torch.zeros(2, 4, 4, dtype=torch.float32)
     target_features[0, 1, 2] = 3.0
     target_features[1] = 0.1
+    reference_image = _image_from_feature_map(reference_features)
+    target_image = _image_from_feature_map(target_features)
 
     reference_mask = np.zeros((40, 40), dtype=bool)
     reference_mask[10:30, 12:28] = True
@@ -409,10 +519,10 @@ def test_context_predictor_can_send_reference_shape_as_mask_prior():
     )
 
     predictor.predict(
-        target_image=target_features,
+        target_image=target_image,
         references=[
             ContextReference(
-                image=reference_features,
+                image=reference_image,
                 mask=reference_mask,
             )
         ],
@@ -426,7 +536,7 @@ def test_context_predictor_can_send_reference_shape_as_mask_prior():
 
 def test_context_prediction_to_full_mask_reconstructs_roi():
     from src.predict.reference.postprocess import context_prediction_to_full_mask
-    from src.predict.reference.types import ContextPrediction
+    from src.types import ContextPrediction
 
     prediction = ContextPrediction(
         segmentation=np.array([[True, False], [True, True]], dtype=bool),

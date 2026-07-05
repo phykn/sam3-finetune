@@ -52,9 +52,8 @@ class VideoTrackingMultiplexDemo(VideoTrackingDynamicMultiplex):
         video_path,
         offload_video_to_cpu,
         offload_state_to_cpu,
+        device: torch.device | str = "cuda",
         async_loading_frames=False,
-        use_torchcodec=False,
-        use_cv2=False,
     ):
         if not self.apply_sigmoid_to_mask_logits_for_mem_enc:
             raise NotImplementedError(
@@ -62,12 +61,11 @@ class VideoTrackingMultiplexDemo(VideoTrackingDynamicMultiplex):
             )
 
         images, video_height, video_width = load_frames(
-            video_path=video_path,
+            path=video_path,
             image_size=self.image_size,
             offload_video_to_cpu=offload_video_to_cpu,
+            device=device,
             async_loading_frames=async_loading_frames,
-            use_torchcodec=use_torchcodec,
-            use_cv2=use_cv2,
         )
         return create_inference_state(
             images=images,
@@ -76,6 +74,7 @@ class VideoTrackingMultiplexDemo(VideoTrackingDynamicMultiplex):
             video_width=video_width,
             offload_video_to_cpu=offload_video_to_cpu,
             offload_state_to_cpu=offload_state_to_cpu,
+            device=device,
             track_user_refinement=True,
         )
 
@@ -180,6 +179,7 @@ class Sam3VideoTrackingMultiplexDemo(VideoTrackingMultiplexDemo):
         video_width,
         num_frames,
         cached_features=None,
+        device: torch.device | str = "cuda",
         offload_video_to_cpu=False,
         offload_state_to_cpu=False,
     ):
@@ -194,6 +194,7 @@ class Sam3VideoTrackingMultiplexDemo(VideoTrackingMultiplexDemo):
             video_width=video_width,
             offload_video_to_cpu=offload_video_to_cpu,
             offload_state_to_cpu=offload_state_to_cpu,
+            device=device,
         )
         self.clear_all_points_in_video(inference_state)
         return inference_state

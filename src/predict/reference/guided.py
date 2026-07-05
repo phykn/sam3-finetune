@@ -5,8 +5,8 @@ import numpy as np
 import torch
 from PIL import Image
 
+from ...types import ContextReference, MaskInstance, ReferenceExample
 from ..image import Sam3Predictor
-from ..masks.types import MaskInstance
 from .prototype import (
     build_context_prototype,
     mean_score_over_mask,
@@ -14,7 +14,6 @@ from .prototype import (
     select_feature,
     similarity_map,
 )
-from .types import ContextReference, ReferenceExample
 
 
 class ReferenceGuidedMaskGenerator:
@@ -64,7 +63,7 @@ class ReferenceGuidedMaskGenerator:
     @torch.inference_mode()
     def generate(
         self,
-        target_image: Image.Image | np.ndarray | torch.Tensor,
+        target_image: Image.Image | np.ndarray,
         references: Sequence[ReferenceExample],
         *,
         max_masks: int | None = None,
@@ -82,7 +81,7 @@ class ReferenceGuidedMaskGenerator:
     @torch.inference_mode()
     def rerank(
         self,
-        target_image: Image.Image | np.ndarray | torch.Tensor,
+        target_image: Image.Image | np.ndarray,
         candidates: Sequence[MaskInstance],
         references: Sequence[ReferenceExample],
         *,
@@ -134,11 +133,7 @@ class ReferenceGuidedMaskGenerator:
             ranked.append(
                 _reranked_instance(
                     candidate,
-                    concept_id=(
-                        candidate.concept_id
-                        if candidate.concept_id is not None
-                        else concept_id
-                    ),
+                    concept_id=concept_id,
                     context_score=context_score,
                     combined_score=(
                         context_score * self.context_score_weight

@@ -19,7 +19,7 @@ from scripts.video_memory_reference import (
 )
 from src.predict.reference.matcher import ContextMatcher
 from src.predict.reference.postprocess import context_prediction_to_full_mask
-from src.predict.reference.types import ContextReference
+from src.types import ContextReference
 
 
 def parse_args() -> argparse.Namespace:

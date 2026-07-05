@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
-from .types import MaskProposal
+from ...types import MaskProposal
 
 
 def count_proposals_by_crop_grid(

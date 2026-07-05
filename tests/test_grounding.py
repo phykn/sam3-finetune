@@ -3,7 +3,7 @@ from pathlib import Path
 import torch
 from src.model.grounding.prompt import Prompt
 from src.predict.grounding.inference import GroundingInference
-from src.predict.grounding.types import VisualLanguageCache
+from src.types import VisualLanguageCache
 
 
 def test_visual_language_cache_loads_and_moves_tensors(tmp_path: Path):
@@ -30,7 +30,7 @@ def test_grounding_inference_is_not_a_predictor_entrypoint():
     root = Path(__file__).resolve().parents[1]
 
     assert GroundingInference.__module__ == "src.predict.grounding.inference"
-    assert VisualLanguageCache.__module__ == "src.predict.grounding.types"
+    assert VisualLanguageCache.__module__ == "src.types"
     assert not (root / "src" / "grounding_predictor.py").exists()
 
 
@@ -79,7 +79,7 @@ def test_grounding_modules_live_under_grounding_package():
     assert (root / "src" / "model" / "grounding" / "mask_encoder.py").is_file()
     assert (root / "src" / "model" / "grounding" / "pixel.py").is_file()
     assert (root / "src" / "model" / "grounding" / "segmentation.py").is_file()
-    assert (root / "src" / "predict" / "grounding" / "types.py").is_file()
+    assert (root / "src" / "types.py").is_file()
     assert not (root / "src" / "model" / "grounding" / "geometry.py").exists()
     assert not (root / "src" / "grounding").exists()
     for filename in (
@@ -93,7 +93,7 @@ def test_grounding_modules_live_under_grounding_package():
 
 def test_grounding_package_exports_user_facing_api():
     import src.predict.grounding as grounding
-    from src.predict.grounding.types import GroundingPrediction
+    from src.types import GroundingPrediction
 
     assert grounding.GroundingInference is GroundingInference
     assert grounding.VisualLanguageCache is VisualLanguageCache

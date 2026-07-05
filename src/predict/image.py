@@ -7,8 +7,8 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
+from .. import types as api_types
 from ..model.build import build_model
-from . import image_types
 from .image_transform import ImageTransforms
 
 
@@ -21,7 +21,7 @@ class Sam3Predictor:
         self.device = torch.device(device)
         self.model = model.to(self.device).eval()
         self.transforms = ImageTransforms(resolution=1008, mask_threshold=0.0)
-        self._embedding: image_types.Sam3ImageEmbedding | None = None
+        self._embedding: api_types.Sam3ImageEmbedding | None = None
 
     @classmethod
     def from_checkpoint(
@@ -36,7 +36,7 @@ class Sam3Predictor:
     def set_image(self, image: Image.Image | np.ndarray) -> None:
         self.set_image_embedding(self.encode_image(image))
 
-    def set_image_embedding(self, embedding: image_types.Sam3ImageEmbedding) -> None:
+    def set_image_embedding(self, embedding: api_types.Sam3ImageEmbedding) -> None:
         self._embedding = embedding
 
     def encode_image_tensor_batch(
@@ -45,7 +45,7 @@ class Sam3Predictor:
         orig_hws: Sequence[tuple[int, int]],
         *,
         inference: bool = True,
-    ) -> list[image_types.Sam3ImageEmbedding]:
+    ) -> list[api_types.Sam3ImageEmbedding]:
         if input_tensor.ndim != 4 or input_tensor.shape[0] == 0:
             raise ValueError("input_tensor must be a non-empty BCHW batch")
         if input_tensor.shape[0] != len(orig_hws):
@@ -57,10 +57,10 @@ class Sam3Predictor:
 
         image_embed = features["image_embed"]
         high_res_features = tuple(features["high_res_features"])
-        embeddings: list[image_types.Sam3ImageEmbedding] = []
+        embeddings: list[api_types.Sam3ImageEmbedding] = []
         for index, orig_hw in enumerate(orig_hws):
             embeddings.append(
-                image_types.Sam3ImageEmbedding(
+                api_types.Sam3ImageEmbedding(
                     image_embed=image_embed[index : index + 1],
                     high_res_features=tuple(
                         feature[index : index + 1] for feature in high_res_features
@@ -75,7 +75,7 @@ class Sam3Predictor:
         image: Image.Image | np.ndarray,
         *,
         inference: bool = True,
-    ) -> image_types.Sam3ImageEmbedding:
+    ) -> api_types.Sam3ImageEmbedding:
         return self.encode_image_batch([image], inference=inference)[0]
 
     def encode_image_batch(
@@ -83,7 +83,7 @@ class Sam3Predictor:
         images: Sequence[Image.Image | np.ndarray],
         *,
         inference: bool = True,
-    ) -> list[image_types.Sam3ImageEmbedding]:
+    ) -> list[api_types.Sam3ImageEmbedding]:
         if not images:
             raise ValueError("images batch must be non-empty")
         tensors: list[torch.Tensor] = []
@@ -124,7 +124,7 @@ class Sam3Predictor:
     @torch.inference_mode()
     def predict_from_embedding(
         self,
-        embedding: image_types.Sam3ImageEmbedding,
+        embedding: api_types.Sam3ImageEmbedding,
         point_coords: np.ndarray | None = None,
         point_labels: np.ndarray | None = None,
         box: np.ndarray | None = None,
@@ -164,7 +164,7 @@ class Sam3Predictor:
     @torch.inference_mode()
     def predict_from_embedding_batches(
         self,
-        prompt_batches: Sequence[image_types.Sam3PromptBatch],
+        prompt_batches: Sequence[api_types.Sam3PromptBatch],
         multimask_output: bool = True,
         return_logits: bool = False,
     ) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
@@ -177,7 +177,7 @@ class Sam3Predictor:
         high_res_parts: list[list[torch.Tensor]] | None = None
         split_sizes: list[int] = []
         orig_hws: list[tuple[int, int]] = []
-        embeddings: list[image_types.Sam3ImageEmbedding] = []
+        embeddings: list[api_types.Sam3ImageEmbedding] = []
         sparse_token_count: int | None = None
 
         for prompt_batch in prompt_batches:
@@ -263,7 +263,7 @@ class Sam3Predictor:
 
     def _prepare_prompt_tensors(
         self,
-        embedding: image_types.Sam3ImageEmbedding,
+        embedding: api_types.Sam3ImageEmbedding,
         point_coords: np.ndarray | None = None,
         point_labels: np.ndarray | None = None,
         box: np.ndarray | None = None,

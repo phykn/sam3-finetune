@@ -11,13 +11,12 @@ from src.predict.masks.geometry import (
 )
 from src.predict.masks.proposals import (
     count_proposals_by_crop_grid,
-    MaskProposal,
     proposal_mask_image,
     proposal_to_full_mask,
     save_proposal_grid,
     save_proposal_overlay,
 )
-from src.predict.masks.types import MaskInstance
+from src.types import MaskInstance, MaskProposal
 
 
 def test_mask_generator_lives_under_masks_package() -> None:
@@ -32,7 +31,7 @@ def test_mask_generator_lives_under_masks_package() -> None:
 
 def test_mask_helpers_are_split_by_responsibility() -> None:
     assert build_point_grid.__module__ == "src.predict.masks.geometry"
-    assert MaskProposal.__module__ == "src.predict.masks.types"
+    assert MaskProposal.__module__ == "src.types"
 
 
 def test_masks_package_exports_user_facing_api() -> None:

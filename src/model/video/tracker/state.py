@@ -29,9 +29,10 @@ def create_inference_state(
     offload_state_to_cpu: bool,
     images=None,
     cached_features=None,
+    device: torch.device | str = "cuda",
     track_user_refinement: bool = False,
 ):
-    device = torch.device("cuda")
+    device = torch.device(device)
     storage_device = torch.device("cpu") if offload_state_to_cpu else device
 
     state = {}

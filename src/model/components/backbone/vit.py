@@ -1,6 +1,6 @@
 import math
 from functools import partial
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Callable, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -14,7 +14,7 @@ except ModuleNotFoundError:
 from torch import Tensor
 
 from ...runtime.fused import apply_addmm_activation
-from ...types import NestedTensor
+from ...structures import NestedTensor
 from ..nn.layers import LayerScale
 from ..nn.modules import AttentionType
 from ..sam.rope import (

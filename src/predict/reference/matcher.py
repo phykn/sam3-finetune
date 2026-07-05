@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -6,8 +7,8 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
+from ...types import ContextPrediction, ContextReference, Sam3ImageEmbedding
 from ..image import Sam3Predictor
-from ..image_types import Sam3ImageEmbedding
 from ..masks.geometry import calculate_stability_score, mask_to_box
 from .postprocess import nms_context_predictions
 from .prototype import (
@@ -18,7 +19,13 @@ from .prototype import (
     similarity_map,
 )
 from .scoring import area_ratio_score
-from .types import ContextPrediction, ContextReference, ReferenceShapePrior
+
+
+@dataclass(frozen=True)
+class ReferenceShapePrior:
+    roi_mask: np.ndarray
+    width_ratio: float
+    height_ratio: float
 
 
 class ContextMatcher:
@@ -104,7 +111,7 @@ class ContextMatcher:
     @torch.inference_mode()
     def predict(
         self,
-        target_image: Image.Image | np.ndarray | torch.Tensor,
+        target_image: Image.Image | np.ndarray,
         references: Sequence[ContextReference],
         *,
         max_masks: int | None = None,
@@ -112,6 +119,9 @@ class ContextMatcher:
     ) -> list[ContextPrediction]:
         if not references:
             raise ValueError("references must be non-empty")
+        if max_masks is not None and max_masks <= 0:
+            raise ValueError("max_masks must be positive")
+
         image_batch = [reference.image for reference in references] + [target_image]
         embeddings = self.predictor.encode_image_batch(image_batch)
         reference_embeddings = embeddings[:-1]
@@ -139,7 +149,6 @@ class ContextMatcher:
             candidate_score_map = self._candidate_score_map(
                 similarity,
                 shape_prior=shape_prior,
-                target_hw=target_embedding.orig_hw,
             )
             point_coords = self._candidate_points(
                 candidate_score_map,
@@ -167,7 +176,6 @@ class ContextMatcher:
         similarity_map: torch.Tensor,
         *,
         shape_prior: ReferenceShapePrior | None,
-        target_hw: tuple[int, int],
     ) -> torch.Tensor:
         if self.candidate_score_mode == "point":
             return similarity_map
@@ -176,7 +184,6 @@ class ContextMatcher:
         return _shape_anchor_score_map(
             similarity_map,
             shape_prior,
-            target_hw=target_hw,
         )
 
     def _candidate_points(
@@ -347,9 +354,9 @@ def _target_points_array(
         return points.reshape(0, 2)
     if (
         np.any(points[:, 0] < 0)
-        or np.any(points[:, 0] > width)
+        or np.any(points[:, 0] >= width)
         or np.any(points[:, 1] < 0)
-        or np.any(points[:, 1] > height)
+        or np.any(points[:, 1] >= height)
     ):
         raise ValueError("target_point_coords must be within the target image")
     return points
@@ -358,19 +365,12 @@ def _target_points_array(
 def _shape_anchor_score_map(
     similarity_map: torch.Tensor,
     shape_prior: ReferenceShapePrior,
-    *,
-    target_hw: tuple[int, int],
 ) -> torch.Tensor:
     if similarity_map.ndim != 2:
         raise ValueError("similarity_map must have shape HxW")
     feature_h, feature_w = similarity_map.shape
-    target_h, target_w = target_hw
-    kernel_w = max(
-        1, int(round(shape_prior.width_ratio * target_w * feature_w / target_w))
-    )
-    kernel_h = max(
-        1, int(round(shape_prior.height_ratio * target_h * feature_h / target_h))
-    )
+    kernel_w = max(1, int(round(shape_prior.width_ratio * feature_w)))
+    kernel_h = max(1, int(round(shape_prior.height_ratio * feature_h)))
     kernel = Image.fromarray(shape_prior.roi_mask.astype(np.uint8) * 255).resize(
         (kernel_w, kernel_h),
         resample=Image.Resampling.BILINEAR,

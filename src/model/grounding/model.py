@@ -5,7 +5,7 @@ import torch
 from ...ops.box import convert_to_xyxy
 from ...ops.tensor import invert_sigmoid
 from ..runtime.checkpointing import activation_ckpt_wrapper
-from ..types import FindStage
+from ..structures import FindStage
 from .backbone import GroundingVisionBackbone
 from .output import write_box_outputs, write_output
 from .prompt import Prompt

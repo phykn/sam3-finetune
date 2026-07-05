@@ -1,6 +1,6 @@
 import math
 from functools import partial
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, Optional, Union
 
 import numpy as np
 import torch
@@ -96,6 +96,14 @@ class TransformerDecoderLayer(nn.Module):
             - tgt/tgt_query_pos: nq, bs, d_model
             -
         """
+        del (
+            tgt_query_sine_embed,
+            tgt_reference_points,
+            memory_level_start_index,
+            memory_spatial_shapes,
+            identity,
+        )
+
         # self attention
         if self.self_attn is not None:
             if dac:
