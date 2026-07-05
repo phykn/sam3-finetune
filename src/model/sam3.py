@@ -2,8 +2,8 @@ from torch import nn
 
 from .components.backbone.create import create_vision_backbone
 from .grounding.create import create_grounding_model
-from .image.model import Sam3ImageModel
-from .video.model import create_video_memory_model
+from src.model.image.model import Sam3ImageModel
+from src.model.video.model import create_video_memory_model
 
 
 class Sam3Model(nn.Module):

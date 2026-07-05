@@ -75,9 +75,10 @@ class FakeModel(torch.nn.Module):
 
 def test_package_public_surface_requires_workflow_imports():
     import src
-    import src.predict as predict_root
     import src.predict.prompted as prompted
     import src.predict.prompted.predictor as predictor_module
+
+    predict_root = importlib.import_module("src.predict")
 
     assert prompted.Sam3Predictor is Sam3Predictor
     assert not hasattr(src, "Sam3Predictor")
