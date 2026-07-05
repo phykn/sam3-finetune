@@ -133,8 +133,7 @@ def test_context_matcher_lives_under_context_package() -> None:
     assert ContextReference.__module__ == "src.types"
     assert ContextPrediction.__module__ == "src.types"
     assert (
-        context_prediction_to_full_mask.__module__
-        == "src.predict.context.postprocess"
+        context_prediction_to_full_mask.__module__ == "src.predict.context.postprocess"
     )
     assert area_ratio_score.__module__ == "src.predict.context.scoring"
 

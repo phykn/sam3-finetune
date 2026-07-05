@@ -6,6 +6,7 @@ from typing import Sequence
 
 import numpy as np
 from PIL import Image
+from src.predict.refine import MaskRefiner, select_best_mask
 
 
 @dataclass(frozen=True)
@@ -38,31 +39,6 @@ def resolve_box(image: Image.Image, box: Sequence[int] | None) -> list[int]:
     y0 = max(0, min(height, y0))
     y1 = max(0, min(height, y1))
     return [x0, y0, x1, y1]
-
-
-def select_best_mask(
-    masks: np.ndarray,
-    scores: np.ndarray,
-) -> tuple[np.ndarray, float, int]:
-    mask_arr = np.asarray(masks)
-    score_arr = np.asarray(scores, dtype=np.float32)
-    if mask_arr.ndim < 3:
-        raise ValueError("masks must have candidate and spatial dimensions")
-
-    candidate_count = int(np.prod(mask_arr.shape[:-2]))
-    flat_scores = score_arr.reshape(-1)
-    if flat_scores.size != candidate_count:
-        raise ValueError(
-            f"score count {flat_scores.size} does not match mask count {candidate_count}"
-        )
-
-    flat_masks = mask_arr.reshape(candidate_count, *mask_arr.shape[-2:])
-    selected_index = int(np.argmax(flat_scores))
-    return (
-        flat_masks[selected_index].astype(bool),
-        float(flat_scores[selected_index]),
-        selected_index,
-    )
 
 
 def build_reference_mask(
@@ -158,17 +134,14 @@ def predict_sam_mask_from_prompts(
             low_res = np.asarray(low_res_masks).reshape(
                 -1, *np.asarray(low_res_masks).shape[-2:]
             )[selected_index]
-            refined_masks, refined_scores, _refined_low_res = predictor.predict(
+            refined = MaskRefiner(predictor).refine(
                 point_coords=point_coords,
                 point_labels=point_labels,
                 box=box_array,
                 mask_input=low_res,
-                multimask_output=False,
             )
-            refined_mask, refined_score, _refined_index = select_best_mask(
-                refined_masks,
-                refined_scores,
-            )
+            refined_mask = refined.mask
+            refined_score = refined.score
         return ReferenceMaskResult(
             mask=refined_mask,
             source="sam_prompt",
@@ -212,15 +185,12 @@ def predict_sam_mask_from_box(
             low_res = np.asarray(low_res_masks).reshape(
                 -1, *np.asarray(low_res_masks).shape[-2:]
             )[selected_index]
-            refined_masks, refined_scores, _refined_low_res = predictor.predict(
+            refined = MaskRefiner(predictor).refine(
                 box=box_array,
                 mask_input=low_res,
-                multimask_output=False,
             )
-            refined_mask, refined_score, _refined_index = select_best_mask(
-                refined_masks,
-                refined_scores,
-            )
+            refined_mask = refined.mask
+            refined_score = refined.score
         return ReferenceMaskResult(
             mask=refined_mask,
             source="sam",
