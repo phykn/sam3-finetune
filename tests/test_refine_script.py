@@ -2,8 +2,9 @@ import importlib.util
 from pathlib import Path
 
 import numpy as np
+import pytest
 from PIL import Image
-from src.types import MaskInstance
+from src.types import ContextPrediction, MaskInstance
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = ROOT / "scripts" / "refine.py"
@@ -17,7 +18,7 @@ def load_refine_script():
     return module
 
 
-def test_parse_args_uses_grid_mask_refine_defaults():
+def test_parse_args_uses_simple_grid_context_refine_defaults():
     script = load_refine_script()
 
     args = script.parse_args([])
@@ -28,13 +29,53 @@ def test_parse_args_uses_grid_mask_refine_defaults():
     assert args.device == "cuda"
     assert args.tiles == [1, 2]
     assert args.points_per_side == [32, 16]
-    assert args.grid_max_masks == 100
-    assert args.max_masks == 8
-    assert args.show_masks == 1
-    assert args.refine_batch_size == 8
-    assert args.refine_multimask is False
-    assert args.mask_foreground == 4.0
-    assert args.mask_background == -4.0
+    for name in (
+        "points_per_batch",
+        "grid_max_masks",
+        "max_masks",
+        "max_masks_per_crop",
+        "pred_iou_thresh",
+        "stability_score_thresh",
+        "box_nms_thresh",
+        "crop_nms_thresh",
+        "keep_crop_edge_masks",
+        "image_batch_size",
+        "prompt_batch_size",
+        "allow_cross_crop_prompt_decode",
+        "feature_layer",
+        "candidate_count",
+        "decode_batch_size",
+        "min_cell_distance",
+        "mask_nms_thresh",
+        "candidate_score_mode",
+        "context_score_weight",
+        "predicted_iou_weight",
+        "stability_score_weight",
+        "area_score_weight",
+        "negative_context_mode",
+        "negative_context_weight",
+        "negative_context_scale",
+        "min_context_score",
+        "min_mask_area",
+        "show_masks",
+        "top_k",
+    ):
+        assert not hasattr(args, name)
+
+
+def test_parse_args_rejects_removed_context_tuning_flags():
+    script = load_refine_script()
+
+    removed_flags = [
+        "--candidate-count",
+        "--max-masks",
+        "--show-masks",
+        "--top-k",
+        "--grid-max-masks",
+    ]
+    for flag in removed_flags:
+        with pytest.raises(SystemExit):
+            script.parse_args([flag, "4"])
 
 
 def test_resolve_paths_uses_single_refine_output(tmp_path):
@@ -51,7 +92,7 @@ def test_resolve_paths_uses_single_refine_output(tmp_path):
 
 def test_build_grid_kwargs_combines_tile_candidates():
     script = load_refine_script()
-    args = script.parse_args(["--overlap", "0.3", "--grid-max-masks", "25"])
+    args = script.parse_args(["--overlap", "0.3"])
     configs = [
         script.TileConfig(tile=1, points_per_side=32),
         script.TileConfig(tile=2, points_per_side=16),
@@ -59,33 +100,12 @@ def test_build_grid_kwargs_combines_tile_candidates():
 
     kwargs = script.build_grid_kwargs(args, configs)
 
-    assert kwargs["points_per_side"] == 32
-    assert kwargs["crop_grids"] == [1, 2]
-    assert kwargs["crop_points_per_side"] == [32, 16]
-    assert kwargs["crop_overlap_ratio"] == 0.3
-    assert kwargs["max_masks"] == 25
-
-
-def test_build_refiner_kwargs_exposes_mask_refine_settings():
-    script = load_refine_script()
-    args = script.parse_args(
-        [
-            "--refine-batch-size",
-            "4",
-            "--refine-multimask",
-            "--mask-foreground",
-            "5",
-            "--mask-background",
-            "-5",
-        ]
-    )
-
-    kwargs = script.build_refiner_kwargs(args)
-
-    assert kwargs["batch_size"] == 4
-    assert kwargs["multimask_output"] is True
-    assert kwargs["mask_foreground"] == 5.0
-    assert kwargs["mask_background"] == -5.0
+    assert kwargs == {
+        "points_per_side": 32,
+        "crop_grids": [1, 2],
+        "crop_points_per_side": [32, 16],
+        "crop_overlap_ratio": 0.3,
+    }
 
 
 def test_summarize_instances_includes_context_and_base_scores():
@@ -108,7 +128,7 @@ def test_summarize_instances_includes_context_and_base_scores():
         image_size=(8, 8),
     )
 
-    summary = script.summarize_instances([instance], top_k=1)
+    summary = script.summarize_instances([instance])
 
     assert summary == [
         {
@@ -126,6 +146,80 @@ def test_summarize_instances_includes_context_and_base_scores():
     ]
 
 
+def test_summarize_predictions_includes_context_scores():
+    script = load_refine_script()
+    prediction = ContextPrediction(
+        segmentation=np.ones((2, 3), dtype=bool),
+        bbox=(1, 2, 4, 4),
+        area=6,
+        point_coords=(3.0, 4.0),
+        context_score=1.1,
+        predicted_iou=0.8,
+        stability_score=0.7,
+        score=1.2,
+        image_size=(8, 8),
+        area_score=0.6,
+    )
+
+    summary = script.summarize_predictions([prediction])
+
+    assert summary == [
+        {
+            "bbox": [1, 2, 4, 4],
+            "area": 6,
+            "score": 1.2,
+            "context_score": 1.1,
+            "predicted_iou": 0.8,
+            "stability_score": 0.7,
+            "area_score": 0.6,
+            "point_coords": [3.0, 4.0],
+        }
+    ]
+
+
+def test_summaries_return_every_result_without_top_k_limit():
+    script = load_refine_script()
+    instance_a = MaskInstance(
+        segmentation=np.ones((1, 1), dtype=bool),
+        bbox=(1, 1, 2, 2),
+        area=1,
+        score=0.5,
+        image_size=(8, 8),
+    )
+    instance_b = MaskInstance(
+        segmentation=np.ones((1, 1), dtype=bool),
+        bbox=(3, 3, 4, 4),
+        area=1,
+        score=0.6,
+        image_size=(8, 8),
+    )
+    prediction_a = ContextPrediction(
+        segmentation=np.ones((1, 1), dtype=bool),
+        bbox=(1, 1, 2, 2),
+        area=1,
+        point_coords=(1.5, 1.5),
+        context_score=0.5,
+        predicted_iou=0.8,
+        stability_score=0.7,
+        score=0.9,
+        image_size=(8, 8),
+    )
+    prediction_b = ContextPrediction(
+        segmentation=np.ones((1, 1), dtype=bool),
+        bbox=(3, 3, 4, 4),
+        area=1,
+        point_coords=(3.5, 3.5),
+        context_score=0.6,
+        predicted_iou=0.8,
+        stability_score=0.7,
+        score=1.0,
+        image_size=(8, 8),
+    )
+
+    assert len(script.summarize_instances([instance_a, instance_b])) == 2
+    assert len(script.summarize_predictions([prediction_a, prediction_b])) == 2
+
+
 def test_save_refine_visualization_writes_single_sheet(tmp_path):
     script = load_refine_script()
     image = Image.new("RGB", (8, 8), (40, 50, 60))
@@ -136,15 +230,15 @@ def test_save_refine_visualization_writes_single_sheet(tmp_path):
         score=0.5,
         image_size=(8, 8),
     )
-    refined = MaskInstance(
+    refined = ContextPrediction(
         segmentation=np.ones((3, 3), dtype=bool),
         bbox=(2, 2, 5, 5),
         area=9,
-        score=1.0,
-        source="grid_refined",
-        base_score=0.5,
-        predicted_iou=1.0,
+        point_coords=(3.0, 3.0),
+        context_score=0.9,
+        predicted_iou=0.8,
         stability_score=0.7,
+        score=1.0,
         image_size=(8, 8),
     )
     output_path = tmp_path / "refine.png"
@@ -154,7 +248,6 @@ def test_save_refine_visualization_writes_single_sheet(tmp_path):
         [base],
         [refined],
         output_path,
-        max_masks=1,
     )
 
     saved = Image.open(output_path)

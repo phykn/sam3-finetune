@@ -22,6 +22,7 @@ class Sam3Predictor:
         self.model = model.to(self.device).eval()
         self.transforms = ImageTransforms(resolution=1008, mask_threshold=0.0)
         self._embedding: api_types.Sam3ImageEmbedding | None = None
+        self._dense_pe: torch.Tensor | None = None
 
     @classmethod
     def from_checkpoint(
@@ -38,6 +39,11 @@ class Sam3Predictor:
 
     def set_image_embedding(self, embedding: api_types.Sam3ImageEmbedding) -> None:
         self._embedding = embedding
+
+    def dense_pe(self) -> torch.Tensor:
+        if self._dense_pe is None or self._dense_pe.device != self.device:
+            self._dense_pe = self.model.prompt_encoder.get_dense_pe().to(self.device)
+        return self._dense_pe
 
     def encode_image_tensor_batch(
         self,
@@ -86,13 +92,10 @@ class Sam3Predictor:
     ) -> list[api_types.Sam3ImageEmbedding]:
         if not images:
             raise ValueError("images batch must be non-empty")
-        tensors: list[torch.Tensor] = []
-        orig_hws: list[tuple[int, int]] = []
-        for image in images:
-            tensor, orig_hw = self.transforms.preprocess_image(image, self.device)
-            tensors.append(tensor)
-            orig_hws.append(orig_hw)
-        input_tensor = torch.cat(tensors, dim=0)
+        input_tensor, orig_hws = self.transforms.preprocess_images(
+            tuple(images),
+            self.device,
+        )
         return self.encode_image_tensor_batch(
             input_tensor,
             orig_hws,
@@ -146,7 +149,7 @@ class Sam3Predictor:
         )
         low_res_masks, iou_predictions, _tokens, _obj_scores = self.model.mask_decoder(
             image_embeddings=embedding.image_embed,
-            image_pe=self.model.prompt_encoder.get_dense_pe().to(self.device),
+            image_pe=self.dense_pe(),
             sparse_prompt_embeddings=sparse_embeddings,
             dense_prompt_embeddings=dense_embeddings,
             multimask_output=multimask_output,
@@ -237,7 +240,7 @@ class Sam3Predictor:
 
         low_res_masks, iou_predictions, _tokens, _obj_scores = self.model.mask_decoder(
             image_embeddings=image_embeddings,
-            image_pe=self.model.prompt_encoder.get_dense_pe().to(self.device),
+            image_pe=self.dense_pe(),
             sparse_prompt_embeddings=sparse_embeddings,
             dense_prompt_embeddings=dense_embeddings,
             multimask_output=multimask_output,

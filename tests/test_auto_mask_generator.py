@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 from PIL import Image
 from src.ops.box import calc_area, calc_iou, filter_boxes
 from src.predict.grid.generator import AutomaticMaskGenerator
@@ -102,6 +103,20 @@ def test_box_iou_and_nms_boxes_remove_lower_scoring_duplicate():
 
     assert calc_area((0, 0, 10, 10)) == 100
     assert calc_iou((0, 0, 10, 10), (20, 20, 30, 30)) == 0.0
+    assert filter_boxes(boxes, scores, iou_threshold=0.6) == [0, 2]
+
+
+def test_filter_boxes_accepts_torch_tensors():
+    boxes = torch.tensor(
+        [
+            [0, 0, 10, 10],
+            [1, 1, 11, 11],
+            [20, 20, 30, 30],
+        ],
+        dtype=torch.float32,
+    )
+    scores = torch.tensor([0.9, 0.8, 0.7], dtype=torch.float32, requires_grad=True)
+
     assert filter_boxes(boxes, scores, iou_threshold=0.6) == [0, 2]
 
 

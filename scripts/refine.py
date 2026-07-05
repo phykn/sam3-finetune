@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.types import MaskInstance
+from src.types import ContextPrediction, MaskInstance
 
 
 @dataclass
@@ -44,24 +44,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--tiles", nargs="+", type=int, default=[1, 2])
     parser.add_argument("--points-per-side", nargs="+", type=int, default=[32, 16])
     parser.add_argument("--overlap", type=float, default=0.25)
-    parser.add_argument("--points-per-batch", type=int, default=64)
-    parser.add_argument("--grid-max-masks", type=int, default=100)
-    parser.add_argument("--max-masks-per-crop", type=int, default=None)
-    parser.add_argument("--pred-iou-thresh", type=float, default=0.0)
-    parser.add_argument("--stability-score-thresh", type=float, default=0.75)
-    parser.add_argument("--box-nms-thresh", type=float, default=0.7)
-    parser.add_argument("--crop-nms-thresh", type=float, default=None)
-    parser.add_argument("--keep-crop-edge-masks", action="store_true")
-    parser.add_argument("--image-batch-size", type=int, default=1)
-    parser.add_argument("--prompt-batch-size", type=int, default=1)
-    parser.add_argument("--allow-cross-crop-prompt-decode", action="store_true")
-    parser.add_argument("--refine-batch-size", type=int, default=8)
-    parser.add_argument("--refine-multimask", action="store_true")
-    parser.add_argument("--mask-foreground", type=float, default=4.0)
-    parser.add_argument("--mask-background", type=float, default=-4.0)
-    parser.add_argument("--max-masks", type=int, default=8)
-    parser.add_argument("--show-masks", type=int, default=1)
-    parser.add_argument("--top-k", type=int, default=8)
     return parser.parse_args(argv)
 
 
@@ -108,39 +90,17 @@ def build_grid_kwargs(
         raise ValueError("configs must not be empty")
     return {
         "points_per_side": configs[0].points_per_side,
-        "points_per_batch": args.points_per_batch,
-        "pred_iou_thresh": args.pred_iou_thresh,
-        "stability_score_thresh": args.stability_score_thresh,
-        "box_nms_thresh": args.box_nms_thresh,
-        "max_masks": args.grid_max_masks,
         "crop_grids": [config.tile for config in configs],
         "crop_points_per_side": [config.points_per_side for config in configs],
         "crop_overlap_ratio": args.overlap,
-        "crop_nms_thresh": args.crop_nms_thresh,
-        "max_masks_per_crop": args.max_masks_per_crop,
-        "filter_crop_edge_masks": not args.keep_crop_edge_masks,
-        "image_batch_size": args.image_batch_size,
-        "prompt_batch_size": args.prompt_batch_size,
-        "allow_cross_crop_prompt_decode": args.allow_cross_crop_prompt_decode,
-    }
-
-
-def build_refiner_kwargs(args: argparse.Namespace) -> dict[str, object]:
-    return {
-        "batch_size": args.refine_batch_size,
-        "multimask_output": args.refine_multimask,
-        "mask_foreground": args.mask_foreground,
-        "mask_background": args.mask_background,
     }
 
 
 def summarize_instances(
     instances: list[MaskInstance],
-    *,
-    top_k: int,
 ) -> list[dict[str, object]]:
     summaries = []
-    for instance in instances[:top_k]:
+    for instance in instances:
         summaries.append(
             {
                 "bbox": list(instance.bbox),
@@ -162,40 +122,49 @@ def summarize_instances(
     return summaries
 
 
+def summarize_predictions(
+    predictions: list[ContextPrediction],
+) -> list[dict[str, object]]:
+    summaries = []
+    for prediction in predictions:
+        summaries.append(
+            {
+                "bbox": list(prediction.bbox),
+                "area": int(prediction.area),
+                "score": float(prediction.score),
+                "context_score": float(prediction.context_score),
+                "predicted_iou": float(prediction.predicted_iou),
+                "stability_score": float(prediction.stability_score),
+                "area_score": float(prediction.area_score),
+                "point_coords": [float(value) for value in prediction.point_coords],
+            }
+        )
+    return summaries
+
+
 def save_refine_visualization(
     image: Image.Image,
     base_instances: list[MaskInstance],
-    refined_instances: list[MaskInstance],
+    refined_predictions: list[ContextPrediction],
     path: Path,
-    *,
-    max_masks: int,
 ) -> None:
     panel_width = 420
     gap = 14
     padding = 16
-    base_all_panel = _make_instance_panel(
-        image,
-        base_instances,
-        "grid masks",
-        panel_width,
-        max_masks=max(1, min(len(base_instances), 24)),
-    )
     base_panel = _make_instance_panel(
         image,
         base_instances,
-        "grid before",
+        "grid context",
         panel_width,
-        max_masks=max_masks,
     )
-    refined_panel = _make_instance_panel(
+    refined_panel = _make_prediction_panel(
         image,
-        refined_instances,
-        "refined after",
+        refined_predictions,
+        "context prediction",
         panel_width,
-        max_masks=max_masks,
     )
-    panels = [base_all_panel, base_panel, refined_panel]
-    canvas_width = padding * 2 + sum(panel.width for panel in panels) + gap * 2
+    panels = [base_panel, refined_panel]
+    canvas_width = padding * 2 + sum(panel.width for panel in panels) + gap
     canvas_height = padding * 2 + max(panel.height for panel in panels)
     canvas = Image.new("RGB", (canvas_width, canvas_height), (246, 246, 242))
     x = padding
@@ -210,14 +179,12 @@ def _make_instance_panel(
     instances: list[MaskInstance],
     title: str,
     width: int,
-    *,
-    max_masks: int,
 ) -> Image.Image:
     body = _resize_image(image, width)
     draw_image = body.convert("RGBA")
     scale_x = body.width / image.width
     scale_y = body.height / image.height
-    for index, instance in enumerate(instances[:max_masks]):
+    for index, instance in enumerate(instances):
         color = _vis_color(index)
         mask = _resize_mask(instance.to_full_mask(), body.size)
         draw_image = _overlay_full_mask(draw_image.convert("RGB"), mask, color, 85)
@@ -233,6 +200,43 @@ def _make_instance_panel(
         x0, y0, _x1, _y1 = _scale_bbox(instance.bbox, scale_x, scale_y)
         draw.text((x0 + 4, max(0, y0 - 14)), label, fill=color)
     return _with_header(draw_image.convert("RGB"), title)
+
+
+def _make_prediction_panel(
+    image: Image.Image,
+    predictions: list[ContextPrediction],
+    title: str,
+    width: int,
+) -> Image.Image:
+    body = _resize_image(image, width)
+    draw_image = body.convert("RGBA")
+    scale_x = body.width / image.width
+    scale_y = body.height / image.height
+    for index, prediction in enumerate(predictions):
+        color = _vis_color(index)
+        mask = _resize_mask(_prediction_to_full_mask(prediction), body.size)
+        draw_image = _overlay_full_mask(draw_image.convert("RGB"), mask, color, 95)
+        draw = ImageDraw.Draw(draw_image)
+        draw.rectangle(
+            _scale_bbox(prediction.bbox, scale_x, scale_y),
+            outline=color,
+            width=3,
+        )
+        x0, y0, _x1, _y1 = _scale_bbox(prediction.bbox, scale_x, scale_y)
+        draw.text(
+            (x0 + 4, max(0, y0 - 14)),
+            f"{index + 1} c={prediction.context_score:.2f}",
+            fill=color,
+        )
+    return _with_header(draw_image.convert("RGB"), title)
+
+
+def _prediction_to_full_mask(prediction: ContextPrediction) -> np.ndarray:
+    width, height = prediction.image_size
+    x0, y0, x1, y1 = prediction.bbox
+    full_mask = np.zeros((height, width), dtype=bool)
+    full_mask[y0:y1, x0:x1] = prediction.segmentation
+    return full_mask
 
 
 def _with_header(body: Image.Image, title: str) -> Image.Image:
@@ -314,14 +318,14 @@ def main(argv: list[str] | None = None) -> None:
     paths.output_dir.mkdir(parents=True, exist_ok=True)
 
     from src.predict.prompted import Sam3Predictor
-    from src.predict.refine import GridMaskRefiner
+    from src.predict.refine import ContextGridRefiner
 
     image = Image.open(paths.image).convert("RGB")
     predictor = Sam3Predictor.from_checkpoint(paths.checkpoint, device=device)
-    refiner = GridMaskRefiner.from_predictor(
+    refiner = ContextGridRefiner.from_predictor(
         predictor,
         grid_kwargs=build_grid_kwargs(args, tile_configs),
-        **build_refiner_kwargs(args),
+        matcher_kwargs={"max_masks": None},
     )
     autocast_context = (
         torch.autocast(device_type="cuda", dtype=torch.float16)
@@ -336,9 +340,8 @@ def main(argv: list[str] | None = None) -> None:
     save_refine_visualization(
         image,
         result.base_instances,
-        result.refined_instances,
+        result.refined_predictions,
         paths.output,
-        max_masks=args.show_masks,
     )
 
     print(
@@ -351,16 +354,11 @@ def main(argv: list[str] | None = None) -> None:
                 "points_per_side": [config.points_per_side for config in tile_configs],
                 "overlap": args.overlap,
                 "grid_candidate_count": len(result.base_instances),
-                "refined_count": len(result.refined_instances),
+                "context_reference_count": len(result.context_references),
+                "refined_count": len(result.refined_predictions),
                 "elapsed_sec": round(elapsed, 3),
-                "grid_preview": summarize_instances(
-                    result.base_instances,
-                    top_k=args.top_k,
-                ),
-                "refined_preview": summarize_instances(
-                    result.refined_instances,
-                    top_k=args.top_k,
-                ),
+                "grid_results": summarize_instances(result.base_instances),
+                "refined_results": summarize_predictions(result.refined_predictions),
                 "output": str(paths.output),
             },
             indent=2,

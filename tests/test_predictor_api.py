@@ -11,6 +11,10 @@ from src.types import Sam3ImageEmbedding, Sam3PromptBatch
 class FakePromptEncoder(torch.nn.Module):
     mask_input_size = (288, 288)
 
+    def __init__(self):
+        super().__init__()
+        self.get_dense_pe_calls = 0
+
     def forward(self, points=None, boxes=None, masks=None):
         self.last_points = points
         batch_size = points[0].shape[0] if points is not None else masks.shape[0]
@@ -19,6 +23,7 @@ class FakePromptEncoder(torch.nn.Module):
         return sparse, dense
 
     def get_dense_pe(self):
+        self.get_dense_pe_calls += 1
         return torch.zeros(1, 256, 72, 72)
 
 
@@ -209,6 +214,37 @@ def test_encode_image_batch_stacks_preprocessed_images():
     assert [embedding.orig_hw for embedding in embeddings] == [(10, 20), (30, 40)]
 
 
+def test_encode_image_batch_uses_batch_preprocessing():
+    class TrackingTransforms:
+        def __init__(self) -> None:
+            self.batch_calls = 0
+            self.device = None
+
+        def preprocess_images(self, images, device):
+            self.batch_calls += 1
+            self.device = device
+            return torch.zeros(len(images), 3, 1008, 1008), [(10, 20), (30, 40)]
+
+        def preprocess_image(self, image, device):
+            raise AssertionError("encode_image_batch should preprocess as a batch")
+
+    model = FakeModel()
+    predictor = Sam3Predictor(model, device=torch.device("cpu"))
+    transforms = TrackingTransforms()
+    predictor.transforms = transforms
+
+    embeddings = predictor.encode_image_batch(
+        [
+            Image.new("RGB", (20, 10), color=(0, 0, 0)),
+            Image.new("RGB", (40, 30), color=(0, 0, 0)),
+        ]
+    )
+
+    assert transforms.batch_calls == 1
+    assert transforms.device == torch.device("cpu")
+    assert len(embeddings) == 2
+
+
 def test_predict_from_embedding_does_not_require_set_image():
     predictor = Sam3Predictor(FakeModel(), device=torch.device("cpu"))
     embedding = predictor.encode_image(Image.new("RGB", (20, 10), color=(0, 0, 0)))
@@ -222,6 +258,21 @@ def test_predict_from_embedding_does_not_require_set_image():
     assert masks.shape == (1, 10, 20)
     assert scores.shape == (1,)
     assert low_res.shape == (1, 288, 288)
+
+
+def test_predictor_caches_dense_position_encoding():
+    model = FakeModel()
+    predictor = Sam3Predictor(model, device=torch.device("cpu"))
+    embedding = predictor.encode_image(Image.new("RGB", (20, 10), color=(0, 0, 0)))
+
+    for _ in range(2):
+        predictor.predict_from_embedding(
+            embedding,
+            point_coords=np.array([[[10, 5]]], dtype=np.float32),
+            point_labels=np.array([[1]], dtype=np.int64),
+        )
+
+    assert model.prompt_encoder.get_dense_pe_calls == 1
 
 
 def test_predict_from_embedding_batches_decodes_multiple_prompt_batches_once():

@@ -1,6 +1,6 @@
 from .grid import (
-    GridMaskRefiner as GridMaskRefiner,
-    GridRefineResult as GridRefineResult,
+    ContextGridRefiner as ContextGridRefiner,
+    ContextGridRefineResult as ContextGridRefineResult,
 )
 from .masks import (
     MaskRefiner as MaskRefiner,

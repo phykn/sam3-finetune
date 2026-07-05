@@ -9,7 +9,7 @@ from ...types import ContextPrediction
 def nms_context_predictions(
     predictions: Sequence[ContextPrediction],
     iou_threshold: float,
-    max_masks: int,
+    max_masks: int | None,
 ) -> list[ContextPrediction]:
     kept: list[ContextPrediction] = []
     for prediction in predictions:
@@ -18,7 +18,7 @@ def nms_context_predictions(
             for existing in kept
         ):
             kept.append(prediction)
-        if len(kept) >= max_masks:
+        if max_masks is not None and len(kept) >= max_masks:
             break
     return kept
 

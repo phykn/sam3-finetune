@@ -21,7 +21,11 @@ def _image_from_feature_map(feature_map: torch.Tensor) -> np.ndarray:
 
 
 class FakeReferencePredictor:
+    def __init__(self) -> None:
+        self.encode_batches = []
+
     def encode_image_batch(self, images):
+        self.encode_batches.append(list(images))
         return [
             _embedding_from_feature_map(_FEATURES_BY_IMAGE_ID[id(image)])
             for image in images
@@ -174,6 +178,44 @@ def test_reference_guided_generator_wraps_base_automatic_generator():
     assert base_generator.image is target_image
     assert len(ranked) == 1
     assert ranked[0].bbox == (20, 10, 30, 20)
+    assert ranked[0].concept_id == 2
+
+
+def test_reference_guided_rerank_reuses_prepared_references():
+    from src.predict.context.guided import ReferenceGuidedMaskGenerator
+
+    reference_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    reference_features[0, 1:3, 1:3] = 3.0
+    target_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    target_features[0, 1, 2] = 3.0
+    reference_image = _image_from_feature_map(reference_features)
+    target_image = _image_from_feature_map(target_features)
+    reference_mask = np.zeros((40, 40), dtype=bool)
+    reference_mask[10:30, 10:30] = True
+    fake = FakeReferencePredictor()
+    generator = ReferenceGuidedMaskGenerator(
+        fake,
+        base_score_weight=0.0,
+        negative_context_mode="none",
+    )
+
+    prepared = generator.prepare_references(
+        [
+            ReferenceExample(
+                concept_id=2,
+                image=reference_image,
+                mask=reference_mask,
+            )
+        ]
+    )
+    fake.encode_batches.clear()
+    ranked = generator.rerank(
+        target_image,
+        [_candidate((20, 10, 30, 20), score=0.10)],
+        prepared,
+    )
+
+    assert fake.encode_batches == [[target_image]]
     assert ranked[0].concept_id == 2
 
 

@@ -127,6 +127,18 @@ class ImageTransforms:
         )
         return tensor.unsqueeze(0), orig_hw
 
+    def preprocess_images(
+        self,
+        images: list[Image.Image | np.ndarray] | tuple[Image.Image | np.ndarray, ...],
+        device: torch.device,
+    ) -> tuple[torch.Tensor, list[tuple[int, int]]]:
+        batch, _orig_hw, frame_hws = preprocess_rgb_images(
+            images,
+            resolution=self.resolution,
+            dtype=torch.float32,
+        )
+        return batch.to(device=device, non_blocking=True), frame_hws
+
     def transform_coords(
         self,
         coords: np.ndarray | torch.Tensor,

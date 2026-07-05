@@ -1,5 +1,5 @@
 import numpy as np
-from src.types import MaskInstance
+from src.types import ContextPrediction, MaskInstance
 
 
 def _instance(score: float, *, bbox=(1, 1, 3, 3)) -> MaskInstance:
@@ -18,100 +18,109 @@ def _instance(score: float, *, bbox=(1, 1, 3, 3)) -> MaskInstance:
     )
 
 
-def test_grid_mask_refiner_uses_every_grid_mask_as_mask_prompt():
-    from src.predict.refine import GridMaskRefiner
+def _prediction(score: float) -> ContextPrediction:
+    return ContextPrediction(
+        segmentation=np.ones((2, 2), dtype=bool),
+        bbox=(2, 2, 4, 4),
+        area=4,
+        point_coords=(3.0, 3.0),
+        context_score=score,
+        predicted_iou=0.8,
+        stability_score=0.7,
+        score=score,
+        image_size=(8, 8),
+    )
 
-    target = np.zeros((8, 8, 3), dtype=np.uint8)
+
+def test_context_grid_refiner_sends_all_grid_masks_as_same_image_context():
+    from src.predict.refine import ContextGridRefiner
+
+    image = np.zeros((8, 8, 3), dtype=np.uint8)
     base_instances = [
         _instance(0.4, bbox=(1, 1, 3, 3)),
         _instance(0.8, bbox=(4, 4, 7, 7)),
     ]
+    refined_predictions = [_prediction(1.1)]
 
     class FakeBaseGenerator:
         def __init__(self) -> None:
-            self.target_image = None
+            self.image = None
 
         def generate_instances(self, target_image):
-            self.target_image = target_image
+            self.image = target_image
             return base_instances
 
-    class FakePredictor:
+    class FakeMatcher:
         def __init__(self) -> None:
-            self.mask_inputs = []
+            self.calls = []
 
-        def encode_image(self, image):
-            return object()
-
-        def predict_from_embedding(self, embedding, **kwargs):
-            mask_input = kwargs["mask_input"]
-            self.mask_inputs.append(mask_input)
-            batch_size = mask_input.shape[0]
-            masks = np.zeros((batch_size, 1, 8, 8), dtype=bool)
-            scores = np.zeros((batch_size, 1), dtype=np.float32)
-            low_res = np.zeros((batch_size, 1, 4, 4), dtype=np.float32)
-            for index in range(batch_size):
-                masks[index, 0] = mask_input[index] > 0
-                scores[index, 0] = 0.9 - index * 0.1
-                low_res[index, 0] = 1.0
-            return masks, scores, low_res
+        def predict(self, target_image, references, *, max_masks=None):
+            self.calls.append(
+                {
+                    "target_image": target_image,
+                    "references": references,
+                    "max_masks": max_masks,
+                }
+            )
+            return refined_predictions
 
     base_generator = FakeBaseGenerator()
-    predictor = FakePredictor()
-    refiner = GridMaskRefiner(
-        predictor=predictor,
+    matcher = FakeMatcher()
+    refiner = ContextGridRefiner(
         base_generator=base_generator,
-        batch_size=4,
-        mask_foreground=4.0,
-        mask_background=-4.0,
+        matcher=matcher,
     )
 
-    result = refiner.refine(target)
+    result = refiner.refine(image, max_masks=1)
 
-    assert base_generator.target_image is target
-    assert len(predictor.mask_inputs) == 1
-    assert predictor.mask_inputs[0].shape == (2, 8, 8)
-    np.testing.assert_array_equal(
-        predictor.mask_inputs[0][0],
-        np.where(base_instances[0].to_full_mask(), 4.0, -4.0).astype(np.float32),
-    )
-    np.testing.assert_array_equal(
-        predictor.mask_inputs[0][1],
-        np.where(base_instances[1].to_full_mask(), 4.0, -4.0).astype(np.float32),
-    )
+    assert base_generator.image is image
+    assert matcher.calls[0]["target_image"] is image
+    assert matcher.calls[0]["max_masks"] == 1
+    references = matcher.calls[0]["references"]
+    assert len(references) == 2
+    for reference, instance in zip(references, base_instances):
+        assert reference.image is image
+        assert reference.weight == 1.0
+        np.testing.assert_array_equal(reference.mask, instance.to_full_mask())
     assert result.base_instances == base_instances
-    assert len(result.refined_instances) == 2
-    assert result.refined_instances[0].source == "grid_refined"
-    assert result.refined_instances[0].base_score == 0.4
-    assert result.refined_instances[0].score == np.float32(0.9)
+    assert result.context_references == references
+    assert result.refined_predictions == refined_predictions
 
 
-def test_grid_mask_refiner_returns_empty_when_grid_finds_no_masks():
-    from src.predict.refine import GridMaskRefiner
+def test_context_grid_refiner_returns_empty_when_grid_finds_no_context_masks():
+    from src.predict.refine import ContextGridRefiner
 
     class FakeBaseGenerator:
         def generate_instances(self, target_image):
             return []
 
-    class FakePredictor:
-        def encode_image(self, image):
-            raise AssertionError("encode_image should not be called")
+    class FakeMatcher:
+        def __init__(self) -> None:
+            self.called = False
 
-    refiner = GridMaskRefiner(
-        predictor=FakePredictor(),
+        def predict(self, target_image, references, *, max_masks=None):
+            self.called = True
+            return []
+
+    matcher = FakeMatcher()
+    refiner = ContextGridRefiner(
         base_generator=FakeBaseGenerator(),
+        matcher=matcher,
     )
 
     result = refiner.refine(np.zeros((8, 8, 3), dtype=np.uint8))
 
+    assert matcher.called is False
     assert result.base_instances == []
-    assert result.refined_instances == []
+    assert result.context_references == []
+    assert result.refined_predictions == []
 
 
-def test_refine_package_exports_grid_mask_refiner_api():
+def test_refine_package_exports_context_grid_refiner_api():
     import src.predict.refine as refine
-    from src.predict.refine.grid import GridMaskRefiner, GridRefineResult
+    from src.predict.refine.grid import ContextGridRefiner, ContextGridRefineResult
 
-    assert refine.GridMaskRefiner is GridMaskRefiner
-    assert refine.GridRefineResult is GridRefineResult
+    assert refine.ContextGridRefiner is ContextGridRefiner
+    assert refine.ContextGridRefineResult is ContextGridRefineResult
     assert hasattr(refine, "MaskRefiner")
     assert not hasattr(refine, "__all__")

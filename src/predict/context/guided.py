@@ -1,19 +1,35 @@
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import torch
 from PIL import Image
 
-from ...types import ContextReference, MaskInstance, ReferenceExample
+from ...types import (
+    ContextReference,
+    MaskInstance,
+    ReferenceExample,
+    Sam3ImageEmbedding,
+)
 from ..prompted import Sam3Predictor
 from .prototype import (
     build_context_prototype,
+    ContextPrototype,
     mean_score_over_mask,
     resize_similarity_map,
     select_feature,
     similarity_map,
 )
+
+
+@dataclass(frozen=True)
+class PreparedReferenceGuide:
+    references: tuple[ReferenceExample, ...]
+    context_references: tuple[ContextReference, ...]
+    embeddings: tuple[Sam3ImageEmbedding, ...]
+    prototype: ContextPrototype
+    concept_id: int
 
 
 class ReferenceGuidedMaskGenerator:
@@ -61,10 +77,39 @@ class ReferenceGuidedMaskGenerator:
         )
 
     @torch.inference_mode()
+    def prepare_references(
+        self,
+        references: Sequence[ReferenceExample],
+    ) -> PreparedReferenceGuide:
+        if not references:
+            raise ValueError("references must be non-empty")
+        concept_id = _shared_reference_concept_id(references)
+        context_references = tuple(_context_references(references))
+        embeddings = tuple(
+            self.predictor.encode_image_batch(
+                [reference.image for reference in context_references]
+            )
+        )
+        prototype = build_context_prototype(
+            context_references,
+            embeddings,
+            feature_layer=self.feature_layer,
+            negative_context_mode=self.negative_context_mode,
+            negative_context_scale=self.negative_context_scale,
+        )
+        return PreparedReferenceGuide(
+            references=tuple(references),
+            context_references=context_references,
+            embeddings=embeddings,
+            prototype=prototype,
+            concept_id=concept_id,
+        )
+
+    @torch.inference_mode()
     def generate(
         self,
         target_image: Image.Image | np.ndarray,
-        references: Sequence[ReferenceExample],
+        references: Sequence[ReferenceExample] | PreparedReferenceGuide,
         *,
         max_masks: int | None = None,
     ) -> list[MaskInstance]:
@@ -83,35 +128,36 @@ class ReferenceGuidedMaskGenerator:
         self,
         target_image: Image.Image | np.ndarray,
         candidates: Sequence[MaskInstance],
-        references: Sequence[ReferenceExample],
+        references: Sequence[ReferenceExample] | PreparedReferenceGuide,
         *,
         max_masks: int | None = None,
     ) -> list[MaskInstance]:
-        if not references:
+        if isinstance(references, PreparedReferenceGuide):
+            prepared = references
+        elif not references:
             raise ValueError("references must be non-empty")
         if not candidates:
             return []
 
-        concept_id = _shared_reference_concept_id(references)
-        context_references = _context_references(references)
-        image_batch = [reference.image for reference in context_references] + [
-            target_image
-        ]
-        embeddings = self.predictor.encode_image_batch(image_batch)
-        reference_embeddings = embeddings[:-1]
-        target_embedding = embeddings[-1]
+        if isinstance(references, PreparedReferenceGuide):
+            target_embedding = self.predictor.encode_image_batch([target_image])[0]
+        else:
+            context_references = _context_references(references)
+            image_batch = [reference.image for reference in context_references] + [
+                target_image
+            ]
+            embeddings = self.predictor.encode_image_batch(image_batch)
+            prepared = self._prepare_from_embeddings(
+                references,
+                context_references,
+                embeddings[:-1],
+            )
+            target_embedding = embeddings[-1]
 
-        prototype = build_context_prototype(
-            context_references,
-            reference_embeddings,
-            feature_layer=self.feature_layer,
-            negative_context_mode=self.negative_context_mode,
-            negative_context_scale=self.negative_context_scale,
-        )
         target_features = select_feature(target_embedding, self.feature_layer)
         similarity = similarity_map(
             target_features,
-            prototype,
+            prepared.prototype,
             negative_context_weight=self.negative_context_weight,
         )
         similarity_full = resize_similarity_map(
@@ -133,7 +179,7 @@ class ReferenceGuidedMaskGenerator:
             ranked.append(
                 _reranked_instance(
                     candidate,
-                    concept_id=concept_id,
+                    concept_id=prepared.concept_id,
                     context_score=context_score,
                     combined_score=(
                         context_score * self.context_score_weight
@@ -149,6 +195,28 @@ class ReferenceGuidedMaskGenerator:
                 raise ValueError("max_masks must be positive")
             ranked = ranked[: int(limit)]
         return ranked
+
+    def _prepare_from_embeddings(
+        self,
+        references: Sequence[ReferenceExample],
+        context_references: Sequence[ContextReference],
+        embeddings: Sequence[Sam3ImageEmbedding],
+    ) -> PreparedReferenceGuide:
+        concept_id = _shared_reference_concept_id(references)
+        prototype = build_context_prototype(
+            context_references,
+            embeddings,
+            feature_layer=self.feature_layer,
+            negative_context_mode=self.negative_context_mode,
+            negative_context_scale=self.negative_context_scale,
+        )
+        return PreparedReferenceGuide(
+            references=tuple(references),
+            context_references=tuple(context_references),
+            embeddings=tuple(embeddings),
+            prototype=prototype,
+            concept_id=concept_id,
+        )
 
 
 def _context_references(

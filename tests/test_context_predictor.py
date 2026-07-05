@@ -23,10 +23,12 @@ def _image_from_feature_map(feature_map: torch.Tensor) -> np.ndarray:
 
 class FakeContextPredictor:
     def __init__(self) -> None:
+        self.encode_batches = []
         self.decode_batches = []
         self.mask_inputs = []
 
     def encode_image_batch(self, images):
+        self.encode_batches.append(list(images))
         return [
             _embedding_from_feature_map(_FEATURES_BY_IMAGE_ID[id(image)])
             for image in images
@@ -278,6 +280,40 @@ def test_context_predictor_uses_explicit_target_points_as_candidates():
     np.testing.assert_allclose(fake.decode_batches[0][0, 0], np.array([12.0, 34.0]))
 
 
+def test_context_matcher_reuses_prepared_references():
+    from src.predict.context.matcher import ContextMatcher
+    from src.types import ContextReference
+
+    reference_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    reference_features[0, 1:3, 1:3] = 3.0
+    target_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    target_features[0, 1, 2] = 3.0
+    reference_image = _image_from_feature_map(reference_features)
+    target_image = _image_from_feature_map(target_features)
+    reference_mask = np.zeros((40, 40), dtype=bool)
+    reference_mask[10:30, 10:30] = True
+    fake = FakeContextPredictor()
+    predictor = ContextMatcher(
+        fake,
+        candidate_count=4,
+        decode_batch_size=2,
+        max_masks=1,
+    )
+
+    prepared = predictor.prepare_references(
+        [
+            ContextReference(
+                image=reference_image,
+                mask=reference_mask,
+            )
+        ]
+    )
+    fake.encode_batches.clear()
+    predictor.predict(target_image=target_image, references=prepared)
+
+    assert fake.encode_batches == [[target_image]]
+
+
 def test_context_predictor_rejects_non_positive_predict_max_masks():
     from src.predict.context.matcher import ContextMatcher
     from src.types import ContextReference
@@ -301,6 +337,41 @@ def test_context_predictor_rejects_non_positive_predict_max_masks():
         assert "max_masks" in str(exc)
     else:
         raise AssertionError("Expected ValueError")
+
+
+def test_context_postprocess_keeps_all_predictions_when_max_masks_is_none():
+    from src.predict.context.postprocess import nms_context_predictions
+    from src.types import ContextPrediction
+
+    predictions = [
+        ContextPrediction(
+            segmentation=np.ones((2, 2), dtype=bool),
+            bbox=(0, 0, 2, 2),
+            area=4,
+            point_coords=(1.0, 1.0),
+            context_score=0.9,
+            predicted_iou=0.8,
+            stability_score=0.7,
+            score=1.0,
+            image_size=(8, 8),
+        ),
+        ContextPrediction(
+            segmentation=np.ones((2, 2), dtype=bool),
+            bbox=(4, 4, 6, 6),
+            area=4,
+            point_coords=(5.0, 5.0),
+            context_score=0.8,
+            predicted_iou=0.8,
+            stability_score=0.7,
+            score=0.9,
+            image_size=(8, 8),
+        ),
+    ]
+
+    assert (
+        nms_context_predictions(predictions, iou_threshold=0.0, max_masks=None)
+        == predictions
+    )
 
 
 def test_context_predictor_rejects_target_points_on_image_boundary():

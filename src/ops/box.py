@@ -2,6 +2,7 @@ from collections.abc import Sequence
 
 import numpy as np
 import torch
+from torchvision.ops import nms
 
 
 def convert_to_xyxy(box: torch.Tensor) -> torch.Tensor:
@@ -39,19 +40,24 @@ def calc_iou(box_a: Sequence[float], box_b: Sequence[float]) -> float:
 
 
 def filter_boxes(
-    boxes: np.ndarray,
-    scores: np.ndarray,
+    boxes: np.ndarray | torch.Tensor,
+    scores: np.ndarray | torch.Tensor,
     iou_threshold: float,
 ) -> list[int]:
-    if len(boxes) == 0:
+    boxes_t = _as_float_tensor(boxes)
+    scores_t = _as_float_tensor(scores)
+    if boxes_t.numel() == 0:
         return []
+    if boxes_t.ndim != 2 or boxes_t.shape[1] != 4:
+        raise ValueError("boxes must have shape Nx4")
+    if scores_t.ndim != 1 or scores_t.shape[0] != boxes_t.shape[0]:
+        raise ValueError("scores must have shape N")
 
-    order = np.argsort(-scores, kind="mergesort")
-    keep: list[int] = []
+    keep = nms(boxes_t, scores_t, float(iou_threshold))
+    return [int(index) for index in keep.detach().cpu().tolist()]
 
-    for index in order:
-        candidate = boxes[index]
-        if all(calc_iou(candidate, boxes[kept]) <= iou_threshold for kept in keep):
-            keep.append(int(index))
 
-    return keep
+def _as_float_tensor(value: np.ndarray | torch.Tensor) -> torch.Tensor:
+    if isinstance(value, torch.Tensor):
+        return value.detach().to(dtype=torch.float32)
+    return torch.as_tensor(value, dtype=torch.float32)

@@ -13,6 +13,7 @@ from ..prompted import Sam3Predictor
 from .postprocess import nms_context_predictions
 from .prototype import (
     build_context_prototype,
+    ContextPrototype,
     mean_score_over_mask,
     resize_similarity_map,
     select_feature,
@@ -28,6 +29,14 @@ class ReferenceShapePrior:
     height_ratio: float
 
 
+@dataclass(frozen=True)
+class PreparedContextReferences:
+    references: tuple[ContextReference, ...]
+    embeddings: tuple[Sam3ImageEmbedding, ...]
+    prototype: ContextPrototype
+    shape_prior: ReferenceShapePrior | None
+
+
 class ContextMatcher:
     def __init__(
         self,
@@ -36,7 +45,7 @@ class ContextMatcher:
         feature_layer: str | int = "image_embed",
         candidate_count: int = 64,
         decode_batch_size: int = 16,
-        max_masks: int = 10,
+        max_masks: int | None = None,
         min_cell_distance: float = 2.0,
         mask_nms_thresh: float = 0.7,
         candidate_score_mode: str = "point",
@@ -58,7 +67,7 @@ class ContextMatcher:
             raise ValueError("candidate_count must be positive")
         if decode_batch_size <= 0:
             raise ValueError("decode_batch_size must be positive")
-        if max_masks <= 0:
+        if max_masks is not None and max_masks <= 0:
             raise ValueError("max_masks must be positive")
         if min_cell_distance < 0:
             raise ValueError("min_cell_distance must be non-negative")
@@ -78,7 +87,7 @@ class ContextMatcher:
         self.feature_layer = feature_layer
         self.candidate_count = int(candidate_count)
         self.decode_batch_size = int(decode_batch_size)
-        self.max_masks = int(max_masks)
+        self.max_masks = None if max_masks is None else int(max_masks)
         self.min_cell_distance = float(min_cell_distance)
         self.mask_nms_thresh = float(mask_nms_thresh)
         self.candidate_score_mode = candidate_score_mode
@@ -109,24 +118,24 @@ class ContextMatcher:
         )
 
     @torch.inference_mode()
-    def predict(
+    def prepare_references(
         self,
-        target_image: Image.Image | np.ndarray,
         references: Sequence[ContextReference],
-        *,
-        max_masks: int | None = None,
-        target_point_coords: np.ndarray | torch.Tensor | None = None,
-    ) -> list[ContextPrediction]:
+    ) -> PreparedContextReferences:
         if not references:
             raise ValueError("references must be non-empty")
-        if max_masks is not None and max_masks <= 0:
-            raise ValueError("max_masks must be positive")
+        reference_embeddings = tuple(
+            self.predictor.encode_image_batch(
+                [reference.image for reference in references]
+            )
+        )
+        return self._prepare_from_embeddings(references, reference_embeddings)
 
-        image_batch = [reference.image for reference in references] + [target_image]
-        embeddings = self.predictor.encode_image_batch(image_batch)
-        reference_embeddings = embeddings[:-1]
-        target_embedding = embeddings[-1]
-
+    def _prepare_from_embeddings(
+        self,
+        references: Sequence[ContextReference],
+        reference_embeddings: Sequence[Sam3ImageEmbedding],
+    ) -> PreparedContextReferences:
         prototype = build_context_prototype(
             references,
             reference_embeddings,
@@ -139,16 +148,46 @@ class ContextMatcher:
             if self.use_reference_mask_prior or self.candidate_score_mode == "shape"
             else None
         )
+        return PreparedContextReferences(
+            references=tuple(references),
+            embeddings=tuple(reference_embeddings),
+            prototype=prototype,
+            shape_prior=shape_prior,
+        )
+
+    @torch.inference_mode()
+    def predict(
+        self,
+        target_image: Image.Image | np.ndarray,
+        references: Sequence[ContextReference] | PreparedContextReferences,
+        *,
+        max_masks: int | None = None,
+        target_point_coords: np.ndarray | torch.Tensor | None = None,
+    ) -> list[ContextPrediction]:
+        if not references:
+            raise ValueError("references must be non-empty")
+        if max_masks is not None and max_masks <= 0:
+            raise ValueError("max_masks must be positive")
+
+        if isinstance(references, PreparedContextReferences):
+            prepared = references
+            target_embedding = self.predictor.encode_image_batch([target_image])[0]
+        else:
+            image_batch = [reference.image for reference in references] + [target_image]
+            embeddings = self.predictor.encode_image_batch(image_batch)
+            prepared = self._prepare_from_embeddings(references, embeddings[:-1])
+            target_embedding = embeddings[-1]
+
         target_features = select_feature(target_embedding, self.feature_layer)
         similarity = similarity_map(
             target_features,
-            prototype,
+            prepared.prototype,
             negative_context_weight=self.negative_context_weight,
         )
         if target_point_coords is None:
             candidate_score_map = self._candidate_score_map(
                 similarity,
-                shape_prior=shape_prior,
+                shape_prior=prepared.shape_prior,
             )
             point_coords = self._candidate_points(
                 candidate_score_map,
@@ -165,8 +204,8 @@ class ContextMatcher:
             target_embedding,
             point_coords,
             similarity,
-            reference_area_ratio=prototype.reference_area_ratio,
-            shape_prior=shape_prior,
+            reference_area_ratio=prepared.prototype.reference_area_ratio,
+            shape_prior=prepared.shape_prior,
             max_masks=self.max_masks if max_masks is None else int(max_masks),
         )
         return predictions
@@ -229,7 +268,7 @@ class ContextMatcher:
         *,
         reference_area_ratio: float,
         shape_prior: ReferenceShapePrior | None,
-        max_masks: int,
+        max_masks: int | None,
     ) -> list[ContextPrediction]:
         labels = np.ones((len(point_coords), 1), dtype=np.int64)
         similarity_full = resize_similarity_map(similarity_map, embedding.orig_hw)
