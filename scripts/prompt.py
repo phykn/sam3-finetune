@@ -15,6 +15,9 @@ if str(ROOT) not in sys.path:
 
 
 PROMPT_CASES = ("point", "points", "box", "point_box", "mask")
+POSITIVE_POINT = (560.0, 500.0)
+NEGATIVE_POINT = (300.0, 430.0)
+DEFAULT_BOX = (380.0, 270.0, 790.0, 705.0)
 
 
 @dataclass
@@ -23,11 +26,9 @@ class PromptPaths:
     checkpoint: Path
     output_dir: Path
 
-    def mask_for(self, case_name: str) -> Path:
-        return self.output_dir / f"{case_name}_mask.png"
-
-    def overlay_for(self, case_name: str) -> Path:
-        return self.output_dir / f"{case_name}_overlay.png"
+    @property
+    def output(self) -> Path:
+        return self.output_dir / "prompt.png"
 
 
 @dataclass
@@ -41,49 +42,45 @@ class PromptCase:
     display_box: np.ndarray | None = None
 
 
+@dataclass
+class PromptResult:
+    case: PromptCase
+    mask: np.ndarray
+    score: float
+    mask_shape: tuple[int, ...]
+    low_res_shape: tuple[int, ...]
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Run prompted Sam3Predictor smoke cases on one image."
-    )
+    parser = argparse.ArgumentParser(description="Run fixed prompt cases on one image.")
     parser.add_argument("--image", default="asset/frog_target.jpg")
     parser.add_argument("--checkpoint", default="weight/sam3.1_multiplex.pt")
     parser.add_argument("--output-dir", default="outputs/prompt")
     parser.add_argument("--device", choices=("cuda", "cpu", "auto"), default="cuda")
-    parser.add_argument(
-        "--case",
-        action="append",
-        choices=("all", *PROMPT_CASES),
-        default=None,
-        help="Prompt case to run. Repeat to run a subset. Defaults to all cases.",
-    )
-    parser.add_argument("--x", type=float, default=560.0)
-    parser.add_argument("--y", type=float, default=500.0)
-    parser.add_argument("--neg-x", type=float, default=300.0)
-    parser.add_argument("--neg-y", type=float, default=430.0)
-    parser.add_argument(
-        "--box",
-        nargs=4,
-        type=float,
-        default=[380.0, 270.0, 790.0, 705.0],
-        metavar=("X0", "Y0", "X1", "Y1"),
-    )
     return parser.parse_args(argv)
 
 
-def resolve_cases(case_values: list[str] | None) -> list[str]:
-    if not case_values or "all" in case_values:
-        return list(PROMPT_CASES)
-    cases = []
-    for case_value in case_values:
-        if case_value not in cases:
-            cases.append(case_value)
-    return cases
+def resolve_paths(args: argparse.Namespace, *, root: Path = ROOT) -> PromptPaths:
+    return PromptPaths(
+        image=root / args.image,
+        checkpoint=root / args.checkpoint,
+        output_dir=root / args.output_dir,
+    )
+
+
+def resolve_device(device: str) -> str:
+    if device == "auto":
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA is required when --device cuda is selected.")
+    return device
 
 
 def build_point_prompt(x: float, y: float) -> tuple[np.ndarray, np.ndarray]:
-    point_coords = np.array([[x, y]], dtype=np.float32)
-    point_labels = np.array([1], dtype=np.int64)
-    return point_coords, point_labels
+    return (
+        np.array([[x, y]], dtype=np.float32),
+        np.array([1], dtype=np.int64),
+    )
 
 
 def build_points_prompt(
@@ -92,12 +89,86 @@ def build_points_prompt(
     neg_x: float,
     neg_y: float,
 ) -> tuple[np.ndarray, np.ndarray]:
-    point_coords = np.array([[x, y], [neg_x, neg_y]], dtype=np.float32)
-    point_labels = np.array([1, 0], dtype=np.int64)
-    return point_coords, point_labels
+    return (
+        np.array([[x, y], [neg_x, neg_y]], dtype=np.float32),
+        np.array([1, 0], dtype=np.int64),
+    )
 
 
-def box_to_array(box: list[float]) -> np.ndarray:
+def build_prompt_cases(image_size: tuple[int, int]) -> list[PromptCase]:
+    point_coords, point_labels = build_point_prompt(*POSITIVE_POINT)
+    points_coords, points_labels = build_points_prompt(
+        *POSITIVE_POINT,
+        *NEGATIVE_POINT,
+    )
+    box = box_to_array(DEFAULT_BOX)
+    mask_input = build_filled_box_mask(image_size, box)
+    return [
+        PromptCase(
+            name="point",
+            point_coords=point_coords,
+            point_labels=point_labels,
+            box=None,
+            mask_input=None,
+            prompt=describe_prompt(
+                prompt_type="point",
+                point_coords=point_coords,
+                point_labels=point_labels,
+            ),
+        ),
+        PromptCase(
+            name="points",
+            point_coords=points_coords,
+            point_labels=points_labels,
+            box=None,
+            mask_input=None,
+            prompt=describe_prompt(
+                prompt_type="points",
+                point_coords=points_coords,
+                point_labels=points_labels,
+            ),
+        ),
+        PromptCase(
+            name="box",
+            point_coords=None,
+            point_labels=None,
+            box=box,
+            mask_input=None,
+            prompt=describe_prompt(prompt_type="box", box=box),
+            display_box=box,
+        ),
+        PromptCase(
+            name="point_box",
+            point_coords=point_coords,
+            point_labels=point_labels,
+            box=box,
+            mask_input=None,
+            prompt=describe_prompt(
+                prompt_type="point_box",
+                point_coords=point_coords,
+                point_labels=point_labels,
+                box=box,
+            ),
+            display_box=box,
+        ),
+        PromptCase(
+            name="mask",
+            point_coords=None,
+            point_labels=None,
+            box=None,
+            mask_input=mask_input,
+            prompt=describe_prompt(
+                prompt_type="mask",
+                box=box,
+                mask_input=mask_input,
+                mask_source="filled_box",
+            ),
+            display_box=box,
+        ),
+    ]
+
+
+def box_to_array(box: tuple[float, float, float, float]) -> np.ndarray:
     return np.asarray(box, dtype=np.float32)
 
 
@@ -113,7 +184,7 @@ def box_to_dict(box: np.ndarray) -> dict[str, float]:
 
 def build_filled_box_mask(
     image_size: tuple[int, int],
-    box: list[float] | np.ndarray,
+    box: tuple[float, float, float, float] | list[float] | np.ndarray,
 ) -> np.ndarray:
     width, height = image_size
     x0, y0, x1, y1 = np.asarray(box, dtype=np.float32).tolist()
@@ -122,7 +193,7 @@ def build_filled_box_mask(
     right = max(0, min(width, int(round(x1))))
     bottom = max(0, min(height, int(round(y1))))
     if right <= left or bottom <= top:
-        raise ValueError("--box must define a non-empty region")
+        raise ValueError("default box must define a non-empty region")
 
     mask = np.zeros((height, width), dtype=np.float32)
     mask[top:bottom, left:right] = 1.0
@@ -131,7 +202,7 @@ def build_filled_box_mask(
 
 def describe_prompt(
     *,
-    prompt_type: str = "point",
+    prompt_type: str,
     point_coords: np.ndarray | None = None,
     point_labels: np.ndarray | None = None,
     box: np.ndarray | None = None,
@@ -140,16 +211,14 @@ def describe_prompt(
 ) -> dict[str, object]:
     prompt: dict[str, object] = {"type": prompt_type}
     if point_coords is not None and point_labels is not None:
-        points = []
-        for coord, label in zip(point_coords.tolist(), point_labels.tolist()):
-            points.append(
-                {
-                    "x": float(coord[0]),
-                    "y": float(coord[1]),
-                    "label": int(label),
-                }
-            )
-        prompt["points"] = points
+        prompt["points"] = [
+            {
+                "x": float(coord[0]),
+                "y": float(coord[1]),
+                "label": int(label),
+            }
+            for coord, label in zip(point_coords.tolist(), point_labels.tolist())
+        ]
     if box is not None:
         prompt["box"] = box_to_dict(box)
     if mask_input is not None:
@@ -159,149 +228,126 @@ def describe_prompt(
     return prompt
 
 
-def build_prompt_case(
-    case_name: str,
-    args: argparse.Namespace,
-    *,
-    image_size: tuple[int, int],
-) -> PromptCase:
-    box = box_to_array(args.box)
-    if case_name == "point":
-        point_coords, point_labels = build_point_prompt(args.x, args.y)
-        return PromptCase(
-            name=case_name,
-            point_coords=point_coords,
-            point_labels=point_labels,
-            box=None,
-            mask_input=None,
-            prompt=describe_prompt(
-                prompt_type="point",
-                point_coords=point_coords,
-                point_labels=point_labels,
-            ),
-        )
-    if case_name == "points":
-        point_coords, point_labels = build_points_prompt(
-            args.x,
-            args.y,
-            args.neg_x,
-            args.neg_y,
-        )
-        return PromptCase(
-            name=case_name,
-            point_coords=point_coords,
-            point_labels=point_labels,
-            box=None,
-            mask_input=None,
-            prompt=describe_prompt(
-                prompt_type="points",
-                point_coords=point_coords,
-                point_labels=point_labels,
-            ),
-        )
-    if case_name == "box":
-        return PromptCase(
-            name=case_name,
-            point_coords=None,
-            point_labels=None,
-            box=box,
-            mask_input=None,
-            prompt=describe_prompt(prompt_type="box", box=box),
-            display_box=box,
-        )
-    if case_name == "point_box":
-        point_coords, point_labels = build_point_prompt(args.x, args.y)
-        return PromptCase(
-            name=case_name,
-            point_coords=point_coords,
-            point_labels=point_labels,
-            box=box,
-            mask_input=None,
-            prompt=describe_prompt(
-                prompt_type="point_box",
-                point_coords=point_coords,
-                point_labels=point_labels,
-                box=box,
-            ),
-            display_box=box,
-        )
-    if case_name == "mask":
-        mask_input = build_filled_box_mask(image_size, box)
-        return PromptCase(
-            name=case_name,
-            point_coords=None,
-            point_labels=None,
-            box=None,
-            mask_input=mask_input,
-            prompt=describe_prompt(
-                prompt_type="mask",
-                box=box,
-                mask_input=mask_input,
-                mask_source="filled_box",
-            ),
-            display_box=box,
-        )
-    raise ValueError(f"Unknown prompt case: {case_name}")
-
-
-def resolve_paths(args: argparse.Namespace, *, root: Path = ROOT) -> PromptPaths:
-    output_dir = root / args.output_dir
-    return PromptPaths(
-        image=root / args.image,
-        checkpoint=root / args.checkpoint,
-        output_dir=output_dir,
-    )
-
-
-def resolve_device(device: str) -> str:
-    if device == "auto":
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    if device == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA is required when --device cuda is selected.")
-    return device
-
-
-def save_overlay_with_prompt(
+def save_prompt_visualization(
     image: Image.Image,
-    mask: np.ndarray,
-    prompt_case: PromptCase,
+    results: list[PromptResult],
     path: Path,
 ) -> None:
-    base = image.convert("RGBA")
-    mask_layer = Image.new("RGBA", base.size, (255, 0, 0, 0))
-    mask_layer.putalpha(Image.fromarray(mask.astype(np.uint8) * 120, mode="L"))
-    overlay = Image.alpha_composite(base, mask_layer)
+    panel_width = 320
+    columns = 3
+    gap = 12
+    padding = 16
+    panels = [_make_result_panel(image, result, panel_width) for result in results]
+    rows = max(1, int(np.ceil(len(panels) / columns)))
+    panel_height = max(panel.height for panel in panels) if panels else 1
+    canvas_width = padding * 2 + columns * panel_width + (columns - 1) * gap
+    canvas_height = padding * 2 + rows * panel_height + (rows - 1) * gap
+    canvas = Image.new("RGB", (canvas_width, canvas_height), (246, 246, 242))
+    for index, panel in enumerate(panels):
+        x = padding + (index % columns) * (panel_width + gap)
+        y = padding + (index // columns) * (panel_height + gap)
+        canvas.paste(panel, (x, y))
+    canvas.save(path)
 
+
+def _make_result_panel(
+    image: Image.Image,
+    result: PromptResult,
+    width: int,
+) -> Image.Image:
+    body = _resize_image(image, width)
+    overlay = body.convert("RGBA")
+    mask = _resize_mask(result.mask, body.size)
+    mask_layer = Image.new("RGBA", body.size, (230, 57, 70, 255))
+    mask_layer.putalpha(Image.fromarray(mask.astype(np.uint8) * 110, mode="L"))
+    overlay = Image.alpha_composite(overlay, mask_layer)
+
+    prompt_case = result.case
     if prompt_case.mask_input is not None:
-        prompt_layer = Image.new("RGBA", base.size, (0, 210, 255, 0))
-        prompt_alpha = Image.fromarray(
-            prompt_case.mask_input.astype(bool).astype(np.uint8) * 70,
-            mode="L",
+        prompt_mask = _resize_mask(prompt_case.mask_input.astype(bool), body.size)
+        prompt_layer = Image.new("RGBA", body.size, (0, 210, 255, 255))
+        prompt_layer.putalpha(
+            Image.fromarray(prompt_mask.astype(np.uint8) * 70, mode="L")
         )
-        prompt_layer.putalpha(prompt_alpha)
         overlay = Image.alpha_composite(overlay, prompt_layer)
 
     draw = ImageDraw.Draw(overlay)
+    scale_x = body.width / image.width
+    scale_y = body.height / image.height
     if prompt_case.display_box is not None:
-        x0, y0, x1, y1 = prompt_case.display_box.tolist()
-        draw.rectangle([x0, y0, x1, y1], outline=(0, 255, 255, 255), width=4)
-
-    radius = 8
+        draw.rectangle(
+            _scale_bbox(prompt_case.display_box, scale_x, scale_y),
+            outline=(0, 210, 255, 255),
+            width=3,
+        )
     if prompt_case.point_coords is not None and prompt_case.point_labels is not None:
         for (x, y), label in zip(
             prompt_case.point_coords.tolist(),
             prompt_case.point_labels.tolist(),
         ):
-            color = (0, 255, 255, 255) if label == 1 else (255, 220, 0, 255)
-            draw.ellipse(
-                [x - radius, y - radius, x + radius, y + radius],
-                outline=color,
-                width=3,
-            )
-            draw.line([x - radius - 4, y, x + radius + 4, y], fill=color, width=2)
-            draw.line([x, y - radius - 4, x, y + radius + 4], fill=color, width=2)
+            color = (0, 210, 255, 255) if label == 1 else (255, 220, 0, 255)
+            px = x * scale_x
+            py = y * scale_y
+            draw.ellipse((px - 5, py - 5, px + 5, py + 5), outline=color, width=3)
+            draw.line((px - 8, py, px + 8, py), fill=color, width=2)
+            draw.line((px, py - 8, px, py + 8), fill=color, width=2)
 
-    overlay.save(path)
+    return _with_header(
+        overlay.convert("RGB"),
+        f"{prompt_case.name} score={result.score:.3f}",
+    )
+
+
+def _resize_image(image: Image.Image, width: int) -> Image.Image:
+    height = max(1, int(round(image.height * width / image.width)))
+    return image.resize((width, height), Image.Resampling.LANCZOS).convert("RGB")
+
+
+def _resize_mask(mask: np.ndarray, size: tuple[int, int]) -> np.ndarray:
+    return (
+        np.asarray(
+            Image.fromarray(mask.astype(np.uint8) * 255, mode="L").resize(
+                size,
+                Image.Resampling.NEAREST,
+            )
+        )
+        > 127
+    )
+
+
+def _scale_bbox(
+    bbox: np.ndarray,
+    scale_x: float,
+    scale_y: float,
+) -> tuple[int, int, int, int]:
+    x0, y0, x1, y1 = bbox.tolist()
+    return (
+        int(round(x0 * scale_x)),
+        int(round(y0 * scale_y)),
+        int(round(x1 * scale_x)),
+        int(round(y1 * scale_y)),
+    )
+
+
+def _with_header(body: Image.Image, title: str) -> Image.Image:
+    header_height = 32
+    panel = Image.new("RGB", (body.width, body.height + header_height), (30, 30, 30))
+    draw = ImageDraw.Draw(panel)
+    draw.rectangle((0, 0, panel.width, header_height), fill=(246, 246, 242))
+    draw.text((10, 9), title, fill=(30, 30, 30))
+    panel.paste(body, (0, header_height))
+    return panel
+
+
+def summarize_result(result: PromptResult) -> dict[str, object]:
+    return {
+        "case": result.case.name,
+        "prompt": result.case.prompt,
+        "score": float(result.score),
+        "mask_shape": list(result.mask_shape),
+        "low_res_shape": list(result.low_res_shape),
+        "mask_area": int(result.mask.sum()),
+    }
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -310,15 +356,10 @@ def main(argv: list[str] | None = None) -> None:
     device = resolve_device(args.device)
     paths.output_dir.mkdir(parents=True, exist_ok=True)
 
-    from src.io.save import save_mask
     from src.predict.prompted import Sam3Predictor
 
     image = Image.open(paths.image).convert("RGB")
-    cases = [
-        build_prompt_case(case_name, args, image_size=image.size)
-        for case_name in resolve_cases(args.case)
-    ]
-
+    prompt_cases = build_prompt_cases(image.size)
     predictor = Sam3Predictor.from_checkpoint(paths.checkpoint, device=device)
     autocast_context = (
         torch.autocast(device_type="cuda", dtype=torch.float16)
@@ -326,10 +367,10 @@ def main(argv: list[str] | None = None) -> None:
         else torch.no_grad()
     )
     started_at = time.perf_counter()
-    results = []
-    with autocast_context:
+    results: list[PromptResult] = []
+    with torch.inference_mode(), autocast_context:
         predictor.set_image(image)
-        for prompt_case in cases:
+        for prompt_case in prompt_cases:
             masks, scores, low_res = predictor.predict(
                 point_coords=prompt_case.point_coords,
                 point_labels=prompt_case.point_labels,
@@ -337,23 +378,17 @@ def main(argv: list[str] | None = None) -> None:
                 mask_input=prompt_case.mask_input,
                 multimask_output=False,
             )
-            mask = masks[0].astype(bool)
-            mask_path = paths.mask_for(prompt_case.name)
-            overlay_path = paths.overlay_for(prompt_case.name)
-            save_mask(mask, mask_path)
-            save_overlay_with_prompt(image, mask, prompt_case, overlay_path)
             results.append(
-                {
-                    "case": prompt_case.name,
-                    "prompt": prompt_case.prompt,
-                    "masks_shape": list(masks.shape),
-                    "low_res_shape": list(low_res.shape),
-                    "scores": scores.tolist(),
-                    "mask_path": str(mask_path),
-                    "overlay_path": str(overlay_path),
-                }
+                PromptResult(
+                    case=prompt_case,
+                    mask=masks[0].astype(bool),
+                    score=float(np.asarray(scores).reshape(-1)[0]),
+                    mask_shape=tuple(np.asarray(masks).shape),
+                    low_res_shape=tuple(np.asarray(low_res).shape),
+                )
             )
     elapsed = time.perf_counter() - started_at
+    save_prompt_visualization(image, results, paths.output)
 
     print(
         json.dumps(
@@ -361,9 +396,10 @@ def main(argv: list[str] | None = None) -> None:
                 "checkpoint": str(paths.checkpoint),
                 "image": str(paths.image),
                 "device": device,
-                "cases": [prompt_case.name for prompt_case in cases],
+                "cases": [prompt_case.name for prompt_case in prompt_cases],
                 "elapsed_sec": round(elapsed, 3),
-                "results": results,
+                "results": [summarize_result(result) for result in results],
+                "output": str(paths.output),
             },
             indent=2,
         )

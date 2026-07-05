@@ -2,6 +2,8 @@ import importlib.util
 from pathlib import Path
 
 import numpy as np
+import pytest
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = ROOT / "scripts" / "prompt.py"
@@ -15,7 +17,7 @@ def load_prompt_script():
     return module
 
 
-def test_parse_args_uses_frog_batch_defaults():
+def test_parse_args_uses_simple_frog_defaults():
     script = load_prompt_script()
 
     args = script.parse_args([])
@@ -24,57 +26,47 @@ def test_parse_args_uses_frog_batch_defaults():
     assert args.checkpoint == "weight/sam3.1_multiplex.pt"
     assert args.output_dir == "outputs/prompt"
     assert args.device == "cuda"
-    assert args.x == 560.0
-    assert args.y == 500.0
-    assert args.neg_x == 300.0
-    assert args.neg_y == 430.0
-    assert args.box == [380.0, 270.0, 790.0, 705.0]
-    assert script.resolve_cases(args.case) == [
+    for name in ("case", "x", "y", "neg_x", "neg_y", "box"):
+        assert not hasattr(args, name)
+
+
+def test_parse_args_rejects_removed_prompt_tuning_flags():
+    script = load_prompt_script()
+
+    for flag in ("--case", "--x", "--y", "--neg-x", "--neg-y", "--box"):
+        with pytest.raises(SystemExit):
+            script.parse_args([flag, "1"])
+
+
+def test_build_prompt_cases_always_returns_all_fixed_cases():
+    script = load_prompt_script()
+
+    cases = script.build_prompt_cases(image_size=(1280, 896))
+
+    assert [case.name for case in cases] == [
         "point",
         "points",
         "box",
         "point_box",
         "mask",
     ]
-
-
-def test_build_point_prompt_returns_one_positive_point():
-    script = load_prompt_script()
-
-    coords, labels = script.build_point_prompt(12.5, 30.0)
-
-    np.testing.assert_allclose(
-        coords,
-        np.array([[12.5, 30.0]], dtype=np.float32),
-    )
-    np.testing.assert_array_equal(labels, np.array([1], dtype=np.int64))
-    assert coords.dtype == np.float32
-    assert labels.dtype == np.int64
-
-
-def test_describe_prompt_makes_input_point_explicit():
-    script = load_prompt_script()
-    coords, labels = script.build_point_prompt(12.5, 30.0)
-
-    prompt = script.describe_prompt(point_coords=coords, point_labels=labels)
-
-    assert prompt == {
+    assert cases[0].prompt == {
         "type": "point",
-        "points": [{"x": 12.5, "y": 30.0, "label": 1}],
+        "points": [{"x": 560.0, "y": 500.0, "label": 1}],
     }
-
-
-def test_resolve_cases_allows_subset_and_expands_all():
-    script = load_prompt_script()
-
-    assert script.resolve_cases(["box", "mask"]) == ["box", "mask"]
-    assert script.resolve_cases(["all"]) == [
-        "point",
-        "points",
-        "box",
-        "point_box",
-        "mask",
+    assert cases[1].prompt["points"] == [
+        {"x": 560.0, "y": 500.0, "label": 1},
+        {"x": 300.0, "y": 430.0, "label": 0},
     ]
+    assert cases[2].prompt["box"] == {
+        "x0": 380.0,
+        "y0": 270.0,
+        "x1": 790.0,
+        "y1": 705.0,
+    }
+    assert cases[4].mask_input.shape == (896, 1280)
+    assert cases[4].prompt["mask_source"] == "filled_box"
+    assert cases[4].prompt["mask_area"] == 178350
 
 
 def test_build_filled_box_mask_uses_box_as_binary_mask_prompt():
@@ -90,27 +82,7 @@ def test_build_filled_box_mask_uses_box_as_binary_mask_prompt():
     assert mask[1:7, 2:8].all()
 
 
-def test_build_prompt_case_can_use_filled_box_mask():
-    script = load_prompt_script()
-    args = script.parse_args([])
-
-    prompt_case = script.build_prompt_case("mask", args, image_size=(1280, 896))
-
-    assert prompt_case.name == "mask"
-    assert prompt_case.point_coords is None
-    assert prompt_case.point_labels is None
-    assert prompt_case.box is None
-    assert prompt_case.mask_input.shape == (896, 1280)
-    assert prompt_case.prompt == {
-        "type": "mask",
-        "mask_source": "filled_box",
-        "box": {"x0": 380.0, "y0": 270.0, "x1": 790.0, "y1": 705.0},
-        "mask_input_shape": [896, 1280],
-        "mask_area": 178350,
-    }
-
-
-def test_resolve_paths_uses_short_prompt_output_names(tmp_path):
+def test_resolve_paths_uses_single_prompt_output(tmp_path):
     script = load_prompt_script()
     args = script.parse_args(
         [
@@ -128,9 +100,27 @@ def test_resolve_paths_uses_short_prompt_output_names(tmp_path):
     assert paths.image == tmp_path / "asset" / "custom.jpg"
     assert paths.checkpoint == tmp_path / "weight" / "custom.pt"
     assert paths.output_dir == tmp_path / "outputs" / "prompt_check"
-    assert paths.mask_for("box") == (
-        tmp_path / "outputs" / "prompt_check" / "box_mask.png"
-    )
-    assert paths.overlay_for("box") == (
-        tmp_path / "outputs" / "prompt_check" / "box_overlay.png"
-    )
+    assert paths.output == tmp_path / "outputs" / "prompt_check" / "prompt.png"
+
+
+def test_save_prompt_visualization_writes_one_sheet(tmp_path):
+    script = load_prompt_script()
+    image = Image.new("RGB", (1280, 896), (40, 50, 60))
+    cases = script.build_prompt_cases(image_size=image.size)
+    results = [
+        script.PromptResult(
+            case=case,
+            mask=np.ones((8, 8), dtype=bool),
+            score=0.8,
+            mask_shape=(1, 8, 8),
+            low_res_shape=(1, 4, 4),
+        )
+        for case in cases[:2]
+    ]
+    output_path = tmp_path / "prompt.png"
+
+    script.save_prompt_visualization(image, results, output_path)
+
+    saved = Image.open(output_path)
+    assert saved.size[0] > 0
+    assert saved.size[1] > 0

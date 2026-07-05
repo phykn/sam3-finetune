@@ -2,6 +2,7 @@ import importlib.util
 from pathlib import Path
 
 import numpy as np
+import pytest
 from PIL import Image
 from src.types import MaskProposal
 
@@ -17,7 +18,7 @@ def load_grid_script():
     return module
 
 
-def test_parse_args_uses_frog_tile_defaults():
+def test_parse_args_uses_simple_frog_tile_defaults():
     script = load_grid_script()
 
     args = script.parse_args([])
@@ -29,9 +30,34 @@ def test_parse_args_uses_frog_tile_defaults():
     assert args.tiles == [1, 2]
     assert args.points_per_side == [32, 16]
     assert args.overlap == 0.25
-    assert args.max_masks == 100
-    assert args.show_masks == 8
-    assert args.save_extra is False
+    for name in (
+        "points_per_batch",
+        "max_masks",
+        "max_masks_per_crop",
+        "pred_iou_thresh",
+        "stability_score_thresh",
+        "box_nms_thresh",
+        "crop_nms_thresh",
+        "keep_crop_edge_masks",
+        "image_batch_size",
+        "prompt_batch_size",
+        "allow_cross_crop_prompt_decode",
+        "show_masks",
+        "save_extra",
+        "overlay_max_masks",
+        "grid_max_masks",
+        "grid_columns",
+        "top_k",
+    ):
+        assert not hasattr(args, name)
+
+
+def test_parse_args_rejects_removed_grid_tuning_flags():
+    script = load_grid_script()
+
+    for flag in ("--max-masks", "--show-masks", "--top-k", "--save-extra"):
+        with pytest.raises(SystemExit):
+            script.parse_args([flag, "1"])
 
 
 def test_resolve_tile_configs_pairs_tiles_and_points():
@@ -75,7 +101,7 @@ def test_resolve_tile_configs_rejects_mismatched_points_values():
         raise AssertionError("Expected ValueError")
 
 
-def test_resolve_paths_uses_combined_output_names(tmp_path):
+def test_resolve_paths_uses_single_grid_output(tmp_path):
     script = load_grid_script()
     args = script.parse_args(["--output-dir", "outputs/grid_check"])
 
@@ -84,16 +110,12 @@ def test_resolve_paths_uses_combined_output_names(tmp_path):
     assert paths.image == tmp_path / "asset" / "frog_target.jpg"
     assert paths.checkpoint == tmp_path / "weight" / "sam3.1_multiplex.pt"
     assert paths.output_dir == tmp_path / "outputs" / "grid_check"
-    assert paths.points == tmp_path / "outputs" / "grid_check" / "grid_points.png"
-    assert (
-        paths.extra_overlay == tmp_path / "outputs" / "grid_check" / "grid_overlay.png"
-    )
-    assert paths.extra_grid == tmp_path / "outputs" / "grid_check" / "grid_masks.png"
+    assert paths.output == tmp_path / "outputs" / "grid_check" / "grid.png"
 
 
-def test_build_generator_kwargs_passes_overlap_and_edge_filter():
+def test_build_generator_kwargs_passes_only_tile_settings():
     script = load_grid_script()
-    args = script.parse_args(["--overlap", "0.3", "--max-masks", "25"])
+    args = script.parse_args(["--overlap", "0.3"])
     configs = [
         script.TileConfig(tile=1, points_per_side=32),
         script.TileConfig(tile=2, points_per_side=16),
@@ -101,22 +123,26 @@ def test_build_generator_kwargs_passes_overlap_and_edge_filter():
 
     kwargs = script.build_generator_kwargs(args, configs)
 
-    assert kwargs["points_per_side"] == 32
-    assert kwargs["crop_grids"] == [1, 2]
-    assert kwargs["crop_points_per_side"] == [32, 16]
-    assert kwargs["crop_overlap_ratio"] == 0.3
-    assert kwargs["filter_crop_edge_masks"] is True
-    assert kwargs["max_masks"] == 25
+    assert kwargs == {
+        "points_per_side": 32,
+        "crop_grids": [1, 2],
+        "crop_points_per_side": [32, 16],
+        "crop_overlap_ratio": 0.3,
+    }
 
 
-def test_build_generator_kwargs_can_keep_crop_edge_masks():
+def test_summarize_proposals_returns_every_result():
     script = load_grid_script()
-    args = script.parse_args(["--keep-crop-edge-masks"])
-    configs = [script.TileConfig(tile=2, points_per_side=16)]
+    proposals = [
+        _proposal((1, 1, 3, 3), score=0.9),
+        _proposal((4, 4, 7, 7), score=0.8),
+    ]
 
-    kwargs = script.build_generator_kwargs(args, configs)
+    summary = script.summarize_proposals(proposals)
 
-    assert kwargs["filter_crop_edge_masks"] is False
+    assert len(summary) == 2
+    assert summary[0]["bbox"] == [1, 1, 3, 3]
+    assert summary[1]["bbox"] == [4, 4, 7, 7]
 
 
 def test_build_grid_points_combines_all_tile_prompts():
@@ -133,31 +159,42 @@ def test_build_grid_points_combines_all_tile_prompts():
     assert sum(1 for _x, _y, tile in points if tile == 2) == 4
 
 
-def test_save_grid_point_visualization_writes_combined_sheet(tmp_path):
+def test_save_grid_visualization_writes_all_results_on_one_sheet(tmp_path):
     script = load_grid_script()
     image = Image.new("RGB", (8, 8), (20, 30, 40))
-    proposal = MaskProposal(
-        segmentation=np.ones((4, 4), dtype=bool),
-        bbox=(2, 2, 6, 6),
-        area=16,
-        predicted_iou=0.9,
-        stability_score=0.8,
-        point_coords=(4.0, 4.0),
-        crop_box=(0, 0, 8, 8),
-        crop_grid=1,
-        crop_index=0,
-        image_size=(8, 8),
-    )
-    output_path = tmp_path / "grid_points.png"
+    proposals = [
+        _proposal((2, 2, 6, 6), score=0.9),
+        _proposal((0, 0, 3, 3), score=0.8),
+    ]
+    output_path = tmp_path / "grid.png"
 
-    script.save_grid_point_visualization(
+    script.save_grid_visualization(
         image,
-        [proposal],
-        [(4.0, 4.0, 1)],
+        proposals,
+        [(4.0, 4.0, 1), (1.0, 1.0, 2)],
         output_path,
-        show_masks=1,
     )
 
     saved = Image.open(output_path)
     assert saved.size[0] > image.width
     assert saved.size[1] > image.height
+
+
+def _proposal(
+    bbox: tuple[int, int, int, int],
+    *,
+    score: float,
+) -> MaskProposal:
+    x0, y0, x1, y1 = bbox
+    return MaskProposal(
+        segmentation=np.ones((y1 - y0, x1 - x0), dtype=bool),
+        bbox=bbox,
+        area=(y1 - y0) * (x1 - x0),
+        predicted_iou=score,
+        stability_score=0.8,
+        point_coords=(float(x0 + 1), float(y0 + 1)),
+        crop_box=(0, 0, 8, 8),
+        crop_grid=1,
+        crop_index=0,
+        image_size=(8, 8),
+    )
