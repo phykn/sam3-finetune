@@ -32,6 +32,7 @@ def test_shared_modules_are_grouped_by_responsibility() -> None:
         "src/predict/grid/instances.py",
         "src/predict/grid/generator.py",
         "src/predict/context/matcher.py",
+        "src/predict/refine/grid.py",
         "src/predict/refine/masks.py",
         "src/predict/next_frame/predictor.py",
         "src/predict/grounding/inference.py",
