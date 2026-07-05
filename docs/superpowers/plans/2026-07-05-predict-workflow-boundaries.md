@@ -317,10 +317,12 @@ from src.predict.prompted import Sam3Predictor
 Run:
 
 ```bash
-python -m pytest tests/test_predictor_api.py tests/test_transforms.py -q
+python -m pytest tests/test_predictor_api.py tests/test_transforms.py -k "not package_public_surface" -q
 ```
 
-Expected: PASS for prompted prediction and transforms tests. If
+Expected: PASS for prompted prediction and transforms tests. The public-surface
+boundary test remains red until the grid, context, and next-frame legacy paths
+are removed in later tasks. If
 `tests/test_transforms.py` fails because it contains pre-existing user edits,
 read the failure and preserve the user-edited behavior while changing only the
 import path or moved transform module.
