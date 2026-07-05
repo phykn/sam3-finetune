@@ -10,7 +10,7 @@ from PIL import Image
 
 from ..model.build import build_model
 from ..types import MemoryPrediction, MemoryReference
-from .image_transform import preprocess_rgb_images, scale_coords, to_rgb_pil
+from .prompted.transforms import preprocess_rgb_images, scale_coords, to_rgb_pil
 
 
 @dataclass(frozen=True)

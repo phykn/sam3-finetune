@@ -7,7 +7,7 @@ from PIL import Image
 
 from ...ops.box import filter_boxes
 from ...types import MaskInstance, MaskProposal, Sam3PromptBatch
-from ..image import Sam3Predictor
+from ..prompted import Sam3Predictor
 from .geometry import (
     batched,
     build_point_grid,

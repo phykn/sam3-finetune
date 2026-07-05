@@ -6,7 +6,7 @@ import torch
 from PIL import Image
 
 from ...types import ContextReference, MaskInstance, ReferenceExample
-from ..image import Sam3Predictor
+from ..prompted import Sam3Predictor
 from .prototype import (
     build_context_prototype,
     mean_score_over_mask,
