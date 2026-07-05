@@ -12,9 +12,13 @@ import numpy as np
 import torch
 from PIL import Image
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from common.paths import ensure_workspace_on_path, resolve_workspace_path, ROOT
+
+ensure_workspace_on_path()
 
 from src.predict.context.matcher import ContextMatcher
 from src.predict.context.postprocess import context_prediction_to_full_mask
@@ -371,13 +375,15 @@ def overlay_reference(image: Image.Image, mask: np.ndarray, path: Path) -> None:
 
 def main() -> None:
     args = parse_args()
-    checkpoint = ROOT / args.checkpoint
-    reference_image = Image.open(ROOT / args.reference_image).convert("RGB")
-    target_image = Image.open(ROOT / args.target_image).convert("RGB")
+    checkpoint = resolve_workspace_path(args.checkpoint)
+    reference_image = Image.open(resolve_workspace_path(args.reference_image)).convert(
+        "RGB"
+    )
+    target_image = Image.open(resolve_workspace_path(args.target_image)).convert("RGB")
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     if args.reference_mask is not None:
-        reference_mask_path = ROOT / args.reference_mask
+        reference_mask_path = resolve_workspace_path(args.reference_mask)
         reference_mask = ReferenceMaskResult(
             mask=load_reference_mask_image(
                 reference_mask_path,
@@ -435,8 +441,8 @@ def main() -> None:
         min_mask_area=args.min_mask_area,
     )
 
-    output_path = ROOT / args.output
-    reference_overlay_path = ROOT / args.reference_overlay
+    output_path = resolve_workspace_path(args.output)
+    reference_overlay_path = resolve_workspace_path(args.reference_overlay)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     reference_overlay_path.parent.mkdir(parents=True, exist_ok=True)
 

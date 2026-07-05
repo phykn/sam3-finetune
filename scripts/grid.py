@@ -9,9 +9,14 @@ import numpy as np
 import torch
 from PIL import Image, ImageDraw
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from common.devices import resolve_device
+from common.paths import ensure_workspace_on_path, resolve_workspace_path, ROOT
+
+ensure_workspace_on_path()
 
 
 @dataclass
@@ -64,18 +69,10 @@ def resolve_tile_configs(args: argparse.Namespace) -> list[TileConfig]:
 
 def resolve_paths(args: argparse.Namespace, *, root: Path = ROOT) -> GridPaths:
     return GridPaths(
-        image=root / args.image,
-        checkpoint=root / args.checkpoint,
-        output_dir=root / args.output_dir,
+        image=resolve_workspace_path(args.image, root=root),
+        checkpoint=resolve_workspace_path(args.checkpoint, root=root),
+        output_dir=resolve_workspace_path(args.output_dir, root=root),
     )
-
-
-def resolve_device(device: str) -> str:
-    if device == "auto":
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    if device == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA is required when --device cuda is selected.")
-    return device
 
 
 def build_generator_kwargs(
