@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from PIL import Image
+from torchvision.transforms import v2
 
 from ...model.build import build_model
 from ...model.grounding.prompt import Prompt
@@ -22,25 +23,24 @@ class VisualPromptPredictor:
         device: torch.device | str = "cuda",
         image_size: int = 1008,
         confidence_threshold: float = 0.5,
-        mask_prompt_encoder: torch.nn.Module | None = None,
     ) -> None:
         self.device = torch.device(device)
         if hasattr(model, "grounding"):
-            mask_prompt_encoder = mask_prompt_encoder or getattr(
-                getattr(model, "video", None),
-                "maskmem_backbone",
-                None,
-            )
             model = model.grounding
         self.model = model.to(self.device).eval()
-        if mask_prompt_encoder is not None:
-            mask_prompt_encoder = mask_prompt_encoder.to(self.device).eval()
         self.confidence_threshold = float(confidence_threshold)
         self.encoder = VisualPromptEncoder(
             self.model,
             device=self.device,
             image_size=image_size,
-            mask_prompt_encoder=mask_prompt_encoder,
+        )
+        self.transform = v2.Compose(
+            [
+                v2.ToDtype(torch.uint8, scale=True),
+                v2.Resize(size=(int(image_size), int(image_size))),
+                v2.ToDtype(torch.float32, scale=True),
+                v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+            ]
         )
 
     @classmethod
@@ -51,8 +51,14 @@ class VisualPromptPredictor:
         device: torch.device | str = "cuda",
         image_size: int = 1008,
         confidence_threshold: float = 0.5,
+        bpe_path: str | Path | None = None,
     ) -> "VisualPromptPredictor":
-        model = build_model(path, device=device)
+        model = build_model(
+            path,
+            device=device,
+            include_language=True,
+            bpe_path=bpe_path,
+        )
         return cls(
             model,
             device=device,
@@ -82,18 +88,8 @@ class VisualPromptPredictor:
         if not prepared.concepts:
             raise ValueError("exemplars must be non-empty")
 
-        image_tensor, original_hw = self.encoder.preprocess_image(target_image)
-        backbone_out = self.model.backbone.forward_image(image_tensor)
-        find_stage = FindStage(
-            img_ids=torch.tensor([0], device=self.device, dtype=torch.long),
-            text_ids=torch.empty(0, device=self.device, dtype=torch.long),
-            input_boxes=None,
-            input_boxes_mask=None,
-            input_boxes_label=None,
-            input_points=None,
-            input_points_mask=None,
-        )
-        prompt = self._dummy_prompt()
+        image_tensor, original_hw = self._preprocess_image(target_image)
+        image_backbone_out = self.model.backbone.forward_image(image_tensor)
         threshold = (
             self.confidence_threshold
             if confidence_threshold is None
@@ -102,13 +98,45 @@ class VisualPromptPredictor:
 
         predictions: list[VisualPromptPrediction] = []
         for concept in prepared.concepts:
+            backbone_out = dict(image_backbone_out)
+            backbone_out.update(
+                {
+                    "language_features": concept.language_features.to(
+                        device=self.device,
+                        dtype=backbone_out["vision_features"].dtype,
+                    ),
+                    "language_mask": concept.language_mask.to(
+                        device=self.device,
+                        dtype=torch.bool,
+                    ),
+                }
+            )
+            if concept.language_embeds is not None:
+                backbone_out["language_embeds"] = concept.language_embeds.to(
+                    device=self.device,
+                    dtype=backbone_out["vision_features"].dtype,
+                )
             outputs = self.model.forward_grounding(
-                backbone_out=dict(backbone_out),
-                find_input=find_stage,
-                geometric_prompt=prompt.clone(),
-                visual_prompt_embed=concept.visual_prompt_embed,
-                visual_prompt_mask=concept.visual_prompt_mask,
-                encode_text=False,
+                backbone_out=backbone_out,
+                find_input=FindStage(
+                    img_ids=torch.tensor([0], device=self.device, dtype=torch.long),
+                    text_ids=torch.tensor([0], device=self.device, dtype=torch.long),
+                    input_boxes=None,
+                    input_boxes_mask=None,
+                    input_boxes_label=None,
+                    input_points=None,
+                    input_points_mask=None,
+                ),
+                geometric_prompt=Prompt(
+                    box_embeddings=concept.boxes_cxcywh,
+                    box_mask=torch.zeros(
+                        1,
+                        concept.boxes_cxcywh.shape[0],
+                        device=self.device,
+                        dtype=torch.bool,
+                    ),
+                    box_labels=concept.box_labels,
+                ),
             )
             predictions.append(
                 _format_outputs(
@@ -120,13 +148,22 @@ class VisualPromptPredictor:
             )
         return predictions
 
-    def _dummy_prompt(self) -> Prompt:
-        if hasattr(self.model, "get_dummy_prompt"):
-            return self.model.get_dummy_prompt()
-        return Prompt(
-            box_embeddings=torch.zeros(0, 1, 4, device=self.device),
-            box_mask=torch.zeros(1, 0, dtype=torch.bool, device=self.device),
-        )
+    def _preprocess_image(
+        self,
+        image: Image.Image | np.ndarray | torch.Tensor,
+    ) -> tuple[torch.Tensor, tuple[int, int]]:
+        if isinstance(image, Image.Image):
+            width, height = image.size
+        elif isinstance(image, np.ndarray):
+            height, width = image.shape[-3:-1] if image.ndim == 3 else image.shape[-2:]
+        elif isinstance(image, torch.Tensor):
+            height, width = image.shape[-2:]
+        else:
+            raise TypeError("image must be a PIL image, NumPy array, or tensor")
+
+        image_tensor = v2.functional.to_image(image).to(self.device)
+        image_tensor = self.transform(image_tensor).unsqueeze(0)
+        return image_tensor, (int(height), int(width))
 
 
 def _format_outputs(

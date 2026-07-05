@@ -7,12 +7,12 @@ import torch
 class FakeBackbone:
     def __init__(self) -> None:
         self.forwarded_images = []
+        self.forwarded_text = []
 
     def forward_image(self, image: torch.Tensor) -> dict[str, object]:
         self.forwarded_images.append(image.detach().clone())
         batch = image.shape[0]
-        value = float(len(self.forwarded_images))
-        features = torch.full((batch, 4, 2, 2), value, dtype=torch.float32)
+        features = torch.zeros(batch, 4, 2, 2, dtype=torch.float32)
         pos = torch.zeros_like(features)
         return {
             "vision_features": features,
@@ -21,27 +21,29 @@ class FakeBackbone:
             "backbone_fpn": [features],
         }
 
-
-class FakeGeometryEncoder:
-    def __init__(self) -> None:
-        self.mask_encoder = object()
-        self.calls = []
-
-    def __call__(self, geo_prompt, img_feats, img_sizes, img_pos_embeds=None):
-        assert geo_prompt.mask_embeddings is not None
-        assert img_feats[-1].shape[-1] == 4
-        self.calls.append((geo_prompt, img_feats, img_sizes, img_pos_embeds))
-        token_value = geo_prompt.mask_embeddings.float().sum()
-        token = torch.full((1, 1, 4), float(token_value), dtype=torch.float32)
-        mask = torch.zeros(1, 1, dtype=torch.bool)
-        return token, mask
+    def forward_text(
+        self, captions, input_boxes=None, additional_text=None, device="cpu"
+    ):
+        self.forwarded_text.append(
+            {
+                "captions": list(captions),
+                "input_boxes": input_boxes,
+                "additional_text": additional_text,
+                "device": str(device),
+            }
+        )
+        count = len(captions)
+        return {
+            "language_features": torch.ones(3, count, 4, dtype=torch.float32),
+            "language_mask": torch.zeros(count, 3, dtype=torch.bool),
+            "language_embeds": torch.ones(3, count, 4, dtype=torch.float32),
+        }
 
 
 class FakeGroundingModel(torch.nn.Module):
     def __init__(self) -> None:
         super().__init__()
         self.backbone = FakeBackbone()
-        self.geometry_encoder = FakeGeometryEncoder()
         self.forward_calls = []
 
     def forward_grounding(
@@ -54,15 +56,19 @@ class FakeGroundingModel(torch.nn.Module):
         visual_prompt_mask=None,
         encode_text=True,
     ):
-        assert visual_prompt_embed is not None
-        assert visual_prompt_mask is not None
-        assert encode_text is False
-        assert find_input.text_ids.numel() == 0
+        assert visual_prompt_embed is None
+        assert visual_prompt_mask is None
+        assert encode_text is True
+        assert find_input.text_ids.tolist() == [0]
+        assert "language_features" in backbone_out
+        assert "language_mask" in backbone_out
         self.forward_calls.append(
             {
-                "visual_prompt_embed": visual_prompt_embed.detach().clone(),
-                "visual_prompt_mask": visual_prompt_mask.detach().clone(),
+                "box_embeddings": geometric_prompt.box_embeddings.detach().clone(),
+                "box_labels": geometric_prompt.box_labels.detach().clone(),
+                "text_ids": find_input.text_ids.detach().clone(),
                 "encode_text": encode_text,
+                "has_language": "language_features" in backbone_out,
             }
         )
         return {
@@ -77,31 +83,32 @@ class FakeGroundingModel(torch.nn.Module):
         return Prompt(
             box_embeddings=torch.zeros(0, num_prompts, 4),
             box_mask=torch.zeros(num_prompts, 0, dtype=torch.bool),
+            box_labels=torch.zeros(0, num_prompts, dtype=torch.bool),
         )
 
 
-def _image() -> np.ndarray:
-    return np.zeros((8, 8, 3), dtype=np.uint8)
+def _image(width: int = 8, height: int = 8) -> np.ndarray:
+    return np.zeros((height, width, 3), dtype=np.uint8)
 
 
-def _mask(x0: int, y0: int, x1: int, y1: int) -> np.ndarray:
-    mask = np.zeros((8, 8), dtype=bool)
+def _mask(x0: int, y0: int, x1: int, y1: int, *, width: int = 8, height: int = 8):
+    mask = np.zeros((height, width), dtype=bool)
     mask[y0:y1, x0:x1] = True
     return mask
 
 
-def test_visual_prompt_encoder_creates_embed_from_image_mask_exemplar():
+def test_visual_prompt_encoder_converts_mask_to_normalized_box_prompt():
     from src.predict.visual_prompt.encoder import VisualPromptEncoder
     from src.predict.visual_prompt.types import VisualExemplar
 
     model = FakeGroundingModel()
-    encoder = VisualPromptEncoder(model, device="cpu", image_size=8)
+    encoder = VisualPromptEncoder(model, device="cpu")
 
     prepared = encoder.prepare(
         [
             VisualExemplar(
-                image=_image(),
-                mask=_mask(1, 1, 4, 4),
+                image=_image(width=10, height=20),
+                mask=_mask(2, 4, 8, 14, width=10, height=20),
                 concept_id=3,
             )
         ]
@@ -110,12 +117,18 @@ def test_visual_prompt_encoder_creates_embed_from_image_mask_exemplar():
     assert len(prepared.concepts) == 1
     concept = prepared.concepts[0]
     assert concept.concept_id == 3
-    assert concept.visual_prompt_embed.shape == (1, 1, 4)
-    assert concept.visual_prompt_mask.shape == (1, 1)
-    assert model.geometry_encoder.calls
+    torch.testing.assert_close(
+        concept.boxes_cxcywh.cpu(),
+        torch.tensor([[[0.5, 0.45, 0.6, 0.5]]], dtype=torch.float32),
+    )
+    assert concept.box_labels.tolist() == [[True]]
+    assert model.backbone.forwarded_text[0]["captions"] == ["visual"]
+    assert model.backbone.forwarded_text[0]["input_boxes"] is None
+    assert concept.language_features.shape == (3, 1, 4)
+    assert concept.language_mask.shape == (1, 3)
 
 
-def test_visual_prompt_predictor_passes_visual_prompt_to_grounding_without_text():
+def test_visual_prompt_predictor_uses_vlm_visual_text_and_box_prompt():
     from src.predict.visual_prompt.predictor import VisualPromptPredictor
     from src.predict.visual_prompt.types import VisualExemplar
 
@@ -127,7 +140,7 @@ def test_visual_prompt_predictor_passes_visual_prompt_to_grounding_without_text(
         exemplars=[
             VisualExemplar(
                 image=_image(),
-                mask=_mask(1, 1, 4, 4),
+                mask=_mask(1, 1, 5, 5),
                 concept_id=2,
             )
         ],
@@ -137,14 +150,19 @@ def test_visual_prompt_predictor_passes_visual_prompt_to_grounding_without_text(
     assert len(predictions) == 1
     assert predictions[0].concept_id == 2
     assert predictions[0].masks.shape == (1, 8, 8)
+    assert model.backbone.forwarded_text[0]["captions"] == ["visual"]
     assert len(model.forward_calls) == 1
     call = model.forward_calls[0]
-    assert call["visual_prompt_embed"].shape == (1, 1, 4)
-    assert call["visual_prompt_mask"].shape == (1, 1)
-    assert call["encode_text"] is False
+    assert call["has_language"]
+    assert call["encode_text"] is True
+    torch.testing.assert_close(
+        call["box_embeddings"],
+        torch.tensor([[[0.375, 0.375, 0.5, 0.5]]], dtype=torch.float32),
+    )
+    assert call["box_labels"].tolist() == [[True]]
 
 
-def test_visual_prompt_path_does_not_use_context_prototype_average():
+def test_visual_prompt_path_does_not_use_context_prototype_or_geometry_mask_encoder():
     import src.predict.visual_prompt.encoder as encoder_module
     import src.predict.visual_prompt.predictor as predictor_module
 
@@ -153,9 +171,13 @@ def test_visual_prompt_path_does_not_use_context_prototype_average():
     assert "build_context_prototype" not in source
     assert "_masked_feature_mean" not in source
     assert "ContextPrototype" not in source
+    assert "mask_encoder" not in source
+    assert "mask_prompt_encoder" not in source
+    assert "visual_prompt_embed" not in source
+    assert "encode_text=False" not in source
 
 
-def test_visual_prompt_predictor_runs_each_concept_with_separate_prompt_tokens():
+def test_visual_prompt_predictor_runs_each_concept_with_separate_vlm_features():
     from src.predict.visual_prompt.predictor import VisualPromptPredictor
     from src.predict.visual_prompt.types import VisualExemplar
 
@@ -172,18 +194,19 @@ def test_visual_prompt_predictor_runs_each_concept_with_separate_prompt_tokens()
     )
 
     assert [prediction.concept_id for prediction in predictions] == [0, 1]
+    assert len(model.backbone.forwarded_text) == 2
     assert len(model.forward_calls) == 2
-    first = model.forward_calls[0]["visual_prompt_embed"]
-    second = model.forward_calls[1]["visual_prompt_embed"]
+    first = model.forward_calls[0]["box_embeddings"]
+    second = model.forward_calls[1]["box_embeddings"]
     assert not torch.equal(first, second)
 
 
-def test_visual_prompt_encoder_groups_multiple_exemplars_for_same_concept():
+def test_visual_prompt_encoder_groups_multiple_exemplars_as_multiple_boxes():
     from src.predict.visual_prompt.encoder import VisualPromptEncoder
     from src.predict.visual_prompt.types import VisualExemplar
 
     model = FakeGroundingModel()
-    encoder = VisualPromptEncoder(model, device="cpu", image_size=8)
+    encoder = VisualPromptEncoder(model, device="cpu")
 
     prepared = encoder.prepare(
         [
@@ -196,72 +219,16 @@ def test_visual_prompt_encoder_groups_multiple_exemplars_for_same_concept():
     concept = prepared.concepts[0]
     assert concept.concept_id == 4
     assert len(concept.exemplars) == 2
-    assert concept.visual_prompt_embed.shape == (2, 1, 4)
-    assert concept.visual_prompt_mask.shape == (1, 2)
-
-
-def test_grounding_forward_accepts_visual_prompt_embed_and_mask():
-    from src.model.grounding.model import GroundingImageModel
-    from src.model.grounding.prompt import Prompt
-    from src.model.structures import FindStage
-
-    class MinimalGrounding(GroundingImageModel):
-        def __init__(self) -> None:
-            torch.nn.Module.__init__(self)
-            self.seen = None
-
-        def _select_image_features(self, backbone_out, img_ids):
-            feature = torch.zeros(1, 1, 4)
-            return [feature], [feature], [(1, 1)]
-
-        def _encode_prompt(self, **kwargs):
-            self.seen = kwargs
-            return torch.zeros(1, 1, 4), torch.zeros(1, 1, dtype=torch.bool)
-
-        def _run_encoder(self, **kwargs):
-            return {
-                "encoder_hidden_states": torch.zeros(1, 1, 4),
-                "pos_embed": torch.zeros(1, 1, 4),
-                "padding_mask": torch.zeros(1, 1, dtype=torch.bool),
-                "level_start_index": torch.zeros(1, dtype=torch.long),
-                "spatial_shapes": torch.ones(1, 2, dtype=torch.long),
-                "valid_ratios": torch.ones(1, 1, 2),
-                "vis_feat_sizes": [(1, 1)],
-            }
-
-        def _run_decoder(self, **kwargs):
-            return kwargs["out"], torch.zeros(1, 1, 1, 4)
-
-        def _run_segmentation_heads(self, **kwargs):
-            return None
-
-    model = MinimalGrounding()
-    visual_prompt_embed = torch.ones(2, 1, 4)
-    visual_prompt_mask = torch.zeros(1, 2, dtype=torch.bool)
-
-    model.forward_grounding(
-        backbone_out={},
-        find_input=FindStage(
-            img_ids=torch.tensor([0]),
-            text_ids=torch.empty(0, dtype=torch.long),
-            input_boxes=None,
-            input_boxes_mask=None,
-            input_boxes_label=None,
-            input_points=None,
-            input_points_mask=None,
-        ),
-        geometric_prompt=Prompt(
-            box_embeddings=torch.zeros(0, 1, 4),
-            box_mask=torch.zeros(1, 0, dtype=torch.bool),
-        ),
-        visual_prompt_embed=visual_prompt_embed,
-        visual_prompt_mask=visual_prompt_mask,
-        encode_text=False,
-    )
-
-    assert model.seen["visual_prompt_embed"] is visual_prompt_embed
-    assert model.seen["visual_prompt_mask"] is visual_prompt_mask
-    assert model.seen["encode_text"] is False
+    assert concept.boxes_cxcywh.shape == (2, 1, 4)
+    assert concept.box_labels.shape == (2, 1)
+    assert model.backbone.forwarded_text == [
+        {
+            "captions": ["visual"],
+            "input_boxes": None,
+            "additional_text": None,
+            "device": "cpu",
+        }
+    ]
 
 
 def test_visual_prompt_package_exports_user_facing_api():

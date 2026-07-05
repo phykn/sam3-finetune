@@ -19,7 +19,11 @@ def unwrap_state(checkpoint: Mapping) -> Mapping[str, torch.Tensor]:
     return checkpoint
 
 
-def remap_model(checkpoint: Mapping) -> tuple[dict[str, torch.Tensor], list[str]]:
+def remap_model(
+    checkpoint: Mapping,
+    *,
+    include_language: bool = False,
+) -> tuple[dict[str, torch.Tensor], list[str]]:
     state = unwrap_state(checkpoint)
     remapped: dict[str, torch.Tensor] = {}
     ignored: list[str] = []
@@ -31,7 +35,13 @@ def remap_model(checkpoint: Mapping) -> tuple[dict[str, torch.Tensor], list[str]
 
     for key, value in state.items():
         if key.startswith("detector.backbone.language_backbone."):
-            ignored.append(key)
+            if include_language:
+                remapped[
+                    "grounding.backbone.language_backbone."
+                    + key[len("detector.backbone.language_backbone.") :]
+                ] = value
+            else:
+                ignored.append(key)
             continue
 
         target_key = None

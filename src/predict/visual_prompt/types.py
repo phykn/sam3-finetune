@@ -49,8 +49,11 @@ class VisualExemplar:
 class PreparedVisualConcept:
     concept_id: int
     exemplars: tuple[VisualExemplar, ...]
-    visual_prompt_embed: torch.Tensor
-    visual_prompt_mask: torch.Tensor
+    boxes_cxcywh: torch.Tensor
+    box_labels: torch.Tensor
+    language_features: torch.Tensor
+    language_mask: torch.Tensor
+    language_embeds: torch.Tensor | None = None
 
 
 @dataclass(frozen=True)

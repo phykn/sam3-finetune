@@ -13,6 +13,8 @@ class Sam3Model(nn.Module):
         max_num_objects: int = 16,
         use_fa3: bool = False,
         use_rope_real: bool = False,
+        include_language: bool = False,
+        bpe_path: str | None = None,
     ) -> None:
         super().__init__()
         vision_backbone = create_vision_backbone(
@@ -33,7 +35,10 @@ class Sam3Model(nn.Module):
             mask_decoder=self.video.interactive_sam_mask_decoder,
             interactivity_no_mem_embed=self.video.interactivity_no_mem_embed,
         )
-        self.grounding = create_grounding_model(vision_backbone=vision_backbone)
+        self.grounding = create_grounding_model(
+            vision_backbone=vision_backbone,
+            bpe_path=bpe_path if include_language else None,
+        )
         self.share()
 
     def share(self):

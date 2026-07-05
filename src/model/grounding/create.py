@@ -12,6 +12,7 @@ from ..components.transformer.encoder import (
     TransformerEncoderLayer,
 )
 from ..components.transformer.wrapper import TransformerWrapper
+from ..language import SimpleTokenizer, VETextEncoder
 from .backbone import GroundingVisionBackbone
 from .encoder import SequenceGeometryEncoder
 from .model import GroundingImageModel
@@ -59,6 +60,17 @@ def create_backbone(trunk: ViT | None = None) -> GroundingVisionBackbone:
         add_sam2_neck=False,
     )
     return GroundingVisionBackbone(visual=neck, scalp=1)
+
+
+def create_text_encoder(bpe_path: str) -> VETextEncoder:
+    tokenizer = SimpleTokenizer(bpe_path=bpe_path)
+    return VETextEncoder(
+        tokenizer=tokenizer,
+        d_model=D_MODEL,
+        width=1024,
+        heads=16,
+        layers=24,
+    )
 
 
 def create_transformer_encoder() -> TransformerEncoderFusion:
@@ -192,12 +204,22 @@ def create_geometry_encoder() -> SequenceGeometryEncoder:
 def create_grounding_model(
     trunk: ViT | None = None,
     vision_backbone: nn.Module | None = None,
+    language_backbone: nn.Module | None = None,
+    bpe_path: str | None = None,
 ) -> GroundingImageModel:
+    if language_backbone is None and bpe_path is not None:
+        language_backbone = create_text_encoder(bpe_path)
     backbone = (
-        GroundingVisionBackbone(visual=vision_backbone, scalp=0)
+        GroundingVisionBackbone(
+            visual=vision_backbone,
+            scalp=0,
+            language_backbone=language_backbone,
+        )
         if vision_backbone
         else create_backbone(trunk)
     )
+    if not vision_backbone:
+        backbone.language_backbone = language_backbone
     return GroundingImageModel(
         backbone=backbone,
         transformer=create_transformer(),

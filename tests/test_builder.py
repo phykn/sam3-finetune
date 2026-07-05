@@ -100,7 +100,7 @@ def test_build_model_can_return_checkpoint_report(monkeypatch):
     monkeypatch.setattr(
         build_module,
         "remap_model",
-        lambda checkpoint: (
+        lambda checkpoint, **_kwargs: (
             {"video.weight": checkpoint["raw"]},
             ["detector.backbone.language_backbone.weight"],
         ),
@@ -117,3 +117,42 @@ def test_build_model_can_return_checkpoint_report(monkeypatch):
     assert report.ignored == ["detector.backbone.language_backbone.weight"]
     assert report.missing == ["missing.weight"]
     assert report.unexpected == ["extra.weight"]
+
+
+def test_build_model_passes_language_flag_to_checkpoint_remap(monkeypatch, tmp_path):
+    from src.model import build as build_module
+
+    bpe_path = tmp_path / "bpe.txt.gz"
+    bpe_path.write_bytes(b"placeholder")
+    seen = {}
+
+    class FakeModel(nn.Module):
+        def __init__(self, **kwargs):
+            super().__init__()
+            seen["model_kwargs"] = kwargs
+
+        def share(self):
+            return self
+
+        def load_state_dict(self, state, strict):
+            return nn.modules.module._IncompatibleKeys([], [])
+
+    def fake_remap(checkpoint, *, include_language=False):
+        seen["include_language"] = include_language
+        return {}, []
+
+    monkeypatch.setattr(build_module, "Sam3Model", FakeModel)
+    monkeypatch.setattr(build_module, "load_pth", lambda path: {})
+    monkeypatch.setattr(build_module, "remap_model", fake_remap)
+    monkeypatch.setattr(build_module, "_resolve_bpe_path", lambda path: bpe_path)
+
+    build_module.build_model(
+        path="checkpoint.pt",
+        device=torch.device("cpu"),
+        include_language=True,
+        bpe_path=bpe_path,
+    )
+
+    assert seen["include_language"] is True
+    assert seen["model_kwargs"]["include_language"] is True
+    assert seen["model_kwargs"]["bpe_path"] == str(bpe_path)

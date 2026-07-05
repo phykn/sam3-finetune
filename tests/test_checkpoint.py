@@ -44,6 +44,22 @@ def test_remap_model_maps_checkpoint_to_shared_model_paths():
     )
 
 
+def test_remap_model_can_map_language_backbone_for_vlm_runtime():
+    source = {
+        "detector.backbone.language_backbone.encoder.token_embedding.weight": torch.zeros(
+            49408, 1024
+        ),
+    }
+
+    remapped, ignored = remap_model(source, include_language=True)
+
+    assert ignored == []
+    assert (
+        "grounding.backbone.language_backbone.encoder.token_embedding.weight"
+        in remapped
+    )
+
+
 def test_remap_model_accepts_nested_model_key():
     source = {
         "model": {
