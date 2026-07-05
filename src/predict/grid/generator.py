@@ -98,6 +98,7 @@ class AutomaticMaskGenerator:
         self.crop_encode_batch_size = self.image_batch_size
         self.prompt_decode_batch_size = self.prompt_batch_size
         self.allow_cross_crop_prompt_decode = allow_cross_crop_prompt_decode
+        self._point_label_cache: dict[tuple[str, int], np.ndarray | torch.Tensor] = {}
 
     @classmethod
     def from_checkpoint(
@@ -171,6 +172,30 @@ class AutomaticMaskGenerator:
             return [(1, self.points_per_side)]
         assert self.crop_points_per_side is not None
         return list(zip(self.crop_grids, self.crop_points_per_side))
+
+    def _point_coords(self, point_batch: np.ndarray) -> np.ndarray | torch.Tensor:
+        coords = point_batch[:, None, :].astype(np.float32, copy=False)
+        device = getattr(self.predictor, "device", None)
+        if device is None:
+            return coords
+        return torch.as_tensor(coords, dtype=torch.float32, device=torch.device(device))
+
+    def _point_labels(self, count: int) -> np.ndarray | torch.Tensor:
+        device = getattr(self.predictor, "device", None)
+        key = ("cpu", count) if device is None else (str(torch.device(device)), count)
+        cached = self._point_label_cache.get(key)
+        if cached is not None:
+            return cached
+        if device is None:
+            labels = np.ones((count, 1), dtype=np.int64)
+        else:
+            labels = torch.ones(
+                (count, 1),
+                dtype=torch.int64,
+                device=torch.device(device),
+            )
+        self._point_label_cache[key] = labels
+        return labels
 
     def _generate_for_crop_jobs(
         self,
@@ -296,36 +321,16 @@ class AutomaticMaskGenerator:
         normalized_grid: np.ndarray,
         full_size: tuple[int, int],
     ) -> list[MaskProposal]:
-        crop_width, crop_height = image_size(crop_input)
-        self.predictor.set_image(crop_input)
-        pixel_grid = normalized_grid.copy()
-        pixel_grid[:, 0] *= float(crop_width)
-        pixel_grid[:, 1] *= float(crop_height)
-
-        proposals: list[MaskProposal] = []
-        for point_batch in batched(pixel_grid, self.points_per_batch):
-            point_labels = np.ones((len(point_batch), 1), dtype=np.int64)
-            masks, scores, low_res_masks = self.predictor.predict(
-                point_coords=point_batch[:, None, :].astype(np.float32),
-                point_labels=point_labels,
-                multimask_output=True,
-            )
-            proposals.extend(
-                self._proposals_from_batch(
-                    point_batch,
-                    masks,
-                    scores,
-                    low_res_masks,
-                    crop_box,
-                    crop_grid,
-                    crop_index,
-                    full_size,
-                )
-            )
-        proposals = self._remove_duplicates(proposals, self.crop_nms_thresh)
-        if self.max_masks_per_crop is not None:
-            proposals = proposals[: self.max_masks_per_crop]
-        return proposals
+        embedding = self.predictor.encode_image(crop_input)
+        return self._generate_for_crop_embedding(
+            embedding,
+            crop_input,
+            crop_box,
+            crop_grid,
+            crop_index,
+            normalized_grid,
+            full_size,
+        )
 
     def _generate_for_crop_embedding(
         self,
@@ -344,10 +349,32 @@ class AutomaticMaskGenerator:
 
         proposals: list[MaskProposal] = []
         for point_batch in batched(pixel_grid, self.points_per_batch):
-            point_labels = np.ones((len(point_batch), 1), dtype=np.int64)
+            point_coords = self._point_coords(point_batch)
+            point_labels = self._point_labels(len(point_batch))
+            if hasattr(self.predictor, "decode_low_res_from_embedding"):
+                low_res_masks, scores = self.predictor.decode_low_res_from_embedding(
+                    embedding,
+                    point_coords=point_coords,
+                    point_labels=point_labels,
+                    multimask_output=True,
+                )
+                proposals.extend(
+                    self._proposals_from_low_res_batch(
+                        point_batch,
+                        scores,
+                        low_res_masks,
+                        (crop_height, crop_width),
+                        crop_box,
+                        crop_grid,
+                        crop_index,
+                        full_size,
+                    )
+                )
+                continue
+
             masks, scores, low_res_masks = self.predictor.predict_from_embedding(
                 embedding,
-                point_coords=point_batch[:, None, :].astype(np.float32),
+                point_coords=point_coords,
                 point_labels=point_labels,
                 multimask_output=True,
             )
@@ -389,17 +416,17 @@ class AutomaticMaskGenerator:
             pixel_grid[:, 1] *= float(crop_height)
             decode_jobs = []
             for point_batch in batched(pixel_grid, self.points_per_batch):
-                point_labels = np.ones((len(point_batch), 1), dtype=np.int64)
                 decode_jobs.append(
                     (
                         crop_slot,
                         crop_index,
                         crop_box,
+                        (crop_height, crop_width),
                         point_batch,
                         Sam3PromptBatch(
                             embedding=embedding,
-                            point_coords=point_batch[:, None, :].astype(np.float32),
-                            point_labels=point_labels,
+                            point_coords=self._point_coords(point_batch),
+                            point_labels=self._point_labels(len(point_batch)),
                         ),
                     )
                 )
@@ -443,33 +470,57 @@ class AutomaticMaskGenerator:
         for start in range(0, len(decode_jobs), self.prompt_decode_batch_size):
             job_batch = decode_jobs[start : start + self.prompt_decode_batch_size]
             prompt_batches = [job[-1] for job in job_batch]
-            results = self.predictor.predict_from_embedding_batches(
-                prompt_batches,
-                multimask_output=True,
+            use_low_res = hasattr(
+                self.predictor,
+                "decode_low_res_from_embedding_batches",
             )
-            for (
-                crop_slot,
-                crop_index,
-                crop_box,
-                point_batch,
-                _prompt_batch,
-            ), (
-                masks,
-                scores,
-                low_res_masks,
-            ) in zip(job_batch, results):
-                crop_proposals[crop_slot].extend(
-                    self._proposals_from_batch(
-                        point_batch,
-                        masks,
-                        scores,
-                        low_res_masks,
-                        crop_box,
-                        crop_grid,
-                        crop_index,
-                        full_size,
-                    )
+            if use_low_res:
+                results = self.predictor.decode_low_res_from_embedding_batches(
+                    prompt_batches,
+                    multimask_output=True,
                 )
+            else:
+                results = self.predictor.predict_from_embedding_batches(
+                    prompt_batches,
+                    multimask_output=True,
+                )
+            for job, result in zip(job_batch, results):
+                (
+                    crop_slot,
+                    crop_index,
+                    crop_box,
+                    crop_hw,
+                    point_batch,
+                    _prompt_batch,
+                ) = job
+                if use_low_res:
+                    low_res_masks, scores = result
+                    crop_proposals[crop_slot].extend(
+                        self._proposals_from_low_res_batch(
+                            point_batch,
+                            scores,
+                            low_res_masks,
+                            crop_hw,
+                            crop_box,
+                            crop_grid,
+                            crop_index,
+                            full_size,
+                        )
+                    )
+                else:
+                    masks, scores, low_res_masks = result
+                    crop_proposals[crop_slot].extend(
+                        self._proposals_from_batch(
+                            point_batch,
+                            masks,
+                            scores,
+                            low_res_masks,
+                            crop_box,
+                            crop_grid,
+                            crop_index,
+                            full_size,
+                        )
+                    )
 
     def _proposals_from_batch(
         self,
@@ -483,8 +534,6 @@ class AutomaticMaskGenerator:
         full_size: tuple[int, int],
     ) -> list[MaskProposal]:
         proposals: list[MaskProposal] = []
-        crop_x0, crop_y0, _crop_x1, _crop_y1 = crop_box
-        full_width, full_height = full_size
         for point_index, point in enumerate(points):
             for mask_index in range(masks.shape[1]):
                 predicted_iou = float(scores[point_index, mask_index])
@@ -494,47 +543,155 @@ class AutomaticMaskGenerator:
                 area = int(mask.sum())
                 if area < self.min_mask_region_area:
                     continue
-                local_bbox = mask_to_box(mask)
-                if local_bbox is None:
-                    continue
-                if self.filter_crop_edge_masks and touches_internal_crop_edge(
-                    local_bbox,
-                    crop_box,
-                    full_size,
-                ):
-                    continue
                 stability = calculate_stability_score(
                     low_res_masks[point_index, mask_index],
                     offset=self.stability_score_offset,
                 )
                 if stability < self.stability_score_thresh:
                     continue
-                bbox = (
-                    local_bbox[0] + crop_x0,
-                    local_bbox[1] + crop_y0,
-                    local_bbox[2] + crop_x0,
-                    local_bbox[3] + crop_y0,
+                proposal = self._proposal_from_mask(
+                    point,
+                    mask,
+                    predicted_iou=predicted_iou,
+                    stability=stability,
+                    crop_box=crop_box,
+                    crop_grid=crop_grid,
+                    crop_index=crop_index,
+                    full_size=full_size,
                 )
-                lx0, ly0, lx1, ly1 = local_bbox
-                roi_mask = mask[ly0:ly1, lx0:lx1].copy()
-                proposals.append(
-                    MaskProposal(
-                        segmentation=roi_mask,
-                        bbox=bbox,
-                        area=area,
-                        predicted_iou=predicted_iou,
-                        stability_score=stability,
-                        point_coords=(
-                            float(point[0] + crop_x0),
-                            float(point[1] + crop_y0),
-                        ),
-                        crop_box=crop_box,
-                        crop_grid=crop_grid,
-                        crop_index=crop_index,
-                        image_size=(full_width, full_height),
-                    )
-                )
+                if proposal is not None:
+                    proposals.append(proposal)
         return proposals
+
+    def _proposals_from_low_res_batch(
+        self,
+        points: np.ndarray,
+        scores: np.ndarray | torch.Tensor,
+        low_res_masks: np.ndarray | torch.Tensor,
+        crop_hw: tuple[int, int],
+        crop_box: tuple[int, int, int, int],
+        crop_grid: int,
+        crop_index: int,
+        full_size: tuple[int, int],
+    ) -> list[MaskProposal]:
+        scores_np = _to_numpy(scores)
+        low_res_np = _to_numpy(low_res_masks)
+        if scores_np.ndim == 1:
+            scores_np = scores_np[None]
+        if low_res_np.ndim == 3:
+            low_res_np = low_res_np[None]
+
+        selected: list[tuple[int, int, float, float]] = []
+        for point_index in range(scores_np.shape[0]):
+            for mask_index in range(scores_np.shape[1]):
+                predicted_iou = float(scores_np[point_index, mask_index])
+                if predicted_iou < self.pred_iou_thresh:
+                    continue
+                stability = calculate_stability_score(
+                    low_res_np[point_index, mask_index],
+                    offset=self.stability_score_offset,
+                )
+                if stability < self.stability_score_thresh:
+                    continue
+                selected.append((point_index, mask_index, predicted_iou, stability))
+        if not selected:
+            return []
+
+        low_res_tensor = torch.as_tensor(low_res_masks)
+        survivor_low_res = torch.stack(
+            [
+                low_res_tensor[point_index, mask_index]
+                for point_index, mask_index, _predicted_iou, _stability in selected
+            ],
+            dim=0,
+        )[:, None]
+        masks = self._postprocess_low_res_masks(survivor_low_res, crop_hw)
+        if masks.ndim == 3:
+            masks = masks[:, None]
+
+        proposals: list[MaskProposal] = []
+        for survivor_index, (
+            point_index,
+            _mask_index,
+            predicted_iou,
+            stability,
+        ) in enumerate(selected):
+            mask = masks[survivor_index, 0].astype(bool)
+            area = int(mask.sum())
+            if area < self.min_mask_region_area:
+                continue
+            proposal = self._proposal_from_mask(
+                points[point_index],
+                mask,
+                predicted_iou=predicted_iou,
+                stability=stability,
+                crop_box=crop_box,
+                crop_grid=crop_grid,
+                crop_index=crop_index,
+                full_size=full_size,
+            )
+            if proposal is not None:
+                proposals.append(proposal)
+        return proposals
+
+    def _postprocess_low_res_masks(
+        self,
+        low_res_masks: torch.Tensor,
+        crop_hw: tuple[int, int],
+    ) -> np.ndarray:
+        if hasattr(self.predictor, "postprocess_low_res_masks"):
+            return self.predictor.postprocess_low_res_masks(
+                low_res_masks,
+                crop_hw,
+                return_logits=False,
+            )
+        return low_res_masks.detach().cpu().numpy() > 0
+
+    def _proposal_from_mask(
+        self,
+        point: np.ndarray,
+        mask: np.ndarray,
+        *,
+        predicted_iou: float,
+        stability: float,
+        crop_box: tuple[int, int, int, int],
+        crop_grid: int,
+        crop_index: int,
+        full_size: tuple[int, int],
+    ) -> MaskProposal | None:
+        crop_x0, crop_y0, _crop_x1, _crop_y1 = crop_box
+        full_width, full_height = full_size
+        local_bbox = mask_to_box(mask)
+        if local_bbox is None:
+            return None
+        if self.filter_crop_edge_masks and touches_internal_crop_edge(
+            local_bbox,
+            crop_box,
+            full_size,
+        ):
+            return None
+        bbox = (
+            local_bbox[0] + crop_x0,
+            local_bbox[1] + crop_y0,
+            local_bbox[2] + crop_x0,
+            local_bbox[3] + crop_y0,
+        )
+        lx0, ly0, lx1, ly1 = local_bbox
+        return MaskProposal(
+            segmentation=mask[ly0:ly1, lx0:lx1].copy(),
+            bbox=bbox,
+            area=int(mask.sum()),
+            predicted_iou=predicted_iou,
+            stability_score=stability,
+            point_coords=(
+                float(point[0] + crop_x0),
+                float(point[1] + crop_y0),
+            ),
+            crop_box=crop_box,
+            crop_grid=crop_grid,
+            crop_index=crop_index,
+            image_size=(full_width, full_height),
+        )
 
     def _remove_duplicates(
         self,
@@ -554,3 +711,9 @@ class AutomaticMaskGenerator:
         boxes = np.array([proposal.bbox for proposal in proposals], dtype=np.float32)
         keep = filter_boxes(boxes, scores, threshold)
         return [proposals[index] for index in keep]
+
+
+def _to_numpy(value: np.ndarray | torch.Tensor) -> np.ndarray:
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().numpy()
+    return np.asarray(value)

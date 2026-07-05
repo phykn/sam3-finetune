@@ -261,33 +261,71 @@ def test_proposal_mask_image_returns_roi_alpha_mask():
 
 class FakePredictor:
     def __init__(self):
-        self.set_image_calls = 0
+        self.encode_image_calls = 0
         self.predict_batches = []
 
-    def set_image(self, image):
-        self.set_image_calls += 1
+    def encode_image(self, image):
+        self.encode_image_calls += 1
+        return {"size": image.size}
 
-    def predict(
+    def decode_low_res_from_embedding(
         self,
+        embedding,
         point_coords=None,
         point_labels=None,
-        box=None,
-        mask_input=None,
         multimask_output=True,
-        return_logits=False,
     ):
         self.predict_batches.append((point_coords.copy(), point_labels.copy()))
         batch = point_coords.shape[0]
-        masks = np.zeros((batch, 1, 8, 8), dtype=bool)
         low_res = np.zeros((batch, 1, 8, 8), dtype=np.float32)
         scores = np.zeros((batch, 1), dtype=np.float32)
         for i in range(batch):
             x = min(int(point_coords[i, 0, 0] // 4), 6)
             y = min(int(point_coords[i, 0, 1] // 4), 6)
-            masks[i, 0, y : y + 2, x : x + 2] = True
-            low_res[i, 0] = np.where(masks[i, 0], 2.0, -2.0)
+            low_res[i, 0] = -2.0
+            low_res[i, 0, y : y + 2, x : x + 2] = 2.0
             scores[i, 0] = 1.0 - (i * 0.01)
-        return masks, scores, low_res
+        return low_res, scores
+
+
+class LowResFilteringFakePredictor:
+    device = torch.device("cpu")
+
+    def __init__(self):
+        self.decode_batches = []
+        self.postprocess_count = 0
+
+    def encode_image(self, image):
+        return {"size": image.size}
+
+    def decode_low_res_from_embedding(
+        self,
+        embedding,
+        point_coords=None,
+        point_labels=None,
+        multimask_output=True,
+    ):
+        point_array = point_coords.detach().cpu().numpy()
+        self.decode_batches.append((point_array.copy(), point_labels.clone()))
+        batch = point_array.shape[0]
+        scores = torch.tensor([[0.1], [0.9], [0.95], [0.2]], dtype=torch.float32)[
+            :batch
+        ]
+        low_res = torch.full((batch, 1, 4, 4), -2.0, dtype=torch.float32)
+        for index in range(batch):
+            low_res[index, 0, index, index] = 2.0
+        return low_res, scores
+
+    def postprocess_low_res_masks(
+        self,
+        low_res_masks,
+        orig_hw,
+        *,
+        return_logits=False,
+    ):
+        self.postprocess_count += int(low_res_masks.shape[0])
+        masks = low_res_masks.detach().cpu().numpy() > 0
+        return np.repeat(np.repeat(masks, 2, axis=-2), 2, axis=-1)
 
 
 def test_generator_batches_grid_points_and_returns_sorted_proposals():
@@ -303,7 +341,7 @@ def test_generator_batches_grid_points_and_returns_sorted_proposals():
 
     proposals = generator.generate(Image.new("RGB", (8, 8), color=(0, 0, 0)))
 
-    assert predictor.set_image_calls == 1
+    assert predictor.encode_image_calls == 1
     assert [batch[0].shape[0] for batch in predictor.predict_batches] == [3, 1]
     assert len(proposals) == 4
     assert proposals[0].predicted_iou >= proposals[-1].predicted_iou
@@ -362,14 +400,32 @@ def test_generator_filters_by_score_stability_area_and_max_masks():
     assert all(proposal.area >= 4 for proposal in proposals)
 
 
+def test_generator_filters_low_res_candidates_before_full_res_postprocess():
+    predictor = LowResFilteringFakePredictor()
+    generator = AutomaticMaskGenerator(
+        predictor,
+        points_per_side=2,
+        points_per_batch=4,
+        pred_iou_thresh=0.5,
+        stability_score_thresh=0.0,
+        box_nms_thresh=1.0,
+    )
+
+    proposals = generator.generate(Image.new("RGB", (8, 8), color=(0, 0, 0)))
+
+    assert len(proposals) == 2
+    assert predictor.postprocess_count == 2
+    assert len(predictor.decode_batches) == 1
+
+
 class CropAwareFakePredictor:
     def __init__(self):
         self.images = []
         self.predict_batches = []
         self.encoded_batches = []
 
-    def set_image(self, image):
-        self.images.append(image.size)
+    def encode_image(self, image):
+        return {"image": image, "size": image.size}
 
     def encode_image_batch(self, images):
         self.encoded_batches.append([image.size for image in images])
@@ -458,8 +514,28 @@ class EdgeTouchingFakePredictor:
     def __init__(self):
         self.images = []
 
-    def set_image(self, image):
-        self.images.append(image.size)
+    def encode_image(self, image):
+        return {"image": image, "size": image.size}
+
+    def predict_from_embedding(
+        self,
+        embedding,
+        point_coords=None,
+        point_labels=None,
+        box=None,
+        mask_input=None,
+        multimask_output=True,
+        return_logits=False,
+    ):
+        self.images.append(embedding["size"])
+        return self.predict(
+            point_coords=point_coords,
+            point_labels=point_labels,
+            box=box,
+            mask_input=mask_input,
+            multimask_output=multimask_output,
+            return_logits=return_logits,
+        )
 
     def predict(
         self,

@@ -264,6 +264,59 @@ def test_memory_references_preserve_order_for_same_object_id() -> None:
     assert [item.reference.obj_id for item in prepared] == [3, 3, 9]
 
 
+def test_memory_predictor_accepts_prepared_reference_frames() -> None:
+    from src.predict.next_frame import MemoryReference, NextFramePredictor
+
+    class FakeVideoModel:
+        image_size = 16
+
+        def __init__(self) -> None:
+            self.init_state_kwargs = None
+            self.added_masks = []
+
+        def init_state(self, **kwargs):
+            self.init_state_kwargs = kwargs
+            return {"device": torch.device("cpu"), **kwargs}
+
+        def add_new_masks(self, inference_state, frame_idx, obj_ids, masks) -> None:
+            self.added_masks.append((frame_idx, obj_ids, tuple(masks.shape)))
+
+        def add_new_points(self, *_args, **_kwargs) -> None:
+            pass
+
+        def propagate_in_video_preflight(self, *_args, **_kwargs) -> None:
+            pass
+
+        def propagate_in_video(self, *_args, **_kwargs):
+            yield (
+                1,
+                [7],
+                None,
+                torch.ones(1, 1, 12, 20),
+                torch.tensor([[0.5]]),
+            )
+
+    model = FakeVideoModel()
+    predictor = object.__new__(NextFramePredictor)
+    predictor.model = model
+    predictor.device = torch.device("cpu")
+    predictor.image_size = 16
+    reference = MemoryReference(
+        image=Image.fromarray(np.zeros((8, 10, 3), dtype=np.uint8)),
+        mask=np.ones((8, 10), dtype=bool),
+        obj_id=7,
+    )
+    target = Image.fromarray(np.zeros((12, 20, 3), dtype=np.uint8))
+    prepared = predictor.prepare_reference_frames([reference])
+
+    prediction = predictor.predict(target, prepared)
+
+    assert prepared.frame_tensor.shape == (1, 3, 16, 16)
+    assert model.init_state_kwargs["num_frames"] == 2
+    assert model.added_masks == [(0, [7], (1, 12, 20))]
+    assert prediction.frame_index == 1
+
+
 def test_preprocess_sequence_uses_target_size_for_mixed_image_sizes() -> None:
     from src.predict.next_frame import NextFramePredictor
 

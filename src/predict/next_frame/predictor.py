@@ -10,13 +10,25 @@ from PIL import Image
 
 from ...model.build import build_model
 from ...types import MemoryPrediction, MemoryReference
-from ..prompted.transforms import preprocess_rgb_images, scale_coords, to_rgb_pil
+from ..prompted.transforms import (
+    preprocess_rgb_image,
+    preprocess_rgb_images,
+    scale_coords,
+    to_rgb_pil,
+)
 
 
 @dataclass(frozen=True)
 class PreparedReference:
     reference: MemoryReference
     frame_index: int
+
+
+@dataclass(frozen=True)
+class PreparedReferenceFrames:
+    references: tuple[PreparedReference, ...]
+    frame_tensor: torch.Tensor
+    frame_hws: tuple[tuple[int, int], ...]
 
 
 class NextFramePredictor:
@@ -56,11 +68,27 @@ class NextFramePredictor:
             for index, reference in enumerate(references)
         ]
 
+    def prepare_reference_frames(
+        self,
+        references: Sequence[MemoryReference],
+    ) -> PreparedReferenceFrames:
+        prepared = tuple(self.prepare_references(references))
+        frame_tensor, _orig_hw, frame_hws = preprocess_rgb_images(
+            [item.reference.image for item in prepared],
+            resolution=self.image_size,
+            dtype=torch.float16,
+        )
+        return PreparedReferenceFrames(
+            references=prepared,
+            frame_tensor=frame_tensor,
+            frame_hws=tuple(frame_hws),
+        )
+
     @torch.inference_mode()
     def predict(
         self,
         target_image: Image.Image | np.ndarray,
-        references: Sequence[MemoryReference],
+        references: Sequence[MemoryReference] | PreparedReferenceFrames,
         target_point_coords: np.ndarray | torch.Tensor | None = None,
         target_point_labels: np.ndarray | torch.Tensor | None = None,
         target_obj_id: int | None = None,
@@ -68,23 +96,44 @@ class NextFramePredictor:
     ) -> MemoryPrediction:
         if target_point_mode not in {"interaction", "memory"}:
             raise ValueError("target_point_mode must be 'interaction' or 'memory'")
-        if references:
+        if isinstance(references, PreparedReferenceFrames):
+            prepared = list(references.references)
+            target_tensor, orig_hw = preprocess_rgb_image(
+                target_image,
+                resolution=self.image_size,
+                dtype=torch.float16,
+            )
+            frame_tensor = torch.cat(
+                [references.frame_tensor, target_tensor.unsqueeze(0)],
+                dim=0,
+            )
+            frame_hws = list(references.frame_hws) + [orig_hw]
+            target_frame_index = len(prepared)
+            images_count = frame_tensor.shape[0]
+        elif references:
             prepared = self.prepare_references(references)
+            images = [item.reference.image for item in prepared] + [target_image]
+            target_frame_index = len(prepared)
+            frame_tensor, orig_hw, frame_hws = self.preprocess_image_sequence(
+                images,
+                output_image_index=target_frame_index,
+            )
+            images_count = len(images)
         elif target_point_coords is not None:
             prepared = []
+            target_frame_index = 0
+            frame_tensor, orig_hw, frame_hws = self.preprocess_image_sequence(
+                [target_image],
+                output_image_index=0,
+            )
+            images_count = 1
         else:
             raise ValueError("references must be non-empty")
-        images = [item.reference.image for item in prepared] + [target_image]
-        target_frame_index = len(prepared)
-        frame_tensor, orig_hw, frame_hws = self.preprocess_image_sequence(
-            images,
-            output_image_index=target_frame_index,
-        )
 
         inference_state = self.model.init_state(
             video_height=orig_hw[0],
             video_width=orig_hw[1],
-            num_frames=len(images),
+            num_frames=images_count,
             cached_features=None,
             device=self.device,
             offload_video_to_cpu=True,

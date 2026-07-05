@@ -1,5 +1,6 @@
 import numpy as np
-from src.types import ContextPrediction, MaskInstance
+import torch
+from src.types import ContextPrediction, MaskInstance, Sam3ImageEmbedding
 
 
 def _instance(score: float, *, bbox=(1, 1, 3, 3)) -> MaskInstance:
@@ -124,3 +125,41 @@ def test_refine_package_exports_context_grid_refiner_api():
     assert refine.ContextGridRefineResult is ContextGridRefineResult
     assert hasattr(refine, "MaskRefiner")
     assert not hasattr(refine, "__all__")
+
+
+def test_mask_refiner_accepts_explicit_embedding_without_set_image():
+    from src.predict.refine import MaskRefiner
+
+    class FakePredictor:
+        def __init__(self) -> None:
+            self.embedding = None
+
+        def predict(self, **_kwargs):
+            raise AssertionError("explicit embedding should bypass predict")
+
+        def predict_from_embedding(self, embedding, **kwargs):
+            self.embedding = embedding
+            self.kwargs = kwargs
+            masks = np.zeros((1, 1, 8, 8), dtype=bool)
+            masks[0, 0, 2:6, 2:6] = True
+            scores = np.array([[0.9]], dtype=np.float32)
+            low_res = np.zeros((1, 1, 4, 4), dtype=np.float32)
+            return masks, scores, low_res
+
+    fake = FakePredictor()
+    refiner = MaskRefiner(fake)
+    embedding = Sam3ImageEmbedding(
+        image_embed=torch.zeros(1, 1, 1, 1),
+        high_res_features=(),
+        orig_hw=(8, 8),
+    )
+
+    result = refiner.refine(
+        embedding=embedding,
+        mask_input=np.zeros((4, 4), dtype=np.float32),
+    )
+
+    assert fake.embedding is embedding
+    assert fake.kwargs["multimask_output"] is False
+    np.testing.assert_allclose(result.score, 0.9)
+    assert result.mask.sum() == 16

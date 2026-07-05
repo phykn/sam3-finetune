@@ -43,15 +43,20 @@ class FakeContextPredictor:
         multimask_output=True,
         return_logits=False,
     ):
-        self.decode_batches.append(point_coords.copy())
+        point_array = (
+            point_coords.detach().cpu().numpy()
+            if isinstance(point_coords, torch.Tensor)
+            else point_coords
+        )
+        self.decode_batches.append(point_array.copy())
         self.mask_inputs.append(None if mask_input is None else mask_input.copy())
-        batch = point_coords.shape[0]
+        batch = point_array.shape[0]
         masks = np.zeros((batch, 1, 40, 40), dtype=bool)
         low_res = np.full((batch, 1, 8, 8), -2.0, dtype=np.float32)
         scores = np.ones((batch, 1), dtype=np.float32)
         for index in range(batch):
-            x = int(round(float(point_coords[index, 0, 0])))
-            y = int(round(float(point_coords[index, 0, 1])))
+            x = int(round(float(point_array[index, 0, 0])))
+            y = int(round(float(point_array[index, 0, 1])))
             x0 = max(x - 3, 0)
             y0 = max(y - 3, 0)
             x1 = min(x + 3, 40)
@@ -350,6 +355,45 @@ def test_context_matcher_reuses_prepared_references():
     assert fake.encode_batches == [[target_image]]
 
 
+def test_context_matcher_feature_score_skips_full_resolution_score_map(monkeypatch):
+    import src.predict.context.matcher as matcher_module
+    from src.predict.context.matcher import ContextMatcher
+    from src.types import ContextReference
+
+    def fail_resize(*_args, **_kwargs):
+        raise AssertionError("feature scoring should not resize similarity map")
+
+    monkeypatch.setattr(matcher_module, "resize_similarity_map", fail_resize)
+    reference_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    reference_features[0, 1:3, 1:3] = 3.0
+    target_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    target_features[0, 1, 2] = 3.0
+    reference_image = _image_from_feature_map(reference_features)
+    target_image = _image_from_feature_map(target_features)
+    reference_mask = np.zeros((40, 40), dtype=bool)
+    reference_mask[10:30, 10:30] = True
+    fake = FakeContextPredictor()
+    predictor = ContextMatcher(
+        fake,
+        candidate_count=4,
+        decode_batch_size=2,
+        max_masks=1,
+        score_resolution="feature",
+    )
+
+    predictions = predictor.predict(
+        target_image=target_image,
+        references=[
+            ContextReference(
+                image=reference_image,
+                mask=reference_mask,
+            )
+        ],
+    )
+
+    assert len(predictions) == 1
+
+
 def test_context_predictor_rejects_non_positive_predict_max_masks():
     from src.predict.context.matcher import ContextMatcher
     from src.types import ContextReference
@@ -552,10 +596,11 @@ def test_reference_prompt_refinement_keeps_original_prompts(monkeypatch):
         def __init__(self) -> None:
             self.predict_calls = []
 
-        def set_image(self, image):
+        def encode_image(self, image):
             self.image = image
+            return object()
 
-        def predict(self, **kwargs):
+        def predict_from_embedding(self, embedding, **kwargs):
             self.predict_calls.append(kwargs)
             if len(self.predict_calls) == 1:
                 masks = np.zeros((2, 8, 8), dtype=bool)

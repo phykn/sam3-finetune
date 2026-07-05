@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from ...types import Sam3ImageEmbedding
 from ..prompted import Sam3Predictor
 
 
@@ -56,6 +57,7 @@ class MaskRefiner:
         self,
         *,
         image=None,
+        embedding: Sam3ImageEmbedding | None = None,
         point_coords: np.ndarray | None = None,
         point_labels: np.ndarray | None = None,
         box: np.ndarray | None = None,
@@ -63,23 +65,37 @@ class MaskRefiner:
     ) -> RefinedMaskResult:
         if mask_input is None:
             raise ValueError("mask_input is required for refinement")
+        if image is not None and embedding is not None:
+            raise ValueError("image and embedding cannot be used together")
         if image is not None:
-            self.predictor.set_image(image)
-        masks, scores, low_res_masks = self.predictor.predict(
+            embedding = self.predictor.encode_image(image)
+        if embedding is None:
+            raise ValueError("image or embedding is required for refinement")
+
+        masks, scores, low_res_masks = self.predictor.predict_from_embedding(
+            embedding,
             point_coords=point_coords,
             point_labels=point_labels,
             box=box,
             mask_input=mask_input,
             multimask_output=False,
         )
-        mask, score, selected_index = select_best_mask(masks, scores)
-        flat_low_res = np.asarray(low_res_masks).reshape(
-            -1,
-            *np.asarray(low_res_masks).shape[-2:],
-        )
-        return RefinedMaskResult(
-            mask=mask,
-            score=score,
-            low_res_mask=flat_low_res[selected_index],
-            selected_index=selected_index,
-        )
+        return _refined_result(masks, scores, low_res_masks)
+
+
+def _refined_result(
+    masks: np.ndarray,
+    scores: np.ndarray,
+    low_res_masks: np.ndarray,
+) -> RefinedMaskResult:
+    mask, score, selected_index = select_best_mask(masks, scores)
+    flat_low_res = np.asarray(low_res_masks).reshape(
+        -1,
+        *np.asarray(low_res_masks).shape[-2:],
+    )
+    return RefinedMaskResult(
+        mask=mask,
+        score=score,
+        low_res_mask=flat_low_res[selected_index],
+        selected_index=selected_index,
+    )

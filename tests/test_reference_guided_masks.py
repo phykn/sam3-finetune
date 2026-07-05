@@ -219,6 +219,45 @@ def test_reference_guided_rerank_reuses_prepared_references():
     assert ranked[0].concept_id == 2
 
 
+def test_reference_guided_rerank_accepts_precomputed_target_embedding():
+    from src.predict.context.guided import ReferenceGuidedMaskGenerator
+
+    reference_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    reference_features[0, 1:3, 1:3] = 3.0
+    target_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    target_features[0, 1, 2] = 3.0
+    reference_image = _image_from_feature_map(reference_features)
+    target_image = _image_from_feature_map(target_features)
+    reference_mask = np.zeros((40, 40), dtype=bool)
+    reference_mask[10:30, 10:30] = True
+    fake = FakeReferencePredictor()
+    generator = ReferenceGuidedMaskGenerator(
+        fake,
+        base_score_weight=0.0,
+        negative_context_mode="none",
+    )
+    prepared = generator.prepare_references(
+        [
+            ReferenceExample(
+                concept_id=2,
+                image=reference_image,
+                mask=reference_mask,
+            )
+        ]
+    )
+    fake.encode_batches.clear()
+
+    ranked = generator.rerank(
+        target_image,
+        [_candidate((20, 10, 30, 20), score=0.10)],
+        prepared,
+        target_embedding=_embedding_from_feature_map(target_features),
+    )
+
+    assert fake.encode_batches == []
+    assert ranked[0].concept_id == 2
+
+
 def test_reference_guided_rerank_rejects_mixed_reference_concepts():
     from src.predict.context.guided import ReferenceGuidedMaskGenerator
 

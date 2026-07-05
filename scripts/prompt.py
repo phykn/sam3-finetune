@@ -369,9 +369,10 @@ def main(argv: list[str] | None = None) -> None:
     started_at = time.perf_counter()
     results: list[PromptResult] = []
     with torch.inference_mode(), autocast_context:
-        predictor.set_image(image)
+        embedding = predictor.encode_image(image)
         for prompt_case in prompt_cases:
-            masks, scores, low_res = predictor.predict(
+            masks, scores, low_res = predictor.predict_from_embedding(
+                embedding,
                 point_coords=prompt_case.point_coords,
                 point_labels=prompt_case.point_labels,
                 box=prompt_case.box,

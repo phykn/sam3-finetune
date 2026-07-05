@@ -73,10 +73,11 @@ def test_predict_sam_mask_from_box_keeps_box_during_refinement(monkeypatch) -> N
         def from_checkpoint(cls, checkpoint, device):
             return cls()
 
-        def set_image(self, image):
+        def encode_image(self, image):
             self.image = image
+            return object()
 
-        def predict(self, **kwargs):
+        def predict_from_embedding(self, embedding, **kwargs):
             self.calls.append(kwargs)
             if len(self.calls) == 1:
                 masks = np.zeros((1, 3, 4, 6), dtype=bool)
@@ -117,10 +118,11 @@ def test_mask_refiner_preserves_prompts_during_second_pass() -> None:
         def __init__(self) -> None:
             self.calls = []
 
-        def set_image(self, image):
+        def encode_image(self, image):
             self.image = image
+            return object()
 
-        def predict(self, **kwargs):
+        def predict_from_embedding(self, embedding, **kwargs):
             self.calls.append(kwargs)
             masks = np.zeros((1, 1, 4, 6), dtype=bool)
             masks[0, 0, 1:3, 2:5] = True

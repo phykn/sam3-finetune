@@ -138,6 +138,28 @@ def mean_score_over_mask(scores: np.ndarray, mask: np.ndarray) -> float:
     return float(values.mean())
 
 
+def mean_feature_score_over_mask(
+    score_map: torch.Tensor,
+    mask: np.ndarray,
+    orig_hw: tuple[int, int],
+) -> float:
+    mask_tensor = torch.as_tensor(mask, dtype=torch.float32, device=score_map.device)
+    if mask_tensor.ndim != 2:
+        raise ValueError("mask must have shape HxW")
+    if tuple(mask_tensor.shape) != tuple(orig_hw):
+        raise ValueError("mask size must match image size")
+    weights = F.interpolate(
+        mask_tensor[None, None],
+        size=score_map.shape[-2:],
+        mode="area",
+    )[0, 0]
+    weight_sum = weights.sum()
+    if float(weight_sum.detach().cpu()) <= 0.0:
+        return 0.0
+    score = (score_map.float() * weights).sum() / weight_sum
+    return float(score.detach().cpu())
+
+
 def _masked_feature_mean(
     features: torch.Tensor,
     mask: np.ndarray | torch.Tensor,

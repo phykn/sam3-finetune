@@ -14,8 +14,10 @@ class FakePromptEncoder(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.get_dense_pe_calls = 0
+        self.forward_calls = 0
 
     def forward(self, points=None, boxes=None, masks=None):
+        self.forward_calls += 1
         self.last_points = points
         batch_size = points[0].shape[0] if points is not None else masks.shape[0]
         sparse = torch.zeros(batch_size, 3, 256)
@@ -122,10 +124,10 @@ def test_package_public_surface_requires_workflow_imports():
 
 def test_predictor_accepts_box_and_returns_numpy_outputs():
     predictor = Sam3Predictor(FakeModel(), device=torch.device("cpu"))
-    predictor.set_image(Image.new("RGB", (20, 10), color=(0, 0, 0)))
+    embedding = predictor.encode_image(Image.new("RGB", (20, 10), color=(0, 0, 0)))
 
-    masks, scores, low_res = predictor.predict(
-        box=np.array([2, 1, 18, 9], dtype=np.float32)
+    masks, scores, low_res = predictor.predict_from_embedding(
+        embedding, box=np.array([2, 1, 18, 9], dtype=np.float32)
     )
 
     assert masks.shape == (1, 10, 20)
@@ -137,9 +139,12 @@ def test_predictor_accepts_box_and_returns_numpy_outputs():
 def test_predictor_adds_dummy_negative_point_for_mask_only_prompt():
     model = FakeModel()
     predictor = Sam3Predictor(model, device=torch.device("cpu"))
-    predictor.set_image(Image.new("RGB", (20, 10), color=(0, 0, 0)))
+    embedding = predictor.encode_image(Image.new("RGB", (20, 10), color=(0, 0, 0)))
 
-    predictor.predict(mask_input=np.ones((288, 288), dtype=np.float32))
+    predictor.predict_from_embedding(
+        embedding,
+        mask_input=np.ones((288, 288), dtype=np.float32),
+    )
 
     coords, labels = model.prompt_encoder.last_points
     assert coords.shape == (1, 1, 2)
@@ -149,16 +154,17 @@ def test_predictor_adds_dummy_negative_point_for_mask_only_prompt():
 def test_predictor_accepts_batched_boxes():
     model = FakeModel()
     predictor = Sam3Predictor(model, device=torch.device("cpu"))
-    predictor.set_image(Image.new("RGB", (20, 10), color=(0, 0, 0)))
+    embedding = predictor.encode_image(Image.new("RGB", (20, 10), color=(0, 0, 0)))
 
-    masks, scores, low_res = predictor.predict(
+    masks, scores, low_res = predictor.predict_from_embedding(
+        embedding,
         box=np.array(
             [
                 [2, 1, 18, 9],
                 [4, 2, 10, 8],
             ],
             dtype=np.float32,
-        )
+        ),
     )
 
     coords, labels = model.prompt_encoder.last_points
@@ -167,6 +173,14 @@ def test_predictor_accepts_batched_boxes():
     assert masks.shape == (2, 1, 10, 20)
     assert scores.shape == (2, 1)
     assert low_res.shape == (2, 1, 288, 288)
+
+
+def test_predictor_does_not_expose_stateful_image_api():
+    predictor = Sam3Predictor(FakeModel(), device=torch.device("cpu"))
+
+    assert not hasattr(predictor, "set_image")
+    assert not hasattr(predictor, "set_image_embedding")
+    assert not hasattr(predictor, "predict")
 
 
 def test_encode_image_tensor_batch_returns_one_embedding_per_tensor():
@@ -260,6 +274,22 @@ def test_predict_from_embedding_does_not_require_set_image():
     assert low_res.shape == (1, 288, 288)
 
 
+def test_decode_low_res_from_embedding_returns_tensors_without_postprocess():
+    predictor = Sam3Predictor(FakeModel(), device=torch.device("cpu"))
+    embedding = predictor.encode_image(Image.new("RGB", (20, 10), color=(0, 0, 0)))
+
+    low_res, scores = predictor.decode_low_res_from_embedding(
+        embedding,
+        point_coords=np.array([[[10, 5]]], dtype=np.float32),
+        point_labels=np.array([[1]], dtype=np.int64),
+    )
+
+    assert isinstance(low_res, torch.Tensor)
+    assert isinstance(scores, torch.Tensor)
+    assert tuple(low_res.shape) == (1, 1, 288, 288)
+    assert tuple(scores.shape) == (1, 1)
+
+
 def test_predictor_caches_dense_position_encoding():
     model = FakeModel()
     predictor = Sam3Predictor(model, device=torch.device("cpu"))
@@ -304,6 +334,7 @@ def test_predict_from_embedding_batches_decodes_multiple_prompt_batches_once():
     )
 
     assert model.mask_decoder.forward_calls == 1
+    assert model.prompt_encoder.forward_calls == 1
     assert model.mask_decoder.last_repeat_image is False
     assert model.mask_decoder.last_image_embeddings_shape[0] == 3
     assert model.mask_decoder.last_high_res_shapes[0][0] == 3
@@ -340,6 +371,7 @@ def test_predict_from_embedding_batches_reuses_features_for_same_embedding():
     )
 
     assert model.mask_decoder.forward_calls == 1
+    assert model.prompt_encoder.forward_calls == 1
     assert model.mask_decoder.last_repeat_image is True
     assert model.mask_decoder.last_image_embeddings_shape[0] == 1
     assert model.mask_decoder.last_high_res_shapes[0][0] == 1

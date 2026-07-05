@@ -17,9 +17,9 @@ class Sam3ImageEmbedding:
 @dataclass(frozen=True)
 class Sam3PromptBatch:
     embedding: Sam3ImageEmbedding
-    point_coords: np.ndarray | None = None
-    point_labels: np.ndarray | None = None
-    box: np.ndarray | None = None
+    point_coords: np.ndarray | torch.Tensor | None = None
+    point_labels: np.ndarray | torch.Tensor | None = None
+    box: np.ndarray | torch.Tensor | None = None
     mask_input: np.ndarray | torch.Tensor | None = None
 
 

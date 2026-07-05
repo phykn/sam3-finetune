@@ -123,8 +123,9 @@ def predict_sam_mask_from_prompts(
             else nullcontext()
         )
         with autocast_context:
-            predictor.set_image(image)
-            masks, scores, low_res_masks = predictor.predict(
+            embedding = predictor.encode_image(image)
+            masks, scores, low_res_masks = predictor.predict_from_embedding(
+                embedding,
                 point_coords=point_coords,
                 point_labels=point_labels,
                 box=box_array,
@@ -135,6 +136,7 @@ def predict_sam_mask_from_prompts(
                 -1, *np.asarray(low_res_masks).shape[-2:]
             )[selected_index]
             refined = MaskRefiner(predictor).refine(
+                embedding=embedding,
                 point_coords=point_coords,
                 point_labels=point_labels,
                 box=box_array,
@@ -176,8 +178,9 @@ def predict_sam_mask_from_box(
         )
         box_array = np.asarray(box, dtype=np.float32)
         with autocast_context:
-            predictor.set_image(image)
-            masks, scores, low_res_masks = predictor.predict(
+            embedding = predictor.encode_image(image)
+            masks, scores, low_res_masks = predictor.predict_from_embedding(
+                embedding,
                 box=box_array,
                 multimask_output=True,
             )
@@ -186,6 +189,7 @@ def predict_sam_mask_from_box(
                 -1, *np.asarray(low_res_masks).shape[-2:]
             )[selected_index]
             refined = MaskRefiner(predictor).refine(
+                embedding=embedding,
                 box=box_array,
                 mask_input=low_res,
             )

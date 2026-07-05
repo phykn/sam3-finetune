@@ -112,6 +112,7 @@ class ReferenceGuidedMaskGenerator:
         references: Sequence[ReferenceExample] | PreparedReferenceGuide,
         *,
         max_masks: int | None = None,
+        target_embedding: Sam3ImageEmbedding | None = None,
     ) -> list[MaskInstance]:
         if self.base_generator is None:
             raise ValueError("base_generator is required for generate")
@@ -121,6 +122,7 @@ class ReferenceGuidedMaskGenerator:
             candidates,
             references,
             max_masks=max_masks,
+            target_embedding=target_embedding,
         )
 
     @torch.inference_mode()
@@ -131,6 +133,7 @@ class ReferenceGuidedMaskGenerator:
         references: Sequence[ReferenceExample] | PreparedReferenceGuide,
         *,
         max_masks: int | None = None,
+        target_embedding: Sam3ImageEmbedding | None = None,
     ) -> list[MaskInstance]:
         if isinstance(references, PreparedReferenceGuide):
             prepared = references
@@ -140,8 +143,9 @@ class ReferenceGuidedMaskGenerator:
             return []
 
         if isinstance(references, PreparedReferenceGuide):
-            target_embedding = self.predictor.encode_image_batch([target_image])[0]
-        else:
+            if target_embedding is None:
+                target_embedding = self.predictor.encode_image_batch([target_image])[0]
+        elif target_embedding is None:
             context_references = _context_references(references)
             image_batch = [reference.image for reference in context_references] + [
                 target_image
@@ -153,6 +157,16 @@ class ReferenceGuidedMaskGenerator:
                 embeddings[:-1],
             )
             target_embedding = embeddings[-1]
+        else:
+            context_references = _context_references(references)
+            embeddings = self.predictor.encode_image_batch(
+                [reference.image for reference in context_references]
+            )
+            prepared = self._prepare_from_embeddings(
+                references,
+                context_references,
+                embeddings,
+            )
 
         target_features = select_feature(target_embedding, self.feature_layer)
         similarity = similarity_map(

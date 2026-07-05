@@ -14,6 +14,7 @@ from .postprocess import nms_context_predictions
 from .prototype import (
     build_context_prototype,
     ContextPrototype,
+    mean_feature_score_over_mask,
     mean_score_over_mask,
     resize_similarity_map,
     select_feature,
@@ -62,6 +63,7 @@ class ContextMatcher:
         mask_prior_background: float = -4.0,
         min_context_score: float | None = None,
         min_mask_area: int = 1,
+        score_resolution: str = "full",
     ) -> None:
         if candidate_count <= 0:
             raise ValueError("candidate_count must be positive")
@@ -83,6 +85,8 @@ class ContextMatcher:
             raise ValueError("negative_context_weight must be non-negative")
         if negative_context_scale <= 1.0:
             raise ValueError("negative_context_scale must be greater than 1.0")
+        if score_resolution not in {"full", "feature"}:
+            raise ValueError("score_resolution must be 'full' or 'feature'")
         self.predictor = predictor
         self.feature_layer = feature_layer
         self.candidate_count = int(candidate_count)
@@ -104,6 +108,7 @@ class ContextMatcher:
         self.mask_prior_background = float(mask_prior_background)
         self.min_context_score = min_context_score
         self.min_mask_area = int(min_mask_area)
+        self.score_resolution = score_resolution
 
     @classmethod
     def from_checkpoint(
@@ -194,10 +199,12 @@ class ContextMatcher:
                 target_embedding.orig_hw,
             )
         else:
-            point_coords = _target_points_array(
-                target_point_coords, target_embedding.orig_hw
+            point_coords = _target_points_tensor(
+                target_point_coords,
+                target_embedding.orig_hw,
+                device=similarity.device,
             )
-        if len(point_coords) == 0:
+        if point_coords.shape[0] == 0:
             return []
 
         decode_shape_prior = (
@@ -232,7 +239,7 @@ class ContextMatcher:
         self,
         similarity_map: torch.Tensor,
         orig_hw: tuple[int, int],
-    ) -> np.ndarray:
+    ) -> torch.Tensor:
         height, width = similarity_map.shape
         flat = similarity_map.flatten()
         topk = min(flat.numel(), self.candidate_count * 8)
@@ -241,43 +248,58 @@ class ContextMatcher:
             keep = values >= float(self.min_context_score)
             indices = indices[keep]
 
-        selected: list[tuple[int, int]] = []
+        selected: list[torch.Tensor] = []
         min_distance_sq = self.min_cell_distance * self.min_cell_distance
-        for index in indices.detach().cpu().tolist():
-            y = int(index // width)
-            x = int(index % width)
-            if all(
-                (x - sx) ** 2 + (y - sy) ** 2 >= min_distance_sq for sx, sy in selected
-            ):
-                selected.append((x, y))
+        for index in indices:
+            y = torch.div(index, width, rounding_mode="floor")
+            x = index % width
+            cell = torch.stack([x, y]).to(dtype=torch.float32)
+            if selected:
+                selected_cells = torch.stack(selected, dim=0)
+                distances = ((selected_cells - cell) ** 2).sum(dim=1)
+                keep = bool(torch.all(distances >= min_distance_sq).detach().cpu())
+            else:
+                keep = True
+            if keep:
+                selected.append(cell)
             if len(selected) >= self.candidate_count:
                 break
+        if not selected:
+            return torch.empty(
+                (0, 2),
+                dtype=torch.float32,
+                device=similarity_map.device,
+            )
 
         orig_h, orig_w = orig_hw
-        points = [
-            (
-                (x + 0.5) * float(orig_w) / float(width),
-                (y + 0.5) * float(orig_h) / float(height),
-            )
-            for x, y in selected
-        ]
-        return np.asarray(points, dtype=np.float32)
+        cells = torch.stack(selected, dim=0).to(device=similarity_map.device)
+        points = torch.empty_like(cells)
+        points[:, 0] = (cells[:, 0] + 0.5) * float(orig_w) / float(width)
+        points[:, 1] = (cells[:, 1] + 0.5) * float(orig_h) / float(height)
+        return points
 
     def _decode_candidates(
         self,
         embedding: Sam3ImageEmbedding,
-        point_coords: np.ndarray,
+        point_coords: torch.Tensor,
         similarity_map: torch.Tensor,
         *,
         reference_area_ratio: float,
         shape_prior: ReferenceShapePrior | None,
         max_masks: int | None,
     ) -> list[ContextPrediction]:
-        labels = np.ones((len(point_coords), 1), dtype=np.int64)
-        similarity_full = resize_similarity_map(similarity_map, embedding.orig_hw)
+        labels = torch.ones(
+            (point_coords.shape[0], 1),
+            dtype=torch.int64,
+            device=point_coords.device,
+        )
+        if self.score_resolution == "full":
+            similarity_scores = resize_similarity_map(similarity_map, embedding.orig_hw)
+        else:
+            similarity_scores = similarity_map
         candidates: list[ContextPrediction] = []
-        for start in range(0, len(point_coords), self.decode_batch_size):
-            end = min(start + self.decode_batch_size, len(point_coords))
+        for start in range(0, point_coords.shape[0], self.decode_batch_size):
+            end = min(start + self.decode_batch_size, point_coords.shape[0])
             point_batch = point_coords[start:end]
             mask_input = (
                 _make_mask_prior_batch(
@@ -311,9 +333,10 @@ class ContextMatcher:
                     masks,
                     scores,
                     low_res_masks,
-                    similarity_full,
+                    similarity_scores,
                     reference_area_ratio=reference_area_ratio,
                     image_size=(embedding.orig_hw[1], embedding.orig_hw[0]),
+                    orig_hw=embedding.orig_hw,
                 )
             )
 
@@ -322,13 +345,14 @@ class ContextMatcher:
 
     def _predictions_from_decode_batch(
         self,
-        point_batch: np.ndarray,
+        point_batch: torch.Tensor,
         masks: np.ndarray,
         scores: np.ndarray,
         low_res_masks: np.ndarray,
-        similarity_full: np.ndarray,
+        similarity_scores: np.ndarray | torch.Tensor,
         reference_area_ratio: float,
         image_size: tuple[int, int],
+        orig_hw: tuple[int, int],
     ) -> list[ContextPrediction]:
         predictions: list[ContextPrediction] = []
         for point_index, point in enumerate(point_batch):
@@ -340,7 +364,14 @@ class ContextMatcher:
                 bbox = mask_to_box(mask)
                 if bbox is None:
                     continue
-                context_score = mean_score_over_mask(similarity_full, mask)
+                if isinstance(similarity_scores, torch.Tensor):
+                    context_score = mean_feature_score_over_mask(
+                        similarity_scores,
+                        mask,
+                        orig_hw,
+                    )
+                else:
+                    context_score = mean_score_over_mask(similarity_scores, mask)
                 if self.min_context_score is not None and context_score < float(
                     self.min_context_score
                 ):
@@ -365,7 +396,10 @@ class ContextMatcher:
                         segmentation=mask[y0:y1, x0:x1].copy(),
                         bbox=bbox,
                         area=area,
-                        point_coords=(float(point[0]), float(point[1])),
+                        point_coords=(
+                            float(point[0].detach().cpu()),
+                            float(point[1].detach().cpu()),
+                        ),
                         context_score=float(context_score),
                         predicted_iou=predicted_iou,
                         stability_score=float(stability),
@@ -377,28 +411,23 @@ class ContextMatcher:
         return predictions
 
 
-def _target_points_array(
+def _target_points_tensor(
     point_coords: np.ndarray | torch.Tensor,
     orig_hw: tuple[int, int],
-) -> np.ndarray:
-    points = np.asarray(
-        (
-            point_coords.detach().cpu()
-            if isinstance(point_coords, torch.Tensor)
-            else point_coords
-        ),
-        dtype=np.float32,
-    )
+    *,
+    device: torch.device,
+) -> torch.Tensor:
+    points = torch.as_tensor(point_coords, dtype=torch.float32, device=device).clone()
     if points.ndim != 2 or points.shape[1] != 2:
         raise ValueError("target_point_coords must have shape Nx2")
     height, width = orig_hw
-    if points.size == 0:
+    if points.numel() == 0:
         return points.reshape(0, 2)
     if (
-        np.any(points[:, 0] < 0)
-        or np.any(points[:, 0] >= width)
-        or np.any(points[:, 1] < 0)
-        or np.any(points[:, 1] >= height)
+        torch.any(points[:, 0] < 0)
+        or torch.any(points[:, 0] >= width)
+        or torch.any(points[:, 1] < 0)
+        or torch.any(points[:, 1] >= height)
     ):
         raise ValueError("target_point_coords must be within the target image")
     return points
@@ -496,22 +525,23 @@ def _reference_shape_prior(
 
 def _make_mask_prior_batch(
     shape_prior: ReferenceShapePrior,
-    point_batch: np.ndarray,
+    point_batch: np.ndarray | torch.Tensor,
     *,
     target_hw: tuple[int, int],
     scale: float,
     foreground: float,
     background: float,
 ) -> np.ndarray:
+    points = _to_numpy(point_batch)
     target_h, target_w = target_hw
     batch = np.full(
-        (len(point_batch), target_h, target_w),
+        (len(points), target_h, target_w),
         float(background),
         dtype=np.float32,
     )
     box_w = max(1, int(round(shape_prior.width_ratio * target_w * scale)))
     box_h = max(1, int(round(shape_prior.height_ratio * target_h * scale)))
-    for index, point in enumerate(point_batch):
+    for index, point in enumerate(points):
         cx, cy = float(point[0]), float(point[1])
         x0 = int(round(cx - box_w / 2.0))
         y0 = int(round(cy - box_h / 2.0))
@@ -539,3 +569,9 @@ def _make_mask_prior_batch(
             float(background),
         )
     return batch
+
+
+def _to_numpy(value: np.ndarray | torch.Tensor) -> np.ndarray:
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().numpy()
+    return np.asarray(value)
