@@ -53,6 +53,40 @@ class MaskRefiner:
     ) -> "MaskRefiner":
         return cls(Sam3Predictor.from_checkpoint(path, device=device))
 
+    def refine_image(
+        self,
+        image,
+        *,
+        point_coords: np.ndarray | None = None,
+        point_labels: np.ndarray | None = None,
+        box: np.ndarray | None = None,
+        mask_input: np.ndarray | torch.Tensor,
+    ) -> RefinedMaskResult:
+        return self.refine(
+            image=image,
+            point_coords=point_coords,
+            point_labels=point_labels,
+            box=box,
+            mask_input=mask_input,
+        )
+
+    def refine_embedding(
+        self,
+        embedding: Sam3ImageEmbedding,
+        *,
+        point_coords: np.ndarray | None = None,
+        point_labels: np.ndarray | None = None,
+        box: np.ndarray | None = None,
+        mask_input: np.ndarray | torch.Tensor,
+    ) -> RefinedMaskResult:
+        return self.refine(
+            embedding=embedding,
+            point_coords=point_coords,
+            point_labels=point_labels,
+            box=box,
+            mask_input=mask_input,
+        )
+
     def refine(
         self,
         *,

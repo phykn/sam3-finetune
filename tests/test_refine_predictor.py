@@ -163,3 +163,91 @@ def test_mask_refiner_accepts_explicit_embedding_without_set_image():
     assert fake.kwargs["multimask_output"] is False
     np.testing.assert_allclose(result.score, 0.9)
     assert result.mask.sum() == 16
+
+
+def test_mask_refiner_refine_embedding_delegates_to_refine():
+    from src.predict.refine import MaskRefiner
+
+    class FakePredictor:
+        def predict_from_embedding(self, embedding, **kwargs):
+            self.embedding = embedding
+            self.kwargs = kwargs
+            masks = np.zeros((1, 1, 8, 8), dtype=bool)
+            masks[0, 0, 1:4, 2:6] = True
+            scores = np.array([[0.8]], dtype=np.float32)
+            low_res = np.zeros((1, 1, 4, 4), dtype=np.float32)
+            return masks, scores, low_res
+
+    fake = FakePredictor()
+    refiner = MaskRefiner(fake)
+    embedding = Sam3ImageEmbedding(
+        image_embed=torch.zeros(1, 1, 1, 1),
+        high_res_features=(),
+        orig_hw=(8, 8),
+    )
+
+    result = refiner.refine_embedding(
+        embedding,
+        box=np.array([1, 1, 6, 5], dtype=np.float32),
+        mask_input=np.zeros((4, 4), dtype=np.float32),
+    )
+
+    assert fake.embedding is embedding
+    np.testing.assert_array_equal(
+        fake.kwargs["box"],
+        np.array([1, 1, 6, 5], dtype=np.float32),
+    )
+    assert fake.kwargs["multimask_output"] is False
+    np.testing.assert_allclose(result.score, 0.8)
+    assert result.mask.sum() == 12
+
+
+def test_mask_refiner_refine_image_encodes_image_then_refines_embedding():
+    from src.predict.refine import MaskRefiner
+
+    class FakePredictor:
+        def __init__(self) -> None:
+            self.embedding = Sam3ImageEmbedding(
+                image_embed=torch.zeros(1, 1, 1, 1),
+                high_res_features=(),
+                orig_hw=(8, 8),
+            )
+            self.encoded_image = None
+
+        def encode_image(self, image):
+            self.encoded_image = image
+            return self.embedding
+
+        def predict_from_embedding(self, embedding, **kwargs):
+            self.refined_embedding = embedding
+            self.kwargs = kwargs
+            masks = np.zeros((1, 1, 8, 8), dtype=bool)
+            masks[0, 0, 2:5, 1:5] = True
+            scores = np.array([[0.7]], dtype=np.float32)
+            low_res = np.zeros((1, 1, 4, 4), dtype=np.float32)
+            return masks, scores, low_res
+
+    fake = FakePredictor()
+    refiner = MaskRefiner(fake)
+    image = np.zeros((8, 8, 3), dtype=np.uint8)
+
+    result = refiner.refine_image(
+        image,
+        point_coords=np.array([[3, 4]], dtype=np.float32),
+        point_labels=np.array([1], dtype=np.int64),
+        mask_input=np.zeros((4, 4), dtype=np.float32),
+    )
+
+    assert fake.encoded_image is image
+    assert fake.refined_embedding is fake.embedding
+    np.testing.assert_array_equal(
+        fake.kwargs["point_coords"],
+        np.array([[3, 4]], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        fake.kwargs["point_labels"],
+        np.array([1], dtype=np.int64),
+    )
+    assert fake.kwargs["multimask_output"] is False
+    np.testing.assert_allclose(result.score, 0.7)
+    assert result.mask.sum() == 12
