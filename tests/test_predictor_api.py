@@ -1,7 +1,11 @@
 import numpy as np
 import torch
 from PIL import Image
-from src.predict import Sam3ImageEmbedding, Sam3Predictor, Sam3PromptBatch
+import importlib
+
+import pytest
+from src.predict.prompted import Sam3Predictor
+from src.types import Sam3ImageEmbedding, Sam3PromptBatch
 
 
 class FakePromptEncoder(torch.nn.Module):
@@ -69,25 +73,28 @@ class FakeModel(torch.nn.Module):
         }
 
 
-def test_package_public_surface_exposes_only_main_predictor():
+def test_package_public_surface_requires_workflow_imports():
     import src
-    import src.predict as image
-    import src.predict.image as predictor_module
+    import src.predict as predict_root
+    import src.predict.prompted as prompted
+    import src.predict.prompted.predictor as predictor_module
 
-    assert src.Sam3Predictor is Sam3Predictor
-    assert image.Sam3Predictor is Sam3Predictor
-    assert image.Sam3ImageEmbedding is Sam3ImageEmbedding
-    assert image.Sam3PromptBatch is Sam3PromptBatch
+    assert prompted.Sam3Predictor is Sam3Predictor
+    assert not hasattr(src, "Sam3Predictor")
     assert not hasattr(src, "Sam3ImageEmbedding")
     assert not hasattr(src, "Sam3PromptBatch")
+    assert not hasattr(predict_root, "Sam3Predictor")
+    assert not hasattr(predict_root, "Sam3ImageEmbedding")
+    assert not hasattr(predict_root, "Sam3PromptBatch")
     assert not hasattr(predictor_module, "Sam3ImageEmbedding")
     assert not hasattr(predictor_module, "Sam3PromptBatch")
     assert not hasattr(src, "__all__")
-    assert not hasattr(image, "__all__")
+    assert not hasattr(predict_root, "__all__")
     for name in (
         "Sam3PromptBatch",
         "AutomaticMaskGenerator",
         "ContextMatcher",
+        "NextFramePredictor",
         "VideoMemoryInference",
         "GroundingInference",
         "VisualLanguageCache",
@@ -95,6 +102,15 @@ def test_package_public_surface_exposes_only_main_predictor():
         "filter_grounding_prediction",
     ):
         assert not hasattr(src, name)
+
+    for old_module in (
+        "src.predict.image",
+        "src.predict.masks",
+        "src.predict.reference",
+        "src.predict.video",
+    ):
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(old_module)
 
 
 def test_predictor_accepts_box_and_returns_numpy_outputs():

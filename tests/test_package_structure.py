@@ -27,13 +27,14 @@ def test_shared_modules_are_grouped_by_responsibility() -> None:
         "src/model/image/model.py",
         "src/model/video/model.py",
         "src/io/checkpoint.py",
-        "src/predict/image.py",
-        "src/predict/masks/instances.py",
-        "src/predict/masks/generator.py",
-        "src/predict/reference/matcher.py",
+        "src/predict/prompted/predictor.py",
+        "src/predict/prompted/transforms.py",
+        "src/predict/grid/instances.py",
+        "src/predict/grid/generator.py",
+        "src/predict/context/matcher.py",
+        "src/predict/refine/masks.py",
+        "src/predict/next_frame/predictor.py",
         "src/predict/grounding/inference.py",
-        "src/predict/video.py",
-        "src/predict/image_transform.py",
         "src/io/load.py",
         "src/ops/box.py",
         "src/ops/mask.py",
@@ -88,3 +89,8 @@ def test_shared_modules_are_grouped_by_responsibility() -> None:
     assert not (root / "src" / "predict" / "masks" / "types.py").exists()
     assert not (root / "src" / "predict" / "reference" / "types.py").exists()
     assert not (root / "src" / "predict" / "grounding" / "types.py").exists()
+    assert not (root / "src" / "predict" / "image.py").exists()
+    assert not (root / "src" / "predict" / "image_transform.py").exists()
+    assert not (root / "src" / "predict" / "video.py").exists()
+    assert not (root / "src" / "predict" / "masks").exists()
+    assert not (root / "src" / "predict" / "reference").exists()
