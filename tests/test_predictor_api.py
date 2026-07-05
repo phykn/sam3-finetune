@@ -109,8 +109,9 @@ def test_package_public_surface_requires_workflow_imports():
         "src.predict.reference",
         "src.predict.video",
     ):
-        with pytest.raises(ModuleNotFoundError):
+        with pytest.raises(ModuleNotFoundError) as exc:
             importlib.import_module(old_module)
+        assert exc.value.name == old_module
 
 
 def test_predictor_accepts_box_and_returns_numpy_outputs():
