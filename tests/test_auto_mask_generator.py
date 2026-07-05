@@ -1,15 +1,15 @@
 import numpy as np
 from PIL import Image
 from src.ops.box import calc_area, calc_iou, filter_boxes
-from src.predict.masks.generator import AutomaticMaskGenerator
-from src.predict.masks.geometry import (
+from src.predict.grid.generator import AutomaticMaskGenerator
+from src.predict.grid.geometry import (
     batched,
     build_point_grid,
     calculate_stability_score,
     generate_crop_boxes,
     mask_to_box,
 )
-from src.predict.masks.proposals import (
+from src.predict.grid.proposals import (
     count_proposals_by_crop_grid,
     proposal_mask_image,
     proposal_to_full_mask,
@@ -23,27 +23,27 @@ def test_mask_generator_lives_under_masks_package() -> None:
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
-    assert (root / "src" / "predict" / "masks" / "generator.py").is_file()
-    assert not (root / "src" / "masks").exists()
+    assert (root / "src" / "predict" / "grid" / "generator.py").is_file()
+    assert not (root / "src" / "predict" / "masks").exists()
     assert not (root / "src" / "auto_mask_generator.py").exists()
-    assert AutomaticMaskGenerator.__module__ == "src.predict.masks.generator"
+    assert AutomaticMaskGenerator.__module__ == "src.predict.grid.generator"
 
 
 def test_mask_helpers_are_split_by_responsibility() -> None:
-    assert build_point_grid.__module__ == "src.predict.masks.geometry"
+    assert build_point_grid.__module__ == "src.predict.grid.geometry"
     assert MaskProposal.__module__ == "src.types"
 
 
 def test_masks_package_exports_user_facing_api() -> None:
-    import src.predict.masks as masks
+    import src.predict.grid as grid
 
-    assert masks.AutomaticMaskGenerator is AutomaticMaskGenerator
-    assert masks.MaskInstance is MaskInstance
-    assert masks.MaskProposal is MaskProposal
-    assert hasattr(masks, "ReferenceExample")
-    assert hasattr(masks, "mask_instance_from_proposal")
-    assert hasattr(masks, "mask_instances_from_proposals")
-    assert not hasattr(masks, "__all__")
+    assert grid.AutomaticMaskGenerator is AutomaticMaskGenerator
+    assert grid.MaskInstance is MaskInstance
+    assert grid.MaskProposal is MaskProposal
+    assert hasattr(grid, "ReferenceExample")
+    assert hasattr(grid, "mask_instance_from_proposal")
+    assert hasattr(grid, "mask_instances_from_proposals")
+    assert not hasattr(grid, "__all__")
 
 
 def test_build_point_grid_centers_points_inside_unit_cells():

@@ -1,5 +1,5 @@
 import numpy as np
-from src.predict.masks import (
+from src.predict.grid import (
     mask_instance_from_proposal,
     mask_instances_from_proposals,
     MaskInstance,

@@ -15,14 +15,14 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.predict.masks.generator import AutomaticMaskGenerator
-from src.predict.masks.geometry import (
+from src.predict.grid.generator import AutomaticMaskGenerator
+from src.predict.grid.geometry import (
     build_point_grid,
     crop_image,
     generate_crop_boxes,
     image_size,
 )
-from src.predict.masks.proposals import count_proposals_by_crop_grid
+from src.predict.grid.proposals import count_proposals_by_crop_grid
 
 
 @dataclass
