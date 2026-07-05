@@ -8,5 +8,6 @@ from .guided import (
 )
 from .matcher import (
     ContextMatcher as ContextMatcher,
+    PreparedConceptReferences as PreparedConceptReferences,
     PreparedContextReferences as PreparedContextReferences,
 )

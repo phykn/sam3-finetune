@@ -21,6 +21,12 @@ def _image_from_feature_map(feature_map: torch.Tensor) -> np.ndarray:
     return image
 
 
+def _mask_box(x0: int, y0: int, x1: int, y1: int) -> np.ndarray:
+    mask = np.zeros((40, 40), dtype=bool)
+    mask[y0:y1, x0:x1] = True
+    return mask
+
+
 class FakeContextPredictor:
     def __init__(self) -> None:
         self.encode_batches = []
@@ -70,6 +76,255 @@ class FakeContextPredictor:
             ] = 2.0
             scores[index, 0] = 0.8 - index * 0.01
         return masks, scores, low_res
+
+
+def test_prepare_references_builds_separate_concepts_for_distinct_ids():
+    from src.predict.context.matcher import ContextMatcher
+    from src.types import ContextReference
+
+    banana_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    banana_features[0, 1:3, 1:3] = 1.0
+    apple_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    apple_features[1, 1:3, 1:3] = 1.0
+    banana_image = _image_from_feature_map(banana_features)
+    apple_image = _image_from_feature_map(apple_features)
+    fake = FakeContextPredictor()
+    predictor = ContextMatcher(fake, negative_context_mode="none")
+
+    prepared = predictor.prepare_references(
+        [
+            ContextReference(
+                image=banana_image,
+                mask=_mask_box(10, 10, 30, 30),
+                concept_id=0,
+            ),
+            ContextReference(
+                image=apple_image,
+                mask=_mask_box(10, 10, 30, 30),
+                concept_id=1,
+            ),
+        ]
+    )
+
+    assert [concept.concept_id for concept in prepared.concepts] == [0, 1]
+    assert [len(concept.references) for concept in prepared.concepts] == [1, 1]
+    assert [len(concept.embeddings) for concept in prepared.concepts] == [1, 1]
+
+
+def test_prepare_references_averages_same_concept_refs_into_one_prototype():
+    from src.predict.context.matcher import ContextMatcher
+    from src.types import ContextReference
+
+    first_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    first_features[0, 1:3, 1:3] = 1.0
+    second_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    second_features[1, 1:3, 1:3] = 1.0
+    first_image = _image_from_feature_map(first_features)
+    second_image = _image_from_feature_map(second_features)
+    fake = FakeContextPredictor()
+    predictor = ContextMatcher(fake, negative_context_mode="none")
+
+    prepared = predictor.prepare_references(
+        [
+            ContextReference(
+                image=first_image,
+                mask=_mask_box(10, 10, 30, 30),
+                concept_id=3,
+            ),
+            ContextReference(
+                image=second_image,
+                mask=_mask_box(10, 10, 30, 30),
+                concept_id=3,
+            ),
+        ]
+    )
+
+    assert len(prepared.concepts) == 1
+    concept = prepared.concepts[0]
+    assert concept.concept_id == 3
+    assert len(concept.references) == 2
+    expected = torch.tensor([2**-0.5, 2**-0.5], dtype=torch.float32)
+    torch.testing.assert_close(concept.prototype.positive.cpu(), expected)
+
+
+def test_predict_returns_concept_ids_and_scores_each_concept_separately():
+    from src.predict.context.matcher import ContextMatcher
+    from src.types import ContextReference
+
+    banana_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    banana_features[0, 1:3, 1:3] = 1.0
+    apple_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    apple_features[1, 1:3, 1:3] = 1.0
+    target_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    target_features[0, 1, 1] = 1.0
+    target_features[1, 2, 3] = 1.0
+    banana_image = _image_from_feature_map(banana_features)
+    apple_image = _image_from_feature_map(apple_features)
+    target_image = _image_from_feature_map(target_features)
+    fake = FakeContextPredictor()
+    predictor = ContextMatcher(
+        fake,
+        candidate_count=1,
+        decode_batch_size=1,
+        max_masks=1,
+        mask_nms_thresh=0.0,
+        negative_context_mode="none",
+    )
+
+    predictions = predictor.predict(
+        target_image=target_image,
+        references=[
+            ContextReference(
+                image=banana_image,
+                mask=_mask_box(10, 10, 30, 30),
+                concept_id=0,
+            ),
+            ContextReference(
+                image=apple_image,
+                mask=_mask_box(10, 10, 30, 30),
+                concept_id=1,
+            ),
+        ],
+    )
+
+    assert {prediction.concept_id for prediction in predictions} == {0, 1}
+    by_concept = {prediction.concept_id: prediction for prediction in predictions}
+    assert by_concept[0].point_coords == (15.0, 15.0)
+    assert by_concept[1].point_coords == (35.0, 25.0)
+
+
+def test_predict_keeps_overlapping_predictions_for_different_concepts():
+    from src.predict.context.matcher import ContextMatcher
+    from src.types import ContextReference
+
+    banana_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    banana_features[0, 1:3, 1:3] = 1.0
+    apple_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    apple_features[1, 1:3, 1:3] = 1.0
+    target_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    target_features[:, 1, 1] = torch.tensor([1.0, 1.0])
+    banana_image = _image_from_feature_map(banana_features)
+    apple_image = _image_from_feature_map(apple_features)
+    target_image = _image_from_feature_map(target_features)
+    fake = FakeContextPredictor()
+    predictor = ContextMatcher(
+        fake,
+        candidate_count=1,
+        decode_batch_size=1,
+        max_masks=1,
+        mask_nms_thresh=0.0,
+        negative_context_mode="none",
+    )
+
+    predictions = predictor.predict(
+        target_image=target_image,
+        references=[
+            ContextReference(
+                image=banana_image,
+                mask=_mask_box(10, 10, 30, 30),
+                concept_id=0,
+            ),
+            ContextReference(
+                image=apple_image,
+                mask=_mask_box(10, 10, 30, 30),
+                concept_id=1,
+            ),
+        ],
+    )
+
+    assert len(predictions) == 2
+    assert {prediction.concept_id for prediction in predictions} == {0, 1}
+    assert {prediction.point_coords for prediction in predictions} == {(15.0, 15.0)}
+    assert len({prediction.bbox for prediction in predictions}) == 1
+
+
+def test_explicit_target_points_decode_for_each_context_concept():
+    from src.predict.context.matcher import ContextMatcher
+    from src.types import ContextReference
+
+    banana_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    banana_features[0, 1:3, 1:3] = 1.0
+    apple_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    apple_features[1, 1:3, 1:3] = 1.0
+    target_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    banana_image = _image_from_feature_map(banana_features)
+    apple_image = _image_from_feature_map(apple_features)
+    target_image = _image_from_feature_map(target_features)
+    fake = FakeContextPredictor()
+    predictor = ContextMatcher(
+        fake,
+        candidate_count=1,
+        decode_batch_size=1,
+        max_masks=1,
+        negative_context_mode="none",
+    )
+
+    predictions = predictor.predict(
+        target_image=target_image,
+        references=[
+            ContextReference(
+                image=banana_image,
+                mask=_mask_box(10, 10, 30, 30),
+                concept_id=0,
+            ),
+            ContextReference(
+                image=apple_image,
+                mask=_mask_box(10, 10, 30, 30),
+                concept_id=1,
+            ),
+        ],
+        target_point_coords=np.asarray([[12.0, 34.0]], dtype=np.float32),
+    )
+
+    assert {prediction.concept_id for prediction in predictions} == {0, 1}
+    assert [batch[0, 0].tolist() for batch in fake.decode_batches] == [
+        [12.0, 34.0],
+        [12.0, 34.0],
+    ]
+
+
+def test_reference_mask_prior_is_prepared_per_context_concept():
+    from src.predict.context.matcher import ContextMatcher
+    from src.types import ContextReference
+
+    banana_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    banana_features[0, 1:3, 1:3] = 1.0
+    apple_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    apple_features[1, 1:3, 1:3] = 1.0
+    banana_image = _image_from_feature_map(banana_features)
+    apple_image = _image_from_feature_map(apple_features)
+    fake = FakeContextPredictor()
+    predictor = ContextMatcher(
+        fake,
+        use_reference_mask_prior=True,
+        negative_context_mode="none",
+    )
+
+    prepared = predictor.prepare_references(
+        [
+            ContextReference(
+                image=banana_image,
+                mask=_mask_box(12, 10, 28, 30),
+                concept_id=0,
+            ),
+            ContextReference(
+                image=apple_image,
+                mask=_mask_box(5, 5, 35, 15),
+                concept_id=1,
+            ),
+        ]
+    )
+
+    shape_priors = [concept.shape_prior for concept in prepared.concepts]
+    assert all(shape_prior is not None for shape_prior in shape_priors)
+    np.testing.assert_allclose(
+        [shape_priors[0].width_ratio, shape_priors[0].height_ratio],
+        [0.4, 0.5],
+    )
+    np.testing.assert_allclose(
+        [shape_priors[1].width_ratio, shape_priors[1].height_ratio],
+        [0.75, 0.25],
+    )
 
 
 def test_context_predictor_selects_target_points_from_reference_mask_similarity():
@@ -445,6 +700,43 @@ def test_context_postprocess_keeps_all_predictions_when_max_masks_is_none():
             stability_score=0.7,
             score=0.9,
             image_size=(8, 8),
+        ),
+    ]
+
+    assert (
+        nms_context_predictions(predictions, iou_threshold=0.0, max_masks=None)
+        == predictions
+    )
+
+
+def test_context_postprocess_keeps_overlapping_predictions_for_different_concepts():
+    from src.predict.context.postprocess import nms_context_predictions
+    from src.types import ContextPrediction
+
+    predictions = [
+        ContextPrediction(
+            segmentation=np.ones((2, 2), dtype=bool),
+            bbox=(0, 0, 2, 2),
+            area=4,
+            point_coords=(1.0, 1.0),
+            context_score=0.9,
+            predicted_iou=0.8,
+            stability_score=0.7,
+            score=1.0,
+            image_size=(8, 8),
+            concept_id=0,
+        ),
+        ContextPrediction(
+            segmentation=np.ones((2, 2), dtype=bool),
+            bbox=(0, 0, 2, 2),
+            area=4,
+            point_coords=(1.0, 1.0),
+            context_score=0.8,
+            predicted_iou=0.8,
+            stability_score=0.7,
+            score=0.9,
+            image_size=(8, 8),
+            concept_id=1,
         ),
     ]
 

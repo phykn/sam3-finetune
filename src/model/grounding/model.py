@@ -108,10 +108,12 @@ class GroundingImageModel(torch.nn.Module):
         image_sizes,
         visual_prompt_embed=None,
         visual_prompt_mask=None,
+        encode_text: bool = True,
     ):
-        text_ids = find_input.text_ids
-        text_features = backbone_out["language_features"][:, text_ids]
-        text_mask = backbone_out["language_mask"][text_ids]
+        if encode_text:
+            text_ids = find_input.text_ids
+            text_features = backbone_out["language_features"][:, text_ids]
+            text_mask = backbone_out["language_mask"][text_ids]
 
         geometry_features, geometry_mask = self.geometry_encoder(
             geo_prompt=geometric_prompt,
@@ -119,6 +121,10 @@ class GroundingImageModel(torch.nn.Module):
             img_sizes=image_sizes,
             img_pos_embeds=image_pos_embeds,
         )
+        if (visual_prompt_embed is None) != (visual_prompt_mask is None):
+            raise ValueError(
+                "visual_prompt_embed and visual_prompt_mask must be provided together"
+            )
         if visual_prompt_embed is None:
             visual_prompt_embed = torch.zeros(
                 (0, *geometry_features.shape[1:]), device=geometry_features.device
@@ -129,14 +135,18 @@ class GroundingImageModel(torch.nn.Module):
                 dtype=geometry_mask.dtype,
             )
 
-        prompt = torch.cat(
-            [text_features, geometry_features, visual_prompt_embed],
-            dim=0,
-        )
-        prompt_mask = torch.cat(
-            [text_mask, geometry_mask, visual_prompt_mask],
-            dim=1,
-        )
+        if encode_text:
+            prompt = torch.cat(
+                [text_features, geometry_features, visual_prompt_embed],
+                dim=0,
+            )
+            prompt_mask = torch.cat(
+                [text_mask, geometry_mask, visual_prompt_mask],
+                dim=1,
+            )
+        else:
+            prompt = torch.cat([geometry_features, visual_prompt_embed], dim=0)
+            prompt_mask = torch.cat([geometry_mask, visual_prompt_mask], dim=1)
         return prompt, prompt_mask
 
     def _run_encoder(
@@ -324,6 +334,9 @@ class GroundingImageModel(torch.nn.Module):
         backbone_out,
         find_input: FindStage,
         geometric_prompt: Prompt,
+        visual_prompt_embed=None,
+        visual_prompt_mask=None,
+        encode_text: bool = True,
     ):
         img_ids = map_image_ids(backbone_out, find_input.img_ids)
         image_features, image_pos_embeds, image_sizes = self._select_image_features(
@@ -339,6 +352,9 @@ class GroundingImageModel(torch.nn.Module):
                 image_features=image_features,
                 image_pos_embeds=image_pos_embeds,
                 image_sizes=image_sizes,
+                visual_prompt_embed=visual_prompt_embed,
+                visual_prompt_mask=visual_prompt_mask,
+                encode_text=encode_text,
             )
 
         with torch.profiler.record_function("GroundingImageModel._run_encoder"):

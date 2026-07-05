@@ -13,13 +13,18 @@ def nms_context_predictions(
 ) -> list[ContextPrediction]:
     kept: list[ContextPrediction] = []
     for prediction in predictions:
+        same_concept = [
+            existing
+            for existing in kept
+            if existing.concept_id == prediction.concept_id
+        ]
         if all(
             calc_iou(prediction.bbox, existing.bbox) <= iou_threshold
-            for existing in kept
+            for existing in same_concept
         ):
+            if max_masks is not None and len(same_concept) >= max_masks:
+                continue
             kept.append(prediction)
-        if max_masks is not None and len(kept) >= max_masks:
-            break
     return kept
 
 

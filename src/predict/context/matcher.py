@@ -31,11 +31,17 @@ class ReferenceShapePrior:
 
 
 @dataclass(frozen=True)
-class PreparedContextReferences:
+class PreparedConceptReferences:
+    concept_id: int
     references: tuple[ContextReference, ...]
     embeddings: tuple[Sam3ImageEmbedding, ...]
     prototype: ContextPrototype
     shape_prior: ReferenceShapePrior | None
+
+
+@dataclass(frozen=True)
+class PreparedContextReferences:
+    concepts: tuple[PreparedConceptReferences, ...]
 
 
 class ContextMatcher:
@@ -141,23 +147,47 @@ class ContextMatcher:
         references: Sequence[ContextReference],
         reference_embeddings: Sequence[Sam3ImageEmbedding],
     ) -> PreparedContextReferences:
-        prototype = build_context_prototype(
-            references,
-            reference_embeddings,
-            feature_layer=self.feature_layer,
-            negative_context_mode=self.negative_context_mode,
-            negative_context_scale=self.negative_context_scale,
-        )
-        shape_prior = (
-            _reference_shape_prior(references, reference_embeddings)
-            if self.use_reference_mask_prior or self.candidate_score_mode == "shape"
-            else None
-        )
+        if not references:
+            raise ValueError("references must be non-empty")
+        if len(references) != len(reference_embeddings):
+            raise ValueError(
+                "references and reference_embeddings must have the same length"
+            )
+
+        grouped: dict[int, list[tuple[ContextReference, Sam3ImageEmbedding]]] = {}
+        for reference, embedding in zip(references, reference_embeddings):
+            grouped.setdefault(int(reference.concept_id), []).append(
+                (reference, embedding)
+            )
+
+        prepared_concepts: list[PreparedConceptReferences] = []
+        for concept_id, items in grouped.items():
+            group_refs = tuple(item[0] for item in items)
+            group_embeddings = tuple(item[1] for item in items)
+            prototype = build_context_prototype(
+                group_refs,
+                group_embeddings,
+                feature_layer=self.feature_layer,
+                negative_context_mode=self.negative_context_mode,
+                negative_context_scale=self.negative_context_scale,
+            )
+            shape_prior = (
+                _reference_shape_prior(group_refs, group_embeddings)
+                if self.use_reference_mask_prior or self.candidate_score_mode == "shape"
+                else None
+            )
+            prepared_concepts.append(
+                PreparedConceptReferences(
+                    concept_id=concept_id,
+                    references=group_refs,
+                    embeddings=group_embeddings,
+                    prototype=prototype,
+                    shape_prior=shape_prior,
+                )
+            )
+
         return PreparedContextReferences(
-            references=tuple(references),
-            embeddings=tuple(reference_embeddings),
-            prototype=prototype,
-            shape_prior=shape_prior,
+            concepts=tuple(prepared_concepts),
         )
 
     @torch.inference_mode()
@@ -169,55 +199,71 @@ class ContextMatcher:
         max_masks: int | None = None,
         target_point_coords: np.ndarray | torch.Tensor | None = None,
     ) -> list[ContextPrediction]:
-        if not references:
-            raise ValueError("references must be non-empty")
         if max_masks is not None and max_masks <= 0:
             raise ValueError("max_masks must be positive")
 
         if isinstance(references, PreparedContextReferences):
+            if not references.concepts:
+                raise ValueError("references must be non-empty")
             prepared = references
             target_embedding = self.predictor.encode_image_batch([target_image])[0]
         else:
+            if not references:
+                raise ValueError("references must be non-empty")
             image_batch = [reference.image for reference in references] + [target_image]
             embeddings = self.predictor.encode_image_batch(image_batch)
             prepared = self._prepare_from_embeddings(references, embeddings[:-1])
             target_embedding = embeddings[-1]
 
         target_features = select_feature(target_embedding, self.feature_layer)
-        similarity = similarity_map(
-            target_features,
-            prepared.prototype,
-            negative_context_weight=self.negative_context_weight,
-        )
-        if target_point_coords is None:
-            candidate_score_map = self._candidate_score_map(
-                similarity,
-                shape_prior=prepared.shape_prior,
-            )
-            point_coords = self._candidate_points(
-                candidate_score_map,
-                target_embedding.orig_hw,
-            )
-        else:
-            point_coords = _target_points_tensor(
+        max_masks_per_concept = self.max_masks if max_masks is None else int(max_masks)
+        explicit_point_coords = (
+            None
+            if target_point_coords is None
+            else _target_points_tensor(
                 target_point_coords,
                 target_embedding.orig_hw,
-                device=similarity.device,
+                device=target_features.device,
             )
-        if point_coords.shape[0] == 0:
-            return []
+        )
 
-        decode_shape_prior = (
-            None if target_point_coords is not None else prepared.shape_prior
-        )
-        predictions = self._decode_candidates(
-            target_embedding,
-            point_coords,
-            similarity,
-            reference_area_ratio=prepared.prototype.reference_area_ratio,
-            shape_prior=decode_shape_prior,
-            max_masks=self.max_masks if max_masks is None else int(max_masks),
-        )
+        predictions: list[ContextPrediction] = []
+        for concept in prepared.concepts:
+            similarity = similarity_map(
+                target_features,
+                concept.prototype,
+                negative_context_weight=self.negative_context_weight,
+            )
+            if explicit_point_coords is None:
+                candidate_score_map = self._candidate_score_map(
+                    similarity,
+                    shape_prior=concept.shape_prior,
+                )
+                point_coords = self._candidate_points(
+                    candidate_score_map,
+                    target_embedding.orig_hw,
+                )
+            else:
+                point_coords = explicit_point_coords
+            if point_coords.shape[0] == 0:
+                continue
+
+            decode_shape_prior = (
+                None if explicit_point_coords is not None else concept.shape_prior
+            )
+            predictions.extend(
+                self._decode_candidates(
+                    target_embedding,
+                    point_coords,
+                    similarity,
+                    reference_area_ratio=concept.prototype.reference_area_ratio,
+                    shape_prior=decode_shape_prior,
+                    max_masks=max_masks_per_concept,
+                    concept_id=concept.concept_id,
+                )
+            )
+
+        predictions.sort(key=lambda item: item.score, reverse=True)
         return predictions
 
     def _candidate_score_map(
@@ -287,6 +333,7 @@ class ContextMatcher:
         reference_area_ratio: float,
         shape_prior: ReferenceShapePrior | None,
         max_masks: int | None,
+        concept_id: int,
     ) -> list[ContextPrediction]:
         labels = torch.ones(
             (point_coords.shape[0], 1),
@@ -337,6 +384,7 @@ class ContextMatcher:
                     reference_area_ratio=reference_area_ratio,
                     image_size=(embedding.orig_hw[1], embedding.orig_hw[0]),
                     orig_hw=embedding.orig_hw,
+                    concept_id=concept_id,
                 )
             )
 
@@ -353,6 +401,7 @@ class ContextMatcher:
         reference_area_ratio: float,
         image_size: tuple[int, int],
         orig_hw: tuple[int, int],
+        concept_id: int,
     ) -> list[ContextPrediction]:
         predictions: list[ContextPrediction] = []
         for point_index, point in enumerate(point_batch):
@@ -406,6 +455,7 @@ class ContextMatcher:
                         score=float(combined_score),
                         image_size=image_size,
                         area_score=float(area_score),
+                        concept_id=concept_id,
                     )
                 )
         return predictions

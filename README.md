@@ -47,6 +47,7 @@ from src.predict.prompted import Sam3Predictor
 from src.predict.grid import AutomaticMaskGenerator
 from src.predict.refine import MaskRefiner
 from src.predict.context import ContextMatcher, ReferenceGuidedMaskGenerator
+from src.predict.visual_prompt import VisualPromptPredictor
 from src.predict.next_frame import NextFramePredictor
 from src.types import (
     ContextReference,
@@ -162,6 +163,34 @@ predictions = matcher.predict(
 ```
 
 `ReferenceGuidedMaskGenerator` reranks candidate masks using reference context.
+
+## Visual Prompt Prediction
+
+`VisualPromptPredictor` uses image+mask exemplars as visual prompt tokens for
+the grounding model. Keep `ContextMatcher` for the lightweight feature-prototype
+baseline; use visual prompts when the reference should enter the grounding
+prompt path.
+
+```python
+from src.predict.visual_prompt import VisualExemplar, VisualPromptPredictor
+
+predictor = VisualPromptPredictor.from_checkpoint("weight/sam3.1_multiplex.pt")
+predictions = predictor.predict(
+    target_image=target_image,
+    exemplars=[
+        VisualExemplar(
+            image=banana_reference_image,
+            mask=banana_reference_mask,
+            concept_id=0,
+        ),
+        VisualExemplar(
+            image=apple_reference_image,
+            mask=apple_reference_mask,
+            concept_id=1,
+        ),
+    ],
+)
+```
 
 ## Next-Frame Prediction
 

@@ -225,9 +225,12 @@ class ContextReference:
     image: Image.Image | np.ndarray
     mask: np.ndarray | torch.Tensor
     weight: float = 1.0
+    concept_id: int = 0
 
     def __post_init__(self) -> None:
         _validate_image(self.image, "image")
+        _validate_optional_id(self.concept_id, "concept_id")
+        object.__setattr__(self, "concept_id", int(self.concept_id))
 
 
 @dataclass(frozen=True)
@@ -242,6 +245,7 @@ class ContextPrediction:
     score: float
     image_size: tuple[int, int]
     area_score: float = 1.0
+    concept_id: int = 0
 
 
 def _validate_optional_id(value: int | None, name: str) -> None:

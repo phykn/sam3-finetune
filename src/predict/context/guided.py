@@ -245,6 +245,7 @@ def _context_references(
                 image=reference.image,
                 mask=reference.mask,
                 weight=reference.weight,
+                concept_id=reference.concept_id,
             )
         )
     return context_references
