@@ -200,12 +200,15 @@ class ContextMatcher:
         if len(point_coords) == 0:
             return []
 
+        decode_shape_prior = (
+            None if target_point_coords is not None else prepared.shape_prior
+        )
         predictions = self._decode_candidates(
             target_embedding,
             point_coords,
             similarity,
             reference_area_ratio=prepared.prototype.reference_area_ratio,
-            shape_prior=prepared.shape_prior,
+            shape_prior=decode_shape_prior,
             max_masks=self.max_masks if max_masks is None else int(max_masks),
         )
         return predictions

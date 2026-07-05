@@ -280,6 +280,42 @@ def test_context_predictor_uses_explicit_target_points_as_candidates():
     np.testing.assert_allclose(fake.decode_batches[0][0, 0], np.array([12.0, 34.0]))
 
 
+def test_explicit_target_points_skip_reference_shape_mask_prior():
+    from src.predict.context.matcher import ContextMatcher
+    from src.types import ContextReference
+
+    reference_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    reference_features[0, 1:3, 1:3] = 3.0
+    target_features = torch.zeros(2, 4, 4, dtype=torch.float32)
+    reference_image = _image_from_feature_map(reference_features)
+    target_image = _image_from_feature_map(target_features)
+    reference_mask = np.zeros((40, 40), dtype=bool)
+    reference_mask[10:30, 12:28] = True
+    fake = FakeContextPredictor()
+    predictor = ContextMatcher(
+        fake,
+        candidate_count=4,
+        decode_batch_size=2,
+        max_masks=1,
+        use_reference_mask_prior=True,
+    )
+
+    predictor.predict(
+        target_image=target_image,
+        references=[
+            ContextReference(
+                image=reference_image,
+                mask=reference_mask,
+            )
+        ],
+        target_point_coords=np.asarray([[12.0, 34.0]], dtype=np.float32),
+    )
+
+    np.testing.assert_allclose(fake.decode_batches[0][0, 0], np.array([12.0, 34.0]))
+    assert len(fake.mask_inputs) == 1
+    assert fake.mask_inputs[0] is None
+
+
 def test_context_matcher_reuses_prepared_references():
     from src.predict.context.matcher import ContextMatcher
     from src.types import ContextReference
