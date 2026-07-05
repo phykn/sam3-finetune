@@ -440,7 +440,7 @@ def test_reference_prompt_points_encode_positive_and_negative_labels():
 
 def test_reference_prompt_refinement_keeps_original_prompts(monkeypatch):
     from scripts.video_memory_reference import predict_sam_mask_from_prompts
-    from src.predict import Sam3Predictor
+    from src.predict.prompted import Sam3Predictor
 
     class FakeSam3Predictor:
         def __init__(self) -> None:
