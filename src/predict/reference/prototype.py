@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 
 from ...types import ContextReference, Sam3ImageEmbedding
-from ..masks.geometry import mask_to_box
+from ..grid.geometry import mask_to_box
 
 
 @dataclass(frozen=True)

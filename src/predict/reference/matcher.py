@@ -9,7 +9,7 @@ from PIL import Image
 
 from ...types import ContextPrediction, ContextReference, Sam3ImageEmbedding
 from ..prompted import Sam3Predictor
-from ..masks.geometry import calculate_stability_score, mask_to_box
+from ..grid.geometry import calculate_stability_score, mask_to_box
 from .postprocess import nms_context_predictions
 from .prototype import (
     build_context_prototype,
