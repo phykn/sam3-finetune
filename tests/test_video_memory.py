@@ -214,6 +214,41 @@ def test_video_modules_live_under_role_packages() -> None:
     assert not (root / "src" / "video").exists()
 
 
+def test_transformer_attention_allows_math_sdp_fallback(monkeypatch) -> None:
+    import src.model.components.transformer.decoder as decoder
+    from torch.nn.attention import SDPBackend
+
+    captured_backends = []
+
+    class CaptureSdpaKernel:
+        def __init__(self, backends):
+            captured_backends.append(backends)
+
+        def __enter__(self):
+            return None
+
+        def __exit__(self, *_args):
+            return False
+
+    def fake_attention(q, _k, _v, dropout_p):
+        return torch.zeros_like(q)
+
+    monkeypatch.setattr(decoder, "sdpa_kernel", CaptureSdpaKernel)
+    monkeypatch.setattr(decoder.torchF, "scaled_dot_product_attention", fake_attention)
+
+    output = decoder.functional_attention(
+        torch.zeros(1, 2, 8),
+        torch.zeros(1, 2, 8),
+        torch.zeros(1, 2, 8),
+        dropout=0.0,
+        num_heads=2,
+        rope_k_repeat=False,
+    )
+
+    assert output.shape == (1, 2, 8)
+    assert SDPBackend.MATH in captured_backends[0]
+
+
 def test_memory_references_preserve_order_for_same_object_id() -> None:
     from src.predict.next_frame import MemoryReference, NextFramePredictor
 

@@ -1001,7 +1001,13 @@ def functional_attention(
     if use_fa3:
         raise RuntimeError("FA3 attention is not included in the VLM-free src runtime")
     else:
-        with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
+        with sdpa_kernel(
+            [
+                SDPBackend.FLASH_ATTENTION,
+                SDPBackend.EFFICIENT_ATTENTION,
+                SDPBackend.MATH,
+            ]
+        ):
             out = torchF.scaled_dot_product_attention(q, k, v, dropout_p=dropout)
         out = out.transpose(1, 2)  #  B * n * n_heads * (cv // num_heads)
 
