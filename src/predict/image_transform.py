@@ -13,8 +13,10 @@ def to_uint8_rgb_array(image: np.ndarray) -> np.ndarray:
         if image.size > 0 and float(np.nanmax(image)) <= 1.0:
             image = image * 255.0
         image = np.clip(image, 0.0, 255.0)
+    elif image.dtype != np.uint8:
+        image = np.clip(image, 0, 255)
 
-    return image.astype(np.uint8)
+    return image.astype(np.uint8, copy=False)
 
 
 def to_rgb_pil(image: Image.Image | np.ndarray) -> Image.Image:
@@ -86,7 +88,8 @@ def scale_coords(
     height, width = orig_hw
     scale = torch.tensor(
         [resolution / float(width), resolution / float(height)],
-        dtype=torch.float32,
+        dtype=coords_t.dtype,
+        device=coords_t.device,
     )
     return coords_t * scale
 

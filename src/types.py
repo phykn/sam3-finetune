@@ -198,6 +198,8 @@ class ReferenceExample:
         mask = np.asarray(self.mask).astype(bool, copy=False)
         if mask.ndim != 2:
             raise ValueError("mask must be a 2D array")
+        if self.image is not None and mask.shape != _image_hw(self.image):
+            raise ValueError("mask shape must match image size")
         if not mask.any():
             raise ValueError("mask must contain foreground pixels")
         box = (
@@ -255,6 +257,13 @@ def _validate_image(value: Image.Image | np.ndarray, name: str) -> None:
             raise ValueError(f"{name} must have shape HxWx3")
         return
     raise TypeError(f"{name} must be a PIL image or NumPy array")
+
+
+def _image_hw(value: Image.Image | np.ndarray) -> tuple[int, int]:
+    if isinstance(value, Image.Image):
+        width, height = value.size
+        return height, width
+    return int(value.shape[0]), int(value.shape[1])
 
 
 def _xyxy_tuple(

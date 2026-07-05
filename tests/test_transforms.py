@@ -5,6 +5,7 @@ from src.predict.image_transform import (
     ImageTransforms,
     preprocess_rgb_images,
     scale_coords,
+    to_uint8_rgb_array,
 )
 
 
@@ -28,6 +29,14 @@ def test_scale_coords_scales_points_to_square_resolution():
         out,
         torch.tensor([[[252.0, 252.0], [504.0, 504.0]]]),
     )
+
+
+def test_scale_coords_keeps_tensor_device():
+    coords = torch.empty((1, 1, 2), device="meta")
+
+    out = scale_coords(coords, orig_hw=(100, 200), resolution=1008)
+
+    assert out.device.type == "meta"
 
 
 def test_transform_box_scales_xyxy_to_two_corner_points():
@@ -78,6 +87,14 @@ def test_preprocess_float_numpy_image_preserves_unit_range_values():
     assert orig_hw == (2, 2)
     assert tensor.shape == (1, 3, 4, 4)
     assert float(tensor.mean()) > -0.01
+
+
+def test_to_uint8_rgb_array_clips_integer_values_before_cast():
+    image = np.array([[[300, -10, 128]]], dtype=np.int32)
+
+    out = to_uint8_rgb_array(image)
+
+    np.testing.assert_array_equal(out, np.array([[[255, 0, 128]]], dtype=np.uint8))
 
 
 def test_preprocess_rgb_images_returns_batch_and_frame_sizes():

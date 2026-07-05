@@ -86,6 +86,18 @@ def test_reference_example_derives_bbox_and_area_from_mask():
     assert reference.weight == 1.0
 
 
+def test_reference_example_rejects_mask_shape_that_differs_from_image():
+    image = np.zeros((4, 5, 3), dtype=np.uint8)
+    mask = np.ones((3, 5), dtype=bool)
+
+    try:
+        ReferenceExample(concept_id=1, image=image, mask=mask)
+    except ValueError as exc:
+        assert "mask shape" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+
 def test_reference_example_rejects_invalid_ids_and_weight():
     mask = np.ones((2, 2), dtype=bool)
 
