@@ -10,7 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.io import save_mask, save_overlay
-from src.predict import Sam3Predictor
+from src.predict.prompted import Sam3Predictor
 
 
 def main() -> None:

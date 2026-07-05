@@ -125,7 +125,7 @@ def predict_sam_mask_from_prompts(
     box: Sequence[int] | None = None,
 ) -> ReferenceMaskResult:
     import torch
-    from src.predict import Sam3Predictor
+    from src.predict.prompted import Sam3Predictor
 
     point_coords, point_labels = make_point_prompt_arrays(
         positive_points=positive_points,
@@ -190,7 +190,7 @@ def predict_sam_mask_from_box(
     device: str,
 ) -> ReferenceMaskResult:
     import torch
-    from src.predict import Sam3Predictor
+    from src.predict.prompted import Sam3Predictor
 
     predictor = None
     try:

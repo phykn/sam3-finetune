@@ -7,9 +7,9 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
-from .. import types as api_types
-from ..model.build import build_model
-from .image_transform import ImageTransforms
+from ... import types as api_types
+from ...model.build import build_model
+from .transforms import ImageTransforms
 
 
 class Sam3Predictor:

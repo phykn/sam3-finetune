@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 from PIL import Image
-from src.predict.image_transform import (
+from src.predict.prompted.transforms import (
     ImageTransforms,
     preprocess_rgb_images,
     scale_coords,
