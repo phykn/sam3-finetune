@@ -66,7 +66,7 @@ class FakeContextPredictor:
 
 
 def test_context_predictor_selects_target_points_from_reference_mask_similarity():
-    from src.predict.reference.matcher import ContextMatcher
+    from src.predict.context.matcher import ContextMatcher
     from src.types import ContextReference
 
     reference_features = torch.zeros(2, 4, 4, dtype=torch.float32)
@@ -117,32 +117,32 @@ def test_context_predictor_selects_target_points_from_reference_mask_similarity(
 def test_context_matcher_lives_under_context_package() -> None:
     from pathlib import Path
 
-    from src.predict.reference.matcher import ContextMatcher
-    from src.predict.reference.postprocess import context_prediction_to_full_mask
-    from src.predict.reference.scoring import area_ratio_score
+    from src.predict.context.matcher import ContextMatcher
+    from src.predict.context.postprocess import context_prediction_to_full_mask
+    from src.predict.context.scoring import area_ratio_score
     from src.types import ContextPrediction, ContextReference
 
     root = Path(__file__).resolve().parents[1]
-    assert (root / "src" / "predict" / "reference" / "matcher.py").is_file()
-    assert (root / "src" / "predict" / "reference" / "postprocess.py").is_file()
-    assert (root / "src" / "predict" / "reference" / "prototype.py").is_file()
-    assert (root / "src" / "predict" / "reference" / "scoring.py").is_file()
-    assert not (root / "src" / "context").exists()
+    assert (root / "src" / "predict" / "context" / "matcher.py").is_file()
+    assert (root / "src" / "predict" / "context" / "postprocess.py").is_file()
+    assert (root / "src" / "predict" / "context" / "prototype.py").is_file()
+    assert (root / "src" / "predict" / "context" / "scoring.py").is_file()
+    assert not (root / "src" / "predict" / "reference").exists()
     assert not (root / "src" / "context_predictor.py").exists()
-    assert ContextMatcher.__module__ == "src.predict.reference.matcher"
+    assert ContextMatcher.__module__ == "src.predict.context.matcher"
     assert ContextReference.__module__ == "src.types"
     assert ContextPrediction.__module__ == "src.types"
     assert (
         context_prediction_to_full_mask.__module__
-        == "src.predict.reference.postprocess"
+        == "src.predict.context.postprocess"
     )
-    assert area_ratio_score.__module__ == "src.predict.reference.scoring"
+    assert area_ratio_score.__module__ == "src.predict.context.scoring"
 
 
 def test_context_package_exports_user_facing_api() -> None:
-    import src.predict.reference as context
-    from src.predict.reference.guided import ReferenceGuidedMaskGenerator
-    from src.predict.reference.matcher import ContextMatcher
+    import src.predict.context as context
+    from src.predict.context.guided import ReferenceGuidedMaskGenerator
+    from src.predict.context.matcher import ContextMatcher
     from src.types import ContextPrediction, ContextReference
 
     assert context.ContextMatcher is ContextMatcher
@@ -153,7 +153,7 @@ def test_context_package_exports_user_facing_api() -> None:
 
 
 def test_contrastive_context_penalizes_reference_background_like_candidates():
-    from src.predict.reference.matcher import ContextMatcher
+    from src.predict.context.matcher import ContextMatcher
     from src.types import ContextReference
 
     reference_features = torch.zeros(2, 4, 4, dtype=torch.float32)
@@ -206,7 +206,7 @@ def test_contrastive_context_penalizes_reference_background_like_candidates():
 
 
 def test_shape_candidate_scoring_prefers_distributed_reference_match():
-    from src.predict.reference.matcher import ContextMatcher
+    from src.predict.context.matcher import ContextMatcher
     from src.types import ContextReference
 
     reference_features = torch.zeros(2, 5, 5, dtype=torch.float32)
@@ -247,7 +247,7 @@ def test_shape_candidate_scoring_prefers_distributed_reference_match():
 
 
 def test_context_predictor_uses_explicit_target_points_as_candidates():
-    from src.predict.reference.matcher import ContextMatcher
+    from src.predict.context.matcher import ContextMatcher
     from src.types import ContextReference
 
     reference_features = torch.zeros(2, 4, 4, dtype=torch.float32)
@@ -280,7 +280,7 @@ def test_context_predictor_uses_explicit_target_points_as_candidates():
 
 
 def test_context_predictor_rejects_non_positive_predict_max_masks():
-    from src.predict.reference.matcher import ContextMatcher
+    from src.predict.context.matcher import ContextMatcher
     from src.types import ContextReference
 
     fake = FakeContextPredictor()
@@ -305,7 +305,7 @@ def test_context_predictor_rejects_non_positive_predict_max_masks():
 
 
 def test_context_predictor_rejects_target_points_on_image_boundary():
-    from src.predict.reference.matcher import ContextMatcher
+    from src.predict.context.matcher import ContextMatcher
     from src.types import ContextReference
 
     fake = FakeContextPredictor()
@@ -330,7 +330,7 @@ def test_context_predictor_rejects_target_points_on_image_boundary():
 
 
 def test_build_context_prototype_rejects_embedding_length_mismatch():
-    from src.predict.reference.prototype import build_context_prototype
+    from src.predict.context.prototype import build_context_prototype
     from src.types import ContextReference
 
     try:
@@ -353,7 +353,7 @@ def test_build_context_prototype_rejects_embedding_length_mismatch():
 
 
 def test_context_predictor_rejects_empty_reference_mask():
-    from src.predict.reference.matcher import ContextMatcher
+    from src.predict.context.matcher import ContextMatcher
     from src.types import ContextReference
 
     fake = FakeContextPredictor()
@@ -494,7 +494,7 @@ def test_reference_prompt_refinement_keeps_original_prompts(monkeypatch):
 
 
 def test_context_predictor_can_send_reference_shape_as_mask_prior():
-    from src.predict.reference.matcher import ContextMatcher
+    from src.predict.context.matcher import ContextMatcher
     from src.types import ContextReference
 
     reference_features = torch.zeros(2, 4, 4, dtype=torch.float32)
@@ -535,7 +535,7 @@ def test_context_predictor_can_send_reference_shape_as_mask_prior():
 
 
 def test_context_prediction_to_full_mask_reconstructs_roi():
-    from src.predict.reference.postprocess import context_prediction_to_full_mask
+    from src.predict.context.postprocess import context_prediction_to_full_mask
     from src.types import ContextPrediction
 
     prediction = ContextPrediction(
@@ -558,7 +558,7 @@ def test_context_prediction_to_full_mask_reconstructs_roi():
 
 
 def test_area_ratio_score_penalizes_masks_with_different_relative_size():
-    from src.predict.reference.scoring import area_ratio_score
+    from src.predict.context.scoring import area_ratio_score
 
     same = area_ratio_score(candidate_ratio=0.05, reference_ratio=0.05)
     larger = area_ratio_score(candidate_ratio=0.20, reference_ratio=0.05)

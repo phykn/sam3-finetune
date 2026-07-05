@@ -17,8 +17,8 @@ from scripts.video_memory_reference import (
     predict_sam_mask_from_prompts,
     ReferenceMaskResult,
 )
-from src.predict.reference.matcher import ContextMatcher
-from src.predict.reference.postprocess import context_prediction_to_full_mask
+from src.predict.context.matcher import ContextMatcher
+from src.predict.context.postprocess import context_prediction_to_full_mask
 from src.types import ContextReference
 
 
