@@ -4,11 +4,11 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from PIL import Image
 
 from ... import types as api_types
 from ...model.build import build_model
+from .prompts import prepare_prompt_tensors
 from .transforms import ImageTransforms
 
 
@@ -403,68 +403,16 @@ class Sam3Predictor:
         box: np.ndarray | torch.Tensor | None = None,
         mask_input: np.ndarray | torch.Tensor | None = None,
     ) -> tuple[tuple[torch.Tensor, torch.Tensor] | None, torch.Tensor | None]:
-        concat_points = None
-        if point_coords is not None:
-            if point_labels is None:
-                raise ValueError("point_labels must be supplied with point_coords")
-            coords = self.transforms.transform_coords(
-                point_coords, embedding.orig_hw
-            ).to(self.device)
-            labels = torch.as_tensor(point_labels, dtype=torch.int, device=self.device)
-            if coords.ndim == 2:
-                coords = coords[None, ...]
-                labels = labels[None, ...]
-            concat_points = (coords, labels)
-
-        if box is not None:
-            box_coords = self.transforms.transform_box(box, embedding.orig_hw).to(
-                self.device
-            )
-            box_labels = torch.tensor([2, 3], dtype=torch.int, device=self.device)
-            box_labels = box_labels.expand(box_coords.shape[0], 2)
-            if concat_points is None:
-                concat_points = (box_coords, box_labels)
-            else:
-                concat_points = (
-                    torch.cat([box_coords, concat_points[0]], dim=1),
-                    torch.cat([box_labels, concat_points[1]], dim=1),
-                )
-
-        mask_prompt = None
-        if mask_input is not None:
-            mask_prompt = torch.as_tensor(
-                mask_input,
-                dtype=torch.float32,
-                device=self.device,
-            )
-            if mask_prompt.ndim == 2:
-                mask_prompt = mask_prompt[None, None, :, :]
-            elif mask_prompt.ndim == 3:
-                mask_prompt = mask_prompt[:, None, :, :]
-            elif mask_prompt.ndim != 4:
-                raise ValueError("mask_input must have 2, 3, or 4 dimensions")
-            if mask_prompt.shape[-2:] != self.model.prompt_encoder.mask_input_size:
-                mask_prompt = F.interpolate(
-                    mask_prompt,
-                    size=self.model.prompt_encoder.mask_input_size,
-                    mode="bilinear",
-                    align_corners=False,
-                    antialias=True,
-                )
-
-        if concat_points is None and mask_prompt is None:
-            raise ValueError("Provide at least one point, box, or mask prompt.")
-        if concat_points is None and mask_prompt is not None:
-            concat_points = (
-                torch.zeros(mask_prompt.shape[0], 1, 2, device=self.device),
-                -torch.ones(
-                    mask_prompt.shape[0],
-                    1,
-                    dtype=torch.int,
-                    device=self.device,
-                ),
-            )
-        return concat_points, mask_prompt
+        return prepare_prompt_tensors(
+            transforms=self.transforms,
+            prompt_encoder=self.model.prompt_encoder,
+            device=self.device,
+            embedding=embedding,
+            point_coords=point_coords,
+            point_labels=point_labels,
+            box=box,
+            mask_input=mask_input,
+        )
 
     def _format_outputs(
         self,
