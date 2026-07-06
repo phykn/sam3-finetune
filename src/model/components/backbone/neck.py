@@ -75,7 +75,6 @@ class Sam3DualViTDetNeck(nn.Module):
         self.position_encoding = position_encoding
         self.convs = nn.ModuleList()
 
-        self.scale_factors = scale_factors
         use_bias = True
         dim: int = self.trunk.channel_list[-1]
 
@@ -118,7 +117,6 @@ class Sam3TriViTDetNeck(nn.Module):
         trunk: nn.Module,
         position_encoding: nn.Module,
         d_model: int,
-        neck_norm=None,
         scale_factors=(4.0, 2.0, 1.0),
     ):
         super().__init__()
@@ -126,12 +124,10 @@ class Sam3TriViTDetNeck(nn.Module):
         self.position_encoding = position_encoding
         self.convs = nn.ModuleList()
 
-        self.scale_factors = scale_factors
-        use_bias = neck_norm is None
         dim = self.trunk.channel_list[-1]
 
         for scale in scale_factors:
-            self.convs.append(_make_scale_convs(dim, d_model, scale, use_bias))
+            self.convs.append(_make_scale_convs(dim, d_model, scale, use_bias=True))
 
         self.interactive_convs = deepcopy(self.convs)
         self.propagation_convs = deepcopy(self.convs)
@@ -139,7 +135,6 @@ class Sam3TriViTDetNeck(nn.Module):
     def forward(
         self,
         tensor_list,
-        *,
         need_sam3_out: bool = True,
         need_interactive_out: bool = True,
         need_propagation_out: bool = True,
@@ -157,8 +152,8 @@ class Sam3TriViTDetNeck(nn.Module):
         # Use getattr to handle both in a torch.compile-friendly way.
         x_data = getattr(x, "tensors", x)
         x_mask = getattr(x, "mask", None)
-        for _, (conv, interactive_conv, propagation_conv) in enumerate(
-            zip(self.convs, self.interactive_convs, self.propagation_convs)
+        for conv, interactive_conv, propagation_conv in zip(
+            self.convs, self.interactive_convs, self.propagation_convs
         ):
             if need_sam3_out:
                 sam3_conv_out = conv(x_data)

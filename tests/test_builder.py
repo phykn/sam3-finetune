@@ -1,158 +1,399 @@
 import torch
-from src.model.build import build_model
-from src.model.components.backbone.encoder import ImageEncoder
+from src.build import build_image_model
+from src.model.model import Sam3GroundingModel, Sam3ImageModel, Sam3VideoModel
 from torch import nn
 
 
-class _FakeBackbone(torch.nn.Module):
+def test_build_image_model_returns_image_model():
+    model = build_image_model({"path": None, "device": torch.device("cpu")})
+
+    assert isinstance(model, Sam3ImageModel)
+    assert model.training is True
+
+
+class FakeVision(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
     def forward(
         self,
         images,
-        *,
-        need_sam3_out,
-        need_interactive_out,
-        need_propagation_out,
+        need_sam3=True,
+        need_interactive=True,
+        need_propagation=True,
     ):
-        feature_maps = [
-            type("Feature", (), {"tensors": torch.zeros(1, 256, 4, 4)})(),
-            type("Feature", (), {"tensors": torch.zeros(1, 256, 2, 2)})(),
-            type("Feature", (), {"tensors": torch.zeros(1, 256, 1, 1)})(),
-        ]
-        return None, None, feature_maps, None, None, None
+        self.calls.append(
+            {
+                "images": images,
+                "need_sam3": need_sam3,
+                "need_interactive": need_interactive,
+                "need_propagation": need_propagation,
+            }
+        )
+        return {"sam3": {"features": images}}
 
 
-class _FakeMaskDecoder(torch.nn.Module):
-    conv_s0 = torch.nn.Identity()
-    conv_s1 = torch.nn.Identity()
+class FakeVideoVision(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    def forward(
+        self,
+        images,
+        need_sam3=True,
+        need_interactive=True,
+        need_propagation=True,
+    ):
+        self.calls.append(
+            {
+                "images": images,
+                "need_sam3": need_sam3,
+                "need_interactive": need_interactive,
+                "need_propagation": need_propagation,
+            }
+        )
+        return {"propagation": {"features": images}}
 
 
-def test_build_model_has_expected_execution_paths():
-    model = build_model(device=torch.device("cpu"))
-
-    assert hasattr(model, "image")
-    assert hasattr(model, "grounding")
-    assert hasattr(model, "video")
-    assert hasattr(model.image, "image_encoder")
-    assert hasattr(model.image, "prompt_encoder")
-    assert hasattr(model.image, "mask_decoder")
-    assert hasattr(model.image, "interactivity_no_mem_embed")
-    assert model.image.interactivity_no_mem_embed.shape == (1, 1, 256)
-    assert model.image.image_size == 1008
-    assert model.image.backbone_stride == 14
+class FakeVideoFeat(nn.Module):
+    def forward(self, features):
+        return {"frame": features}
 
 
-def test_build_model_shares_backbone_across_execution_paths():
-    model = build_model(device=torch.device("cpu"))
-
-    image_backbone = model.image.image_encoder.vision_backbone
-    grounding_backbone = model.grounding.backbone.vision_backbone
-    video_backbone = model.video.backbone.vision_backbone
-
-    assert image_backbone is grounding_backbone
-    assert image_backbone is video_backbone
+class FakeVideoMem(nn.Module):
+    def forward(self, frame, mask, obj_id=None):
+        return {"memory": frame, "mask": mask, "obj_id": obj_id}
 
 
-def test_build_model_shares_interactive_sam_parts():
-    model = build_model(device=torch.device("cpu"))
+class FakeVideoTrack(nn.Module):
+    def forward(self, frame, memory, multimask=False):
+        return {"track": frame, "memory": memory, "multimask": multimask}
 
-    assert model.image.prompt_encoder is model.video.interactive_sam_prompt_encoder
-    assert model.image.mask_decoder is model.video.interactive_sam_mask_decoder
-    assert (
-        model.image.interactivity_no_mem_embed is model.video.interactivity_no_mem_embed
+
+class FakeTrackMgr(nn.Module):
+    def forward(self, track, ground, track_ids=None, memory=None, state=None):
+        return {
+            "managed": track,
+            "ground": ground,
+            "track_ids": track_ids,
+            "memory": memory,
+            "state": state,
+        }
+
+
+class FakeGroundImage(nn.Module):
+    def forward(self, features):
+        return {"image": features}
+
+
+class FakeGroundPrompt(nn.Module):
+    def forward(self, image, **kwargs):
+        return {"prompt": kwargs, "image": image}
+
+
+class FakeGroundDec(nn.Module):
+    def forward(self, image, cond, prompt):
+        return {"pred_logits": image, "pred_boxes": cond, "pred_masks": prompt}
+
+
+class FakeCond(nn.Module):
+    def __init__(self, value=None):
+        super().__init__()
+        self.value = {"language_features": "visual"} if value is None else value
+
+    def forward(self):
+        return self.value
+
+
+def test_grounding_model_connects_blocks():
+    model = Sam3GroundingModel.__new__(Sam3GroundingModel)
+    nn.Module.__init__(model)
+    model.vision = FakeVision()
+    model.cond = FakeCond()
+    model.ground_image = FakeGroundImage()
+    model.ground_prompt = FakeGroundPrompt()
+    model.ground_dec = FakeGroundDec()
+
+    out = model(
+        images="image",
+        boxes="boxes",
+        box_labels="labels",
     )
 
+    assert model.vision.calls == [
+        {
+            "images": "image",
+            "need_sam3": True,
+            "need_interactive": False,
+            "need_propagation": False,
+        }
+    ]
+    assert out["pred_logits"] == {"image": {"features": "image"}}
+    assert out["pred_boxes"] == {"language_features": "visual"}
+    assert out["pred_masks"]["prompt"]["boxes"] == "boxes"
+    assert out["pred_masks"]["prompt"]["box_labels"] == "labels"
 
-def test_interactive_image_encoder_adds_interactivity_no_mem_embed():
-    encoder = ImageEncoder(_FakeBackbone())
-    interactivity_no_mem_embed = torch.full((1, 1, 256), 2.0)
 
-    features = encoder(
-        torch.zeros(1, 3, 4, 4),
-        _FakeMaskDecoder(),
-        interactivity_no_mem_embed=interactivity_no_mem_embed,
+def test_video_model_connects_blocks():
+    model = Sam3VideoModel.__new__(Sam3VideoModel)
+    nn.Module.__init__(model)
+    model.vision = FakeVideoVision()
+    model.video_feat = FakeVideoFeat()
+    model.video_mem = FakeVideoMem()
+    model.video_track = FakeVideoTrack()
+    model.track_mgr = FakeTrackMgr()
+
+    out = model(
+        reference_images="ref",
+        reference_mask="mask",
+        next_images="next",
+        obj_id=7,
+        multimask=True,
+        ground={"pred_logits": "ground"},
     )
 
-    assert torch.all(features["image_embed"] == 2.0)
+    assert model.vision.calls == [
+        {
+            "images": "ref",
+            "need_sam3": False,
+            "need_interactive": False,
+            "need_propagation": True,
+        },
+        {
+            "images": "next",
+            "need_sam3": False,
+            "need_interactive": False,
+            "need_propagation": True,
+        },
+    ]
+    assert out["track"]["track"] == {"frame": {"features": "next"}}
+    assert out["track"]["memory"]["obj_id"] == 7
+    assert out["manager"]["ground"] == {"pred_logits": "ground"}
 
 
-def test_build_model_can_return_checkpoint_report(monkeypatch):
-    from src.model import build as build_module
+def test_grounding_model_skips_visual_token_when_path_is_none(monkeypatch):
+    from src.model import model as model_module
 
-    class FakeModel(nn.Module):
-        def __init__(self, **_kwargs):
-            super().__init__()
-            self.share_calls = 0
-            self.loaded_state = None
+    calls = []
 
-        def share(self):
-            self.share_calls += 1
+    class Empty(nn.Module):
+        pass
+
+    class LoadCond(nn.Module):
+        def from_ckpt(self, ckpt):
+            self.ckpt = ckpt
             return self
 
-        def load_state_dict(self, state, strict):
-            self.loaded_state = state
-            assert strict is False
-            return nn.modules.module._IncompatibleKeys(
-                ["missing.weight"], ["extra.weight"]
-            )
+        def forward(self):
+            return self.ckpt
 
-    monkeypatch.setattr(build_module, "Sam3Model", FakeModel)
-    monkeypatch.setattr(build_module, "load_pth", lambda path: {"raw": torch.ones(1)})
-    monkeypatch.setattr(
-        build_module,
-        "remap_model",
-        lambda checkpoint, **_kwargs: (
-            {"video.weight": checkpoint["raw"]},
-            ["detector.backbone.language_backbone.weight"],
-        ),
-    )
+    def load_visual(path):
+        calls.append(path)
+        return {"language_features": torch.ones(1), "language_mask": torch.zeros(1)}
 
-    model, report = build_module.build_model(
-        path="checkpoint.pt",
-        device=torch.device("cpu"),
-        return_report=True,
-    )
+    monkeypatch.setattr(model_module, "VisionCore", Empty)
+    monkeypatch.setattr(model_module, "GroundImage", Empty)
+    monkeypatch.setattr(model_module, "GroundPrompt", Empty)
+    monkeypatch.setattr(model_module, "GroundDec", Empty)
+    monkeypatch.setattr(model_module, "VisualCond", LoadCond)
+    monkeypatch.setattr(model_module, "load_visual", load_visual)
 
-    assert model.share_calls == 1
-    assert model.loaded_state == {"video.weight": torch.ones(1)}
-    assert report.ignored == ["detector.backbone.language_backbone.weight"]
-    assert report.missing == ["missing.weight"]
-    assert report.unexpected == ["extra.weight"]
+    model = Sam3GroundingModel()
+
+    assert calls == []
+    assert not hasattr(model.cond, "ckpt")
 
 
-def test_build_model_passes_language_flag_to_checkpoint_remap(monkeypatch, tmp_path):
-    from src.model import build as build_module
+def test_grounding_model_accepts_visual_token_path(monkeypatch):
+    from pathlib import Path
 
-    bpe_path = tmp_path / "bpe.txt.gz"
-    bpe_path.write_bytes(b"placeholder")
-    seen = {}
+    from src.model import model as model_module
 
-    class FakeModel(nn.Module):
-        def __init__(self, **kwargs):
-            super().__init__()
-            seen["model_kwargs"] = kwargs
+    calls = []
 
-        def share(self):
+    class Empty(nn.Module):
+        pass
+
+    class LoadCond(nn.Module):
+        def from_ckpt(self, ckpt):
+            self.ckpt = ckpt
             return self
 
-        def load_state_dict(self, state, strict):
-            return nn.modules.module._IncompatibleKeys([], [])
+    def load_visual(path):
+        calls.append(path)
+        return {"language_features": torch.ones(1), "language_mask": torch.zeros(1)}
 
-    def fake_remap(checkpoint, *, include_language=False):
-        seen["include_language"] = include_language
-        return {}, []
+    monkeypatch.setattr(model_module, "VisionCore", Empty)
+    monkeypatch.setattr(model_module, "GroundImage", Empty)
+    monkeypatch.setattr(model_module, "GroundPrompt", Empty)
+    monkeypatch.setattr(model_module, "GroundDec", Empty)
+    monkeypatch.setattr(model_module, "VisualCond", LoadCond)
+    monkeypatch.setattr(model_module, "load_visual", load_visual)
 
-    monkeypatch.setattr(build_module, "Sam3Model", FakeModel)
-    monkeypatch.setattr(build_module, "load_pth", lambda path: {})
-    monkeypatch.setattr(build_module, "remap_model", fake_remap)
-    monkeypatch.setattr(build_module, "_resolve_bpe_path", lambda path: bpe_path)
+    Sam3GroundingModel(visual_path=Path("weight/custom_visual.pt"))
 
-    build_module.build_model(
-        path="checkpoint.pt",
-        device=torch.device("cpu"),
-        include_language=True,
-        bpe_path=bpe_path,
+    assert calls == [Path("weight/custom_visual.pt")]
+
+
+def test_image_model_loads_path_with_from_ckpt(monkeypatch):
+    from src.model import model as model_module
+
+    calls = []
+
+    class Block(nn.Module):
+        def __init__(self, name):
+            super().__init__()
+            self.name = name
+
+        def from_ckpt(self, ckpt, strict=False):
+            calls.append((self.name, ckpt, strict))
+            return self
+
+    class FakeCheckpoint:
+        @classmethod
+        def load(cls, path):
+            calls.append(("load", path))
+            return "ckpt"
+
+    monkeypatch.setattr(model_module, "Checkpoint", FakeCheckpoint)
+    monkeypatch.setattr(model_module, "VisionCore", lambda: Block("vision"))
+    monkeypatch.setattr(model_module, "SamImage", lambda: Block("sam_image"))
+    monkeypatch.setattr(model_module, "SamPrompt", lambda: Block("sam_prompt"))
+    monkeypatch.setattr(model_module, "SamMask", lambda: Block("sam_mask"))
+
+    Sam3ImageModel("model.pt")
+
+    assert calls == [
+        ("load", "model.pt"),
+        ("vision", "ckpt", False),
+        ("sam_image", "ckpt", False),
+        ("sam_prompt", "ckpt", False),
+        ("sam_mask", "ckpt", False),
+    ]
+
+
+def test_grounding_model_loads_path_with_from_ckpt(monkeypatch):
+    from src.model import model as model_module
+
+    calls = []
+
+    class Block(nn.Module):
+        def __init__(self, name):
+            super().__init__()
+            self.name = name
+
+        def from_ckpt(self, ckpt, strict=False):
+            calls.append((self.name, ckpt, strict))
+            return self
+
+    class Empty(nn.Module):
+        pass
+
+    class LoadCond(nn.Module):
+        def from_ckpt(self, ckpt):
+            return self
+
+    class FakeCheckpoint:
+        @classmethod
+        def load(cls, path):
+            calls.append(("load", path))
+            return "ckpt"
+
+    monkeypatch.setattr(model_module, "Checkpoint", FakeCheckpoint)
+    monkeypatch.setattr(model_module, "load_visual", lambda path: {})
+    monkeypatch.setattr(model_module, "VisualCond", LoadCond)
+    monkeypatch.setattr(model_module, "VisionCore", lambda: Block("vision"))
+    monkeypatch.setattr(model_module, "GroundImage", Empty)
+    monkeypatch.setattr(model_module, "GroundPrompt", lambda: Block("ground_prompt"))
+    monkeypatch.setattr(model_module, "GroundDec", lambda: Block("ground_dec"))
+
+    Sam3GroundingModel("model.pt")
+
+    assert calls == [
+        ("load", "model.pt"),
+        ("vision", "ckpt", False),
+        ("ground_prompt", "ckpt", False),
+        ("ground_dec", "ckpt", False),
+    ]
+
+
+def test_video_model_loads_path_with_from_ckpt(monkeypatch):
+    from src.model import model as model_module
+
+    calls = []
+
+    class Block(nn.Module):
+        def __init__(self, name):
+            super().__init__()
+            self.name = name
+
+        def from_ckpt(self, ckpt, strict=False):
+            calls.append((self.name, ckpt, strict))
+            return self
+
+    class Empty(nn.Module):
+        pass
+
+    class FakeCheckpoint:
+        @classmethod
+        def load(cls, path):
+            calls.append(("load", path))
+            return "ckpt"
+
+    monkeypatch.setattr(model_module, "Checkpoint", FakeCheckpoint)
+    monkeypatch.setattr(model_module, "VisionCore", lambda: Block("vision"))
+    monkeypatch.setattr(model_module, "VideoFeat", Empty)
+    monkeypatch.setattr(model_module, "VideoMem", lambda: Block("video_mem"))
+    monkeypatch.setattr(model_module, "VideoTrack", lambda: Block("video_track"))
+    monkeypatch.setattr(model_module, "TrackMgr", Empty)
+
+    Sam3VideoModel("model.pt")
+
+    assert calls == [
+        ("load", "model.pt"),
+        ("vision", "ckpt", False),
+        ("video_mem", "ckpt", False),
+        ("video_track", "ckpt", False),
+    ]
+
+
+def test_build_functions_load_models(monkeypatch):
+    import src.build as build_module
+
+    class FakeModel(nn.Module):
+        def __init__(self, path=None):
+            super().__init__()
+            self.path = path
+
+    class FakeGroundingModel(FakeModel):
+        def __init__(self, path=None, visual_path=None):
+            super().__init__(path)
+            self.visual_path = visual_path
+
+    monkeypatch.setattr(build_module, "Sam3ImageModel", FakeModel)
+    monkeypatch.setattr(build_module, "Sam3GroundingModel", FakeGroundingModel)
+    monkeypatch.setattr(build_module, "Sam3VideoModel", FakeModel)
+
+    image = build_module.build_image_model(
+        {"path": "image.pt", "device": torch.device("cpu")}
+    )
+    grounding = build_module.build_grounding_model(
+        {
+            "path": "ground.pt",
+            "visual_path": "visual.pt",
+            "device": torch.device("cpu"),
+        }
+    )
+    video = build_module.build_video_model(
+        {"path": "video.pt", "device": torch.device("cpu")}
     )
 
-    assert seen["include_language"] is True
-    assert seen["model_kwargs"]["include_language"] is True
-    assert seen["model_kwargs"]["bpe_path"] == str(bpe_path)
+    assert image.path == "image.pt"
+    assert image.training is True
+    assert grounding.path == "ground.pt"
+    assert grounding.visual_path == "visual.pt"
+    assert grounding.training is True
+    assert video.path == "video.pt"
+    assert video.training is True

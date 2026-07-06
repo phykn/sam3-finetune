@@ -1,6 +1,5 @@
 from pathlib import Path
 
-from src.model.components.backbone.encoder import ImageEncoder
 from src.model.components.backbone.neck import Sam3DualViTDetNeck, Sam3TriViTDetNeck
 from src.model.components.backbone.vit import PatchEmbed, ViT
 
@@ -27,21 +26,10 @@ def test_neck_is_the_backbone_neck_module_location():
     assert Sam3TriViTDetNeck.__module__ == "src.model.components.backbone.neck"
 
 
-def test_image_encoder_is_the_backbone_image_encoder_module_location():
-    root = Path(__file__).resolve().parents[1]
-
-    assert (root / "src" / "model" / "components" / "backbone" / "encoder.py").is_file()
-    assert not (root / "src" / "model" / "backbone").exists()
-    assert not (root / "src" / "backbone").exists()
-    assert not (root / "src" / "image_encoder.py").exists()
-    assert ImageEncoder.__module__ == "src.model.components.backbone.encoder"
-
-
 def test_backbone_package_does_not_reexport_internal_modules():
     import src.model.components.backbone as backbone
 
     for name in (
-        "ImageEncoder",
         "Sam3DualViTDetNeck",
         "Sam3TriViTDetNeck",
         "ViT",

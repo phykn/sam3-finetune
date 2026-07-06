@@ -1,0 +1,12 @@
+image:
+  path: null
+  device: cuda
+
+grounding:
+  path: null
+  visual_path: null
+  device: cuda
+
+video:
+  path: null
+  device: cuda

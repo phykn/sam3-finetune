@@ -79,7 +79,6 @@ class MLP(nn.Module):
         if residual and input_dim != output_dim:
             raise ValueError("residual is only supported if input_dim == output_dim")
         self.residual = residual
-        assert isinstance(out_norm, nn.Module) or out_norm is None
         self.out_norm = out_norm or nn.Identity()
 
     def forward(self, x):

@@ -1,77 +1,52 @@
 import torch
-from src.io.checkpoint import remap_model
+from src.io.checkpoint import Checkpoint, remap_model
 
 
-def test_remap_model_maps_checkpoint_to_shared_model_paths():
+def test_remap_model_maps_checkpoint_to_model_paths():
+    conv = torch.ones(32, 256, 1, 1)
+    vision = torch.zeros(1024, 3, 14, 14)
+    language = "detector.backbone.language_backbone.encoder.weight"
     source = {
         "tracker.model.interactivity_no_mem_embed": torch.ones(1, 1, 256),
         "tracker.model.interactive_sam_prompt_encoder.no_mask_embed.weight": torch.zeros(
             1, 256
         ),
-        "tracker.model.interactive_sam_mask_decoder.iou_token.weight": torch.zeros(
-            1, 256
-        ),
-        "tracker.model.maskmem_backbone.mask_downsampler.encoder.0.weight": torch.zeros(
-            1
-        ),
-        "detector.backbone.vision_backbone.trunk.patch_embed.proj.weight": torch.zeros(
-            1024, 3, 14, 14
-        ),
-        "detector.transformer.decoder.layers.0.ca_text.in_proj_weight": torch.zeros(
-            1, 1
-        ),
+        "tracker.model.interactive_sam_mask_decoder.conv_s0.weight": conv,
+        "detector.backbone.vision_backbone.trunk.patch_embed.proj.weight": vision,
         "detector.geometry_encoder.norm.weight": torch.zeros(256),
-        "detector.segmentation_head.pixel_decoder.conv_layers.0.weight": torch.zeros(1),
-        "detector.dot_prod_scoring.prompt_mlp.layers.0.weight": torch.zeros(1),
-        "detector.backbone.language_backbone.encoder.token_embedding.weight": torch.zeros(
-            1, 1
-        ),
+        language: torch.zeros(1),
     }
 
     remapped, ignored = remap_model(source)
 
-    assert "video.interactivity_no_mem_embed" in remapped
-    assert "video.interactive_sam_prompt_encoder.no_mask_embed.weight" in remapped
-    assert "video.interactive_sam_mask_decoder.iou_token.weight" in remapped
-    assert "video.maskmem_backbone.mask_downsampler.encoder.0.weight" in remapped
-    assert "video.backbone.vision_backbone.trunk.patch_embed.proj.weight" in remapped
-    assert "grounding.transformer.decoder.layers.0.ca_text.in_proj_weight" in remapped
+    assert (
+        remapped["image.sam_image.no_mem"]
+        is source["tracker.model.interactivity_no_mem_embed"]
+    )
+    assert (
+        remapped["image.sam_prompt.prompt_encoder.no_mask_embed.weight"]
+        is source["tracker.model.interactive_sam_prompt_encoder.no_mask_embed.weight"]
+    )
+    assert remapped["image.sam_image.proj_s0.weight"] is conv
+    assert remapped["image.sam_mask.mask_decoder.conv_s0.weight"] is conv
     assert "grounding.geometry_encoder.norm.weight" in remapped
-    assert "grounding.segmentation_head.pixel_decoder.conv_layers.0.weight" in remapped
-    assert "grounding.dot_prod_scoring.prompt_mlp.layers.0.weight" in remapped
     assert (
-        "detector.backbone.language_backbone.encoder.token_embedding.weight" in ignored
+        remapped["ground_prompt.encoder.norm.weight"]
+        is source["detector.geometry_encoder.norm.weight"]
     )
+    assert ignored == [language]
 
 
-def test_remap_model_can_map_language_backbone_for_vlm_runtime():
-    source = {
-        "detector.backbone.language_backbone.encoder.token_embedding.weight": torch.zeros(
-            49408, 1024
-        ),
-    }
-
-    remapped, ignored = remap_model(source, include_language=True)
-
-    assert ignored == []
-    assert (
-        "grounding.backbone.language_backbone.encoder.token_embedding.weight"
-        in remapped
-    )
-
-
-def test_remap_model_accepts_nested_model_key():
-    source = {
-        "model": {
-            "tracker.model.interactive_sam_prompt_encoder.no_mask_embed.weight": torch.zeros(
-                1, 256
-            ),
+def test_checkpoint_bank_exposes_block_state():
+    value = torch.ones(1, 256)
+    ckpt = Checkpoint.from_state(
+        {
+            "model": {
+                "tracker.model.interactive_sam_mask_decoder.iou_token.weight": value
+            }
         }
+    )
+
+    assert ckpt.block_state("image.sam_mask") == {
+        "mask_decoder.iou_token.weight": value
     }
-
-    remapped, ignored = remap_model(source)
-
-    assert ignored == []
-    assert list(remapped.keys()) == [
-        "video.interactive_sam_prompt_encoder.no_mask_embed.weight"
-    ]

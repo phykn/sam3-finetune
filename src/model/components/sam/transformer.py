@@ -20,10 +20,6 @@ class TwoWayTransformer(nn.Module):
         attention_downsample_rate: int = 2,
     ) -> None:
         super().__init__()
-        self.depth = depth
-        self.embedding_dim = embedding_dim
-        self.num_heads = num_heads
-        self.mlp_dim = mlp_dim
         self.layers = nn.ModuleList()
 
         for i in range(depth):
@@ -49,7 +45,6 @@ class TwoWayTransformer(nn.Module):
         image_pe: Tensor,
         point_embedding: Tensor,
     ) -> tuple[Tensor, Tensor]:
-        bs, c, h, w = image_embedding.shape
         image_embedding = image_embedding.flatten(2).permute(0, 2, 1)
         image_pe = image_pe.flatten(2).permute(0, 2, 1)
 
@@ -139,12 +134,11 @@ class Attention(nn.Module):
         num_heads: int,
         downsample_rate: int = 1,
         dropout: float = 0.0,
-        kv_in_dim: int = None,
+        kv_in_dim: int | None = None,
         use_fa3: bool = False,
     ) -> None:
         super().__init__()
-        self.embedding_dim = embedding_dim
-        self.kv_in_dim = kv_in_dim if kv_in_dim is not None else embedding_dim
+        kv_dim = kv_in_dim if kv_in_dim is not None else embedding_dim
         self.internal_dim = embedding_dim // downsample_rate
         self.num_heads = num_heads
         self.use_fa3 = use_fa3
@@ -153,15 +147,15 @@ class Attention(nn.Module):
         ), "num_heads must divide embedding_dim."
 
         self.q_proj = nn.Linear(embedding_dim, self.internal_dim)
-        self.k_proj = nn.Linear(self.kv_in_dim, self.internal_dim)
-        self.v_proj = nn.Linear(self.kv_in_dim, self.internal_dim)
+        self.k_proj = nn.Linear(kv_dim, self.internal_dim)
+        self.v_proj = nn.Linear(kv_dim, self.internal_dim)
         self.out_proj = nn.Linear(self.internal_dim, embedding_dim)
 
         self.dropout_p = dropout
 
-    def _separate_heads(self, x: Tensor, num_heads: int) -> Tensor:
+    def _separate_heads(self, x: Tensor) -> Tensor:
         b, n, c = x.shape
-        x = x.reshape(b, n, num_heads, c // num_heads)
+        x = x.reshape(b, n, self.num_heads, c // self.num_heads)
         return x.transpose(1, 2)
 
     def _recombine_heads(self, x: Tensor) -> Tensor:
@@ -184,23 +178,34 @@ class Attention(nn.Module):
         return self.out_proj(out)
 
     def forward(self, q: Tensor, k: Tensor, v: Tensor) -> Tensor:
-        q = self._separate_heads(self.q_proj(q), self.num_heads)
-        k = self._separate_heads(self.k_proj(k), self.num_heads)
-        v = self._separate_heads(self.v_proj(v), self.num_heads)
+        q = self._separate_heads(self.q_proj(q))
+        k = self._separate_heads(self.k_proj(k))
+        v = self._separate_heads(self.v_proj(v))
         return self._attend(q, k, v)
 
 
 class RoPEAttention(Attention):
     def __init__(
         self,
-        *args,
-        rope_theta=10000.0,
-        rope_k_repeat=False,
+        embedding_dim: int,
+        num_heads: int,
+        downsample_rate: int = 1,
+        dropout: float = 0.0,
+        kv_in_dim: int | None = None,
+        use_fa3: bool = False,
+        rope_theta: float = 10000.0,
+        rope_k_repeat: bool = False,
         feat_sizes=(64, 64),
-        use_rope_real=False,
-        **kwargs,
+        use_rope_real: bool = False,
     ):
-        super().__init__(*args, **kwargs)
+        super().__init__(
+            embedding_dim=embedding_dim,
+            num_heads=num_heads,
+            downsample_rate=downsample_rate,
+            dropout=dropout,
+            kv_in_dim=kv_in_dim,
+            use_fa3=use_fa3,
+        )
         self.use_rope_real = use_rope_real
         self.compute_cis = partial(
             compute_axial_cis, dim=self.internal_dim // self.num_heads, theta=rope_theta
@@ -221,9 +226,9 @@ class RoPEAttention(Attention):
         k = self.k_proj(k)
         v = self.v_proj(v)
 
-        q = self._separate_heads(q, self.num_heads)
-        k = self._separate_heads(k, self.num_heads)
-        v = self._separate_heads(v, self.num_heads)
+        q = self._separate_heads(q)
+        k = self._separate_heads(k)
+        v = self._separate_heads(v)
 
         w = h = int(math.sqrt(q.shape[-2]))
         if self.freqs_cis.shape[0] != q.shape[-2]:

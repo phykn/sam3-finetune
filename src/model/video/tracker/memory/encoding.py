@@ -3,8 +3,8 @@ from typing import Optional
 
 import torch
 
+from ....components.video.memory import SimpleMaskEncoder
 from ..multiplex.state import MultiplexState
-from .encoder import SimpleMaskEncoder
 
 
 def encode_new_memory(

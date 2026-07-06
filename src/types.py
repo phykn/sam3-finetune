@@ -6,6 +6,8 @@ import numpy as np
 import torch
 from PIL import Image
 
+from .io.checkpoint import load_visual
+
 
 @dataclass(frozen=True)
 class Sam3ImageEmbedding:
@@ -54,7 +56,7 @@ class VisualLanguageCache:
 
     @classmethod
     def from_file(cls, path: str | Path) -> "VisualLanguageCache":
-        cache = torch.load(path, map_location="cpu", weights_only=True)
+        cache = load_visual(path)
         if "language_features" not in cache or "language_mask" not in cache:
             raise ValueError(
                 "visual cache must contain language_features and language_mask"

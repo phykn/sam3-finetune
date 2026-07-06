@@ -7,25 +7,14 @@ class TransformerWrapper(nn.Module):
         encoder,
         decoder,
         d_model: int,
-        two_stage_type="none",
-        pos_enc_at_input_dec=True,
     ):
         super().__init__()
-
         self.encoder = encoder
         self.decoder = decoder
-        self.num_queries = decoder.num_queries if decoder is not None else None
-        self.pos_enc_at_input_dec = pos_enc_at_input_dec
-
-        assert two_stage_type in ["none"], "unknown param {} of two_stage_type".format(
-            two_stage_type
-        )
-        self.two_stage_type = two_stage_type
-
-        self._reset_parameters()
         self.d_model = d_model
+        self.reset_parameters()
 
-    def _reset_parameters(self):
+    def reset_parameters(self):
         for name, parameter in self.named_parameters():
             if parameter.dim() > 1:
                 if (

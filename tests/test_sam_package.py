@@ -1,7 +1,9 @@
 from pathlib import Path
 
 import src.model.components.nn.modules as model_misc
-import src.model.video.tracker.memory.encoder as memory
+import src.model.components.video.memory as memory
+from src.model.components.grounding.box_out import write_box_outputs
+from src.model.components.grounding.scoring import DotProductScorer
 from src.model.components.nn.activation import resolve_activation
 from src.model.components.nn.layers import (
     clone_modules,
@@ -25,8 +27,6 @@ from src.model.components.sam.transformer import (
     TwoWayTransformer,
 )
 from src.model.components.transformer.wrapper import TransformerWrapper
-from src.model.grounding.output import SAM3Output
-from src.model.grounding.scoring import DotProductScorer
 from src.ops.tensor import invert_sigmoid
 
 
@@ -102,8 +102,15 @@ def test_nn_modules_are_split_by_responsibility():
     root = Path(__file__).resolve().parents[1]
 
     assert (root / "src" / "model" / "components" / "nn" / "layers.py").is_file()
-    assert (root / "src" / "model" / "grounding" / "output.py").is_file()
-    assert (root / "src" / "model" / "grounding" / "scoring.py").is_file()
+    assert (
+        root / "src" / "model" / "components" / "grounding" / "box_out.py"
+    ).is_file()
+    assert not (
+        root / "src" / "model" / "components" / "grounding" / "output.py"
+    ).exists()
+    assert (
+        root / "src" / "model" / "components" / "grounding" / "scoring.py"
+    ).is_file()
     assert (
         root / "src" / "model" / "components" / "transformer" / "decoder.py"
     ).is_file()
@@ -120,8 +127,8 @@ def test_nn_modules_are_split_by_responsibility():
     assert LayerScale.__module__ == "src.model.components.nn.layers"
     assert LayerNorm2d.__module__ == "src.model.components.nn.layers"
     assert MLPBlock.__module__ == "src.model.components.nn.layers"
-    assert SAM3Output.__module__ == "src.model.grounding.output"
-    assert DotProductScorer.__module__ == "src.model.grounding.scoring"
+    assert write_box_outputs.__module__ == "src.model.components.grounding.box_out"
+    assert DotProductScorer.__module__ == "src.model.components.grounding.scoring"
     assert TransformerWrapper.__module__ == "src.model.components.transformer.wrapper"
     assert resolve_activation.__module__ == "src.model.components.nn.activation"
     assert clone_modules.__module__ == "src.model.components.nn.layers"
@@ -136,13 +143,6 @@ def test_nn_modules_are_split_by_responsibility():
         "invert_sigmoid",
     ):
         assert not hasattr(model_misc, name)
-
-
-def test_sam3_output_flattened_negative_index():
-    output = SAM3Output([[{"step": 1}], [{"step": 2}, {"step": 3}]])
-
-    with SAM3Output.iteration_mode(output, SAM3Output.IterMode.FLATTENED):
-        assert output[-1] == {"step": 3}
 
 
 def test_sam_package_does_not_reexport_internal_layers():

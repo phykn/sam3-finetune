@@ -8,7 +8,6 @@ from ..nn.layers import LayerNorm2d
 class MaskDecoder(nn.Module):
     def __init__(
         self,
-        *,
         transformer_dim: int,
         transformer: nn.Module,
         num_multimask_outputs: int = 3,
@@ -91,7 +90,7 @@ class MaskDecoder(nn.Module):
         multimask_output: bool,
         repeat_image: bool,
         high_res_features: list[torch.Tensor] | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         masks, iou_pred, mask_tokens_out, object_score_logits = self.predict_masks(
             image_embeddings=image_embeddings,
             image_pe=image_pe,
@@ -125,7 +124,7 @@ class MaskDecoder(nn.Module):
         dense_prompt_embeddings: torch.Tensor,
         repeat_image: bool,
         high_res_features: list[torch.Tensor] | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         s = 0
         if self.pred_obj_scores:
             output_tokens = torch.cat(
@@ -188,7 +187,7 @@ class MaskDecoder(nn.Module):
 
         return masks, iou_pred, mask_tokens_out, object_score_logits
 
-    def _get_stability_scores(self, mask_logits):
+    def stability_scores(self, mask_logits):
         mask_logits = mask_logits.flatten(-2)
         stability_delta = self.dynamic_multimask_stability_delta
         area_i = torch.sum(mask_logits > stability_delta, dim=-1).float()
@@ -210,7 +209,7 @@ class MaskDecoder(nn.Module):
 
         singlemask_logits = all_mask_logits[:, 0:1, :, :]
         singlemask_iou_scores = all_iou_scores[:, 0:1]
-        stability_scores = self._get_stability_scores(singlemask_logits)
+        stability_scores = self.stability_scores(singlemask_logits)
         is_stable = stability_scores >= self.dynamic_multimask_stability_thresh
 
         mask_logits_out = torch.where(

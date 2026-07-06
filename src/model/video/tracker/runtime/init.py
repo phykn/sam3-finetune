@@ -1,11 +1,13 @@
-from .params import (
-    init_backbone_and_transformer,
+from ....blocks.track_mgr import (
     init_condition_embedding_params,
+    init_object_pointer_params,
+)
+from ....blocks.video_mem import init_memory_encoder
+from ....blocks.video_track import init_backbone_and_transformer
+from .params import (
     init_decoder_config,
     init_image_runtime_config,
-    init_memory_encoder,
     init_memory_mask_config,
-    init_object_pointer_params,
     init_prompt_sampling_config,
     init_sam_runtime_config,
     init_temporal_pointer_config,
