@@ -4,7 +4,16 @@ from PIL import Image
 from .boxes import find_box, scale_area, scale_box
 
 
-def make_candidate(mask, logit, score, point, crop, tile, crop_index, full_size):
+def make_candidate(
+    mask: np.ndarray,
+    logit: np.ndarray,
+    score: float,
+    point: np.ndarray,
+    crop: tuple[int, int, int, int],
+    tile: int,
+    crop_index: int,
+    full_size: tuple[int, int],
+) -> dict[str, object] | None:
     local_box = find_box(mask)
     if local_box is None:
         return None
@@ -28,7 +37,7 @@ def make_candidate(mask, logit, score, point, crop, tile, crop_index, full_size)
     }
 
 
-def expand_mask(item, size: tuple[int, int]) -> np.ndarray:
+def expand_mask(item: dict[str, object], size: tuple[int, int]) -> np.ndarray:
     width, height = size
     x0, y0, x1, y1 = item["bbox"]
     seg = item["segmentation"]
@@ -42,17 +51,17 @@ def expand_mask(item, size: tuple[int, int]) -> np.ndarray:
     return mask
 
 
-def resize_mask(mask, size):
+def resize_mask(mask: np.ndarray, size: tuple[int, int]) -> np.ndarray:
     image = Image.fromarray(mask.astype(np.uint8) * 255, mode="L")
     return np.asarray(image.resize(size, Image.Resampling.NEAREST)) > 127
 
 
-def resize_logit(logit, size):
+def resize_logit(logit: np.ndarray, size: tuple[int, int]) -> np.ndarray:
     image = Image.fromarray(logit.astype(np.float32), mode="F")
     return np.asarray(image.resize(size, Image.Resampling.BILINEAR))
 
 
-def score_stability(logit):
+def score_stability(logit: np.ndarray) -> float:
     high = logit > 1.0
     low = logit > -1.0
     union = int(low.sum())
@@ -61,11 +70,11 @@ def score_stability(logit):
     return float(high.sum() / union)
 
 
-def format_masks(masks):
+def format_masks(masks: object) -> np.ndarray:
     return format_logits(masks).astype(bool)
 
 
-def format_logits(logits):
+def format_logits(logits: object) -> np.ndarray:
     logits = np.asarray(logits)
     if logits.ndim == 4 and logits.shape[1] == 1:
         return logits[:, 0]

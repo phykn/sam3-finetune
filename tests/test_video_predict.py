@@ -45,7 +45,7 @@ class FakeVideoModel(torch.nn.Module):
 
 def test_video_predictor_starts_tracker_state():
     model = FakeVideoModel()
-    predictor = VideoPredictor(model, {"device": "cpu"})
+    predictor = VideoPredictor(model, device="cpu")
     mask = np.zeros((4, 4), dtype=bool)
     mask[1:3, 1:3] = True
 
@@ -63,7 +63,7 @@ def test_video_predictor_starts_tracker_state():
 
 def test_video_predictor_propagates_with_tracker_state():
     model = FakeVideoModel()
-    predictor = VideoPredictor(model, {"device": "cpu"})
+    predictor = VideoPredictor(model, device="cpu")
     state = predictor.start(Image.new("RGB", (4, 5)), np.ones((5, 4), dtype=bool))
 
     out = predictor.predict(Image.new("RGB", (8, 6)), state)
@@ -78,6 +78,18 @@ def test_video_predictor_propagates_with_tracker_state():
     assert state["state"]["num_frames"] == 2
     assert 1 in state["state"]["cached_features"]
     assert model.calls[-2][2]["need_sam3_out"] is False
+
+
+def test_video_predictor_keeps_fixed_threshold():
+    predictor = VideoPredictor(FakeVideoModel(), device="cpu")
+    assert not hasattr(predictor, "mask_threshold")
+
+    try:
+        VideoPredictor(FakeVideoModel(), device="cpu", mask_threshold=0.5)
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("Expected TypeError for mask_threshold")
 
 
 def test_format_output_accepts_bfloat16_tensors():

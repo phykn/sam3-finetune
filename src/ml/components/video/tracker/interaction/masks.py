@@ -315,12 +315,12 @@ def _store_object_outputs(
                 obj_idx : obj_idx + 1
             ]
         }
-        inference_state["temp_output_dict_per_obj"][obj_idx][storage_key][
-            frame_idx
-        ] = obj_frame_out
-        inference_state["output_dict_per_obj"][obj_idx][storage_key][
-            frame_idx
-        ] = obj_frame_out
+        inference_state["temp_output_dict_per_obj"][obj_idx][storage_key][frame_idx] = (
+            obj_frame_out
+        )
+        inference_state["output_dict_per_obj"][obj_idx][storage_key][frame_idx] = (
+            obj_frame_out
+        )
 
 
 def _suppress_overlapping_outputs(

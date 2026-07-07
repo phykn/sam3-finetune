@@ -73,7 +73,7 @@ class FakeRefModel(FakeGroundModel):
 
 def test_ground_predictor_encodes_mask_reference_as_visual_prompt():
     model = FakeGroundModel()
-    predictor = GroundPredictor(model, {"device": "cpu", "image_size": 16})
+    predictor = GroundPredictor(model, device="cpu")
     mask = np.zeros((8, 8), dtype=bool)
     mask[2:6, 1:5] = True
 
@@ -89,7 +89,7 @@ def test_ground_predictor_encodes_mask_reference_as_visual_prompt():
 
 def test_ground_predictor_keeps_multiple_mask_reference_features():
     model = FakeGroundModel()
-    predictor = GroundPredictor(model, {"device": "cpu", "image_size": 16})
+    predictor = GroundPredictor(model, device="cpu")
     masks = np.zeros((2, 8, 8), dtype=bool)
     masks[0, 2:6, 1:5] = True
     masks[1, :3, :3] = True
@@ -105,7 +105,8 @@ def test_ground_predictor_predicts_each_reference_separately():
     model = FakeGroundModel()
     predictor = GroundPredictor(
         model,
-        {"device": "cpu", "image_size": 16, "score_thresh": 0.5},
+        device="cpu",
+        score_thresh=0.5,
     )
     ref_a = predictor.encode_ref(
         Image.new("RGB", (8, 8)),
@@ -132,7 +133,9 @@ def test_ground_predictor_reranks_reference_candidates_by_similarity():
     model = FakeRefModel()
     predictor = GroundPredictor(
         model,
-        {"device": "cpu", "image_size": 16, "top_k": 1, "sim_thr": 0.5},
+        device="cpu",
+        top_k=1,
+        sim_thr=0.5,
     )
     mask = np.zeros((8, 8), dtype=bool)
     mask[:4, :4] = True
@@ -143,3 +146,16 @@ def test_ground_predictor_reranks_reference_candidates_by_similarity():
     assert out["masks"].shape == (1, 8, 8)
     assert out["scores"].tolist() == [float(torch.sigmoid(torch.tensor(1.0)))]
     assert out["similarities"][0] > 0.9
+
+
+def test_ground_predictor_keeps_fixed_image_options():
+    predictor = GroundPredictor(FakeGroundModel(), device="cpu")
+    assert not hasattr(predictor, "max_masks")
+
+    for kwargs in ({"image_size": 512}, {"max_masks": 1}):
+        try:
+            GroundPredictor(FakeGroundModel(), device="cpu", **kwargs)
+        except TypeError:
+            pass
+        else:
+            raise AssertionError(f"Expected TypeError for {kwargs}")

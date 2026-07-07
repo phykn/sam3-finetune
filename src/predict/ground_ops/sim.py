@@ -3,7 +3,7 @@ import torch
 import torch.nn.functional as F
 
 
-def vectors(image, masks):
+def vectors(image: dict[str, object], masks: object) -> torch.Tensor:
     feat = tensor(image["backbone_fpn"][-1]).float()
     masks = torch.as_tensor(np.asarray(masks), dtype=torch.float32, device=feat.device)
     if masks.ndim == 2:
@@ -25,13 +25,18 @@ def vectors(image, masks):
     return F.normalize(out, dim=-1)
 
 
-def scores(ref, target):
+def scores(ref: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     if ref.ndim == 1:
         return (target * ref[None]).sum(dim=-1)
     return (target[:, None] * ref[None]).sum(dim=-1).max(dim=1).values
 
 
-def select(similarities, scores, threshold, top_k):
+def select(
+    similarities: np.ndarray,
+    scores: np.ndarray,
+    threshold: float,
+    top_k: int | None,
+) -> np.ndarray:
     similarities = np.asarray(similarities)
     scores = np.asarray(scores)
     keep = np.flatnonzero(similarities >= threshold)
@@ -41,5 +46,5 @@ def select(similarities, scores, threshold, top_k):
     return keep
 
 
-def tensor(value):
+def tensor(value: object) -> torch.Tensor:
     return getattr(value, "tensors", value)

@@ -53,7 +53,7 @@ def run_src(image, device):
             embed["image_embed"],
             tuple(embed["high_res_features"]),
             encoded,
-            model.prompt_encoder.get_dense_pe().to(device),
+            model.image_pe(device),
             True,
             True,
         )

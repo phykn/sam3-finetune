@@ -9,7 +9,13 @@ def make_points(size: tuple[int, int], points_per_side: int) -> np.ndarray:
     return np.stack([x.reshape(-1), y.reshape(-1)], axis=1).astype(np.float32)
 
 
-def filter_points(points, crop, tile, crop_index, full_size):
+def filter_points(
+    points: np.ndarray,
+    crop: tuple[int, int, int, int],
+    tile: int,
+    crop_index: int,
+    full_size: tuple[int, int],
+) -> np.ndarray:
     if tile == 1:
         return points
 

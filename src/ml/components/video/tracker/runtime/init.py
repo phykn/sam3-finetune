@@ -1,4 +1,4 @@
-from ...setup import (
+from ...init_parts import (
     init_backbone_and_transformer,
     init_condition_embedding_params,
     init_memory_encoder,

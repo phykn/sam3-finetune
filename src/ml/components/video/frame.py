@@ -2,7 +2,7 @@ import torch
 from torch import nn
 
 
-class VideoFeat(nn.Module):
+class VideoFrame(nn.Module):
     def __init__(self, vision_backbone=None, scalp: int = 0) -> None:
         super().__init__()
         self.vision_backbone = vision_backbone
@@ -73,7 +73,7 @@ class VideoFeat(nn.Module):
 
     @staticmethod
     def size(value) -> tuple[int, int]:
-        tensor = VideoFeat.tensor(value)
+        tensor = VideoFrame.tensor(value)
         return int(tensor.shape[-2]), int(tensor.shape[-1])
 
     def scalp_levels(self, features, pos):

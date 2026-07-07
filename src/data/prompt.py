@@ -3,13 +3,24 @@ import torch
 import torch.nn.functional as F
 
 
-def _scale(value, orig_hw: tuple[int, int], size: int, device) -> torch.Tensor:
+def _scale(
+    value: object,
+    orig_hw: tuple[int, int],
+    size: int,
+    device: str | torch.device,
+) -> torch.Tensor:
     coords = torch.as_tensor(value, dtype=torch.float32, device=device)
     height, width = orig_hw
     return coords * coords.new_tensor([size / width, size / height])
 
 
-def build_points(coords, labels, orig_hw: tuple[int, int], size: int, device):
+def build_points(
+    coords: object | None,
+    labels: object | None,
+    orig_hw: tuple[int, int],
+    size: int,
+    device: str | torch.device,
+) -> tuple[torch.Tensor, torch.Tensor] | None:
     if coords is None:
         return None
 
@@ -25,7 +36,12 @@ def build_points(coords, labels, orig_hw: tuple[int, int], size: int, device):
     return coords, labels
 
 
-def build_box(value, orig_hw: tuple[int, int], size: int, device) -> torch.Tensor:
+def build_box(
+    value: object | None,
+    orig_hw: tuple[int, int],
+    size: int,
+    device: str | torch.device,
+) -> tuple[torch.Tensor, torch.Tensor] | None:
     if value is None:
         return None
 
@@ -37,7 +53,11 @@ def build_box(value, orig_hw: tuple[int, int], size: int, device) -> torch.Tenso
     return coords, labels.expand(coords.shape[0], 2)
 
 
-def build_mask(value, size: tuple[int, int], device):
+def build_mask(
+    value: object | None,
+    size: tuple[int, int],
+    device: str | torch.device,
+) -> torch.Tensor | None:
     if value is None:
         return None
 

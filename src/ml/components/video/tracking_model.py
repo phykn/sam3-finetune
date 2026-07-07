@@ -8,7 +8,7 @@ from .create import (
     IMAGE_SIZE,
     MULTIMASK_OUTPUTS,
 )
-from .frame import VideoFeat
+from .frame import VideoFrame
 from .tracker.model import Sam3VideoTrackingMultiplexDemo
 from .tracker.multiplex.state import MultiplexController
 
@@ -67,13 +67,16 @@ def make_tracking_kwargs() -> dict:
     }
 
 
-def create_video_memory_model(
+def create_tracking_model(
     trunk: ViT | None = None,
     vision_backbone: Sam3TriViTDetNeck | None = None,
     backbone=None,
     maskmem_backbone=None,
     transformer=None,
-    video_track=None,
+    image_pe=None,
+    mask_decoder=None,
+    output_valid_embed=None,
+    output_invalid_embed=None,
     multiplex_count: int = 16,
     max_num_objects: int = 16,
     use_fa3: bool = False,
@@ -94,7 +97,7 @@ def create_video_memory_model(
                 use_fa3=use_fa3,
                 use_rope_real=use_rope_real,
             )
-        backbone = VideoFeat(vision_backbone=vision_backbone, scalp=0)
+        backbone = VideoFrame(vision_backbone=vision_backbone, scalp=0)
 
     multiplex_controller = MultiplexController(
         multiplex_count=multiplex_count,
@@ -109,12 +112,14 @@ def create_video_memory_model(
         **make_tracking_kwargs(),
     )
 
-    if video_track is not None:
-        model.transformer = video_track.transformer
-        model.image_pe_layer = video_track.image_pe
-        model.sam_mask_decoder = video_track.mask_decoder
-        model.output_valid_embed = video_track.output_valid_embed
-        model.output_invalid_embed = video_track.output_invalid_embed
+    if image_pe is not None:
+        model.image_pe_layer = image_pe
+    if mask_decoder is not None:
+        model.sam_mask_decoder = mask_decoder
+    if output_valid_embed is not None:
+        model.output_valid_embed = output_valid_embed
+    if output_invalid_embed is not None:
+        model.output_invalid_embed = output_invalid_embed
 
     model.max_num_objects = max_num_objects
     return model

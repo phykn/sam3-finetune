@@ -1,11 +1,19 @@
 from pathlib import Path
 
+from src.predict import GridPredictor, GroundPredictor, SinglePredictor, VideoPredictor
+
+
+def test_predict_package_exports_workflows() -> None:
+    assert SinglePredictor.__name__ == "SinglePredictor"
+    assert GridPredictor.__name__ == "GridPredictor"
+    assert GroundPredictor.__name__ == "GroundPredictor"
+    assert VideoPredictor.__name__ == "VideoPredictor"
+
 
 def test_shared_modules_are_grouped_by_responsibility() -> None:
     root = Path(__file__).resolve().parents[1]
 
     for path in (
-        "src/types.py",
         "src/ml/structures.py",
         "src/ml/components/nn/activation.py",
         "src/ml/components/nn/modules.py",
@@ -25,15 +33,14 @@ def test_shared_modules_are_grouped_by_responsibility() -> None:
         "src/ml/components/video/mask_selection.py",
         "src/ml/components/video/memory.py",
         "src/ml/components/video/mlp.py",
-        "src/ml/components/video/model.py",
+        "src/ml/components/video/tracking_model.py",
         "src/ml/components/video/multiplex.py",
         "src/ml/components/video/multiplex_ops.py",
-        "src/ml/components/video/sam.py",
-        "src/ml/components/video/setup.py",
+        "src/ml/components/video/sam_heads.py",
+        "src/ml/components/video/init_parts.py",
         "src/ml/blocks/ground_image.py",
         "src/ml/blocks/ground_prompt.py",
         "src/ml/blocks/ground_dec.py",
-        "src/ml/blocks/track_mgr.py",
         "src/ml/blocks/video_feat.py",
         "src/ml/blocks/video_mem.py",
         "src/ml/blocks/video_track.py",
@@ -65,7 +72,6 @@ def test_shared_modules_are_grouped_by_responsibility() -> None:
         "src/predict/mask/format.py",
         "src/io/load.py",
         "src/ops/box.py",
-        "src/ops/mask.py",
         "src/ops/tensor.py",
     ):
         assert (root / path).is_file()
@@ -112,6 +118,12 @@ def test_shared_modules_are_grouped_by_responsibility() -> None:
     assert not (root / "src" / "ml" / "grounding").exists()
     assert not (root / "src" / "ml" / "language").exists()
     assert not (root / "src" / "ml" / "video").exists()
+    assert not (root / "src" / "ml" / "components" / "video" / "model.py").exists()
+    assert not (
+        root / "src" / "ml" / "components" / "video" / "memory_model.py"
+    ).exists()
+    assert not (root / "src" / "ml" / "components" / "video" / "sam.py").exists()
+    assert not (root / "src" / "ml" / "components" / "video" / "setup.py").exists()
     assert not (root / "src" / "ml" / "blocks" / "video.py").exists()
     assert not (root / "src" / "ml" / "blocks" / "video_tracker.py").exists()
     assert not (root / "src" / "ml" / "components" / "grounding" / "output.py").exists()

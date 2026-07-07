@@ -11,14 +11,14 @@ logger = logging.getLogger(__name__)
 
 def prepare_object_insert(object_indices, object_ids, state_object_ids):
     object_indices = object_indices.copy()
-    assert (object_ids is None) == (
-        state_object_ids is None
-    ), "object_ids must either be always given or always omitted"
+    assert (object_ids is None) == (state_object_ids is None), (
+        "object_ids must either be always given or always omitted"
+    )
 
     if object_ids is not None:
-        assert len(object_ids) == len(
-            object_indices
-        ), "object_ids must have the same length as object_indices"
+        assert len(object_ids) == len(object_indices), (
+            "object_ids must have the same length as object_indices"
+        )
         object_ids = object_ids.copy()
 
     assert object_indices == sorted(object_indices), "object_indices must be sorted"

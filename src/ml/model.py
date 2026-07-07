@@ -9,11 +9,11 @@ from .blocks.ground_prompt import GroundPrompt
 from .blocks.sam_image import SamImage
 from .blocks.sam_mask import SamMask
 from .blocks.sam_prompt import SamPrompt
-from .blocks.track_mgr import TrackMgr
 from .blocks.video_feat import VideoFeat
 from .blocks.video_mem import VideoMem
 from .blocks.video_track import VideoTrack
 from .blocks.vision import VisionCore
+from .components.video.tracking_model import create_tracking_model
 from .structures import NestedTensor
 
 
@@ -72,12 +72,12 @@ class Sam3ImageModel(nn.Module):
         )
 
     @property
-    def prompt_encoder(self):
-        return self.sam_prompt.prompt_encoder
+    def mask_input_size(self):
+        return self.sam_prompt.prompt_encoder.mask_input_size
 
-    @property
-    def mask_decoder(self):
-        return self.sam_mask.mask_decoder
+    def image_pe(self, device=None):
+        pe = self.sam_prompt.prompt_encoder.get_dense_pe()
+        return pe if device is None else pe.to(device)
 
 
 class Sam3GroundingModel(nn.Module):
@@ -178,8 +178,15 @@ class Sam3VideoModel(nn.Module):
         self.video_feat = VideoFeat()
         self.video_mem = VideoMem()
         self.video_track = VideoTrack()
-        self.track_mgr = TrackMgr()
-        self.runtime = self.video_track.make_tracker(self.video_feat, self.video_mem)
+        self.runtime = create_tracking_model(
+            backbone=self.video_feat,
+            maskmem_backbone=self.video_mem.encoder,
+            transformer=self.video_track.transformer,
+            image_pe=self.video_track.image_pe,
+            mask_decoder=self.video_track.mask_decoder,
+            output_valid_embed=self.video_track.output_valid_embed,
+            output_invalid_embed=self.video_track.output_invalid_embed,
+        )
         if path is not None:
             self.from_ckpt(Checkpoint.load(path))
 

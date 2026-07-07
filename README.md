@@ -32,9 +32,9 @@ Prediction workflows:
 config/       model config
 scripts/      runnable examples and parity checks
 src/data/     input preprocessing
-src/io/       image, mask, checkpoint, and tensor loading
+src/io/       checkpoint and video frame loading
 src/ml/       model components, blocks, and assembled models
-src/ops/      shared tensor, mask, and box operations
+src/ops/      shared tensor and box operations
 src/predict/  prediction workflows
 tests/        unit tests
 ```

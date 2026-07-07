@@ -2,7 +2,12 @@ import numpy as np
 import torch
 
 
-def build_points(coords, labels, orig_hw: tuple[int, int], device):
+def build_points(
+    coords: object | None,
+    labels: object | None,
+    orig_hw: tuple[int, int],
+    device: str | torch.device,
+) -> tuple[torch.Tensor | None, torch.Tensor | None]:
     if coords is None:
         return None, None
 
@@ -13,7 +18,11 @@ def build_points(coords, labels, orig_hw: tuple[int, int], device):
     return points[:, None, :], labels[:, None]
 
 
-def build_boxes(boxes, orig_hw: tuple[int, int], device):
+def build_boxes(
+    boxes: object | None,
+    orig_hw: tuple[int, int],
+    device: str | torch.device,
+) -> tuple[torch.Tensor | None, torch.Tensor | None]:
     if boxes is None:
         return None, None
 
@@ -35,7 +44,10 @@ def build_boxes(boxes, orig_hw: tuple[int, int], device):
     return boxes[:, None, :], labels[:, None]
 
 
-def build_masks(masks, device):
+def build_masks(
+    masks: object | None,
+    device: str | torch.device,
+) -> tuple[torch.Tensor | None, torch.Tensor | None]:
     if masks is None:
         return None, None
 

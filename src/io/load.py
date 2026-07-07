@@ -9,14 +9,14 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
 
 
 def load_frames(
-    path,
-    image_size,
-    offload_video_to_cpu,
+    path: str | Path,
+    image_size: int,
+    offload_video_to_cpu: bool,
     device: torch.device | str = "cuda",
-    img_mean=(0.5, 0.5, 0.5),
-    img_std=(0.5, 0.5, 0.5),
-    async_loading_frames=False,
-):
+    img_mean: tuple[float, float, float] = (0.5, 0.5, 0.5),
+    img_std: tuple[float, float, float] = (0.5, 0.5, 0.5),
+    async_loading_frames: bool = False,
+) -> tuple[torch.Tensor, int, int]:
     if async_loading_frames:
         raise NotImplementedError("async frame loading is not implemented in src")
 

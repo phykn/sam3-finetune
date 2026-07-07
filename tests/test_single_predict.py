@@ -23,6 +23,14 @@ class FakeModel(torch.nn.Module):
         self.prompts = []
         self.decodes = []
 
+    @property
+    def mask_input_size(self):
+        return self.prompt_encoder.mask_input_size
+
+    def image_pe(self, device=None):
+        pe = self.prompt_encoder.get_dense_pe()
+        return pe if device is None else pe.to(device)
+
     def encode_image(self, images):
         self.images.append(tuple(images.shape))
         batch = images.shape[0]
@@ -68,7 +76,7 @@ class FakeModel(torch.nn.Module):
 
 def test_single_predictor_predicts_from_box():
     model = FakeModel()
-    predictor = SinglePredictor(model, {"device": "cpu", "image_size": 1008})
+    predictor = SinglePredictor(model, device="cpu")
 
     out = predictor.predict(
         Image.new("RGB", (20, 10), color=(0, 0, 0)),
@@ -88,7 +96,7 @@ def test_single_predictor_predicts_from_box():
 
 def test_single_predictor_uses_dummy_point_for_mask_only_prompt():
     model = FakeModel()
-    predictor = SinglePredictor(model, {"device": "cpu", "image_size": 1008})
+    predictor = SinglePredictor(model, device="cpu")
 
     predictor.predict(
         Image.new("RGB", (20, 10), color=(0, 0, 0)),
@@ -102,7 +110,7 @@ def test_single_predictor_uses_dummy_point_for_mask_only_prompt():
 
 def test_single_predictor_refines_from_logit():
     model = FakeModel()
-    predictor = SinglePredictor(model, {"device": "cpu", "image_size": 1008})
+    predictor = SinglePredictor(model, device="cpu")
     logit = np.ones((288, 288), dtype=np.float32)
 
     out = predictor.refine(
@@ -117,7 +125,7 @@ def test_single_predictor_refines_from_logit():
 
 def test_single_predictor_refines_low_from_logit():
     model = FakeModel()
-    predictor = SinglePredictor(model, {"device": "cpu", "image_size": 1008})
+    predictor = SinglePredictor(model, device="cpu")
     embed = predictor.encode(Image.new("RGB", (20, 10), color=(0, 0, 0)))
 
     out = predictor.refine_low(
@@ -134,7 +142,7 @@ def test_single_predictor_refines_low_from_logit():
 
 def test_single_predictor_can_keep_low_res_masks():
     model = FakeModel()
-    predictor = SinglePredictor(model, {"device": "cpu", "image_size": 1008})
+    predictor = SinglePredictor(model, device="cpu")
     embed = predictor.encode(Image.new("RGB", (20, 10), color=(0, 0, 0)))
 
     out = predictor.predict_embed_low(
@@ -150,7 +158,7 @@ def test_single_predictor_can_keep_low_res_masks():
 
 
 def test_single_predictor_rejects_empty_prompt():
-    predictor = SinglePredictor(FakeModel(), {"device": "cpu"})
+    predictor = SinglePredictor(FakeModel(), device="cpu")
 
     try:
         predictor.predict(Image.new("RGB", (20, 10), color=(0, 0, 0)))
@@ -158,3 +166,16 @@ def test_single_predictor_rejects_empty_prompt():
         assert "prompt" in str(exc)
     else:
         raise AssertionError("Expected ValueError")
+
+
+def test_single_predictor_keeps_fixed_image_options():
+    predictor = SinglePredictor(FakeModel(), device="cpu")
+    assert not hasattr(predictor, "mask_threshold")
+
+    for kwargs in ({"image_size": 512}, {"mask_threshold": 0.5}):
+        try:
+            SinglePredictor(FakeModel(), device="cpu", **kwargs)
+        except TypeError:
+            pass
+        else:
+            raise AssertionError(f"Expected TypeError for {kwargs}")

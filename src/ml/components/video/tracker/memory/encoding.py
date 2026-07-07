@@ -68,9 +68,9 @@ def prepare_memory_mask(self, pred_masks_high_res, is_mask_from_pts):
     if not self.apply_sigmoid_to_mask_logits_for_mem_enc:
         return pred_masks_high_res
 
-    assert (
-        not self.binarize_mask_from_pts_for_mem_enc
-    ), "haven't been trained this way; beware of hardcoded config override"
+    assert not self.binarize_mask_from_pts_for_mem_enc, (
+        "haven't been trained this way; beware of hardcoded config override"
+    )
     binarize = self.binarize_mask_from_pts_for_mem_enc and is_mask_from_pts
     if binarize and not self.training:
         mask_for_mem = (pred_masks_high_res > 0).float()

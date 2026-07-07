@@ -122,10 +122,11 @@ class FakeVideoTrackBlock(nn.Module):
     def __init__(self):
         super().__init__()
         self.calls = []
-
-    def make_tracker(self, video_feat, video_mem):
-        self.calls.append(("make_tracker", video_feat, video_mem))
-        return FakeVideo()
+        self.transformer = object()
+        self.image_pe = object()
+        self.mask_decoder = object()
+        self.output_valid_embed = torch.nn.Parameter(torch.zeros(1))
+        self.output_invalid_embed = torch.nn.Parameter(torch.zeros(1))
 
     def forward(self, frame, memory, multimask=True):
         self.calls.append((frame, memory, multimask))
@@ -218,22 +219,32 @@ def test_video_model_connects_blocks():
 def test_video_model_assembles_video_blocks(monkeypatch):
     from src.ml import model as model_module
 
+    calls = []
+
+    def create_tracking_model(**kwargs):
+        calls.append(kwargs)
+        return FakeVideo()
+
     monkeypatch.setattr(model_module, "VideoFeat", FakeVideoFeatBlock)
     monkeypatch.setattr(model_module, "VideoMem", FakeVideoMemBlock)
     monkeypatch.setattr(model_module, "VideoTrack", FakeVideoTrackBlock)
-    monkeypatch.setattr(
-        model_module, "TrackMgr", TrackMgr := type("TrackMgr", (nn.Module,), {})
-    )
-
+    monkeypatch.setattr(model_module, "create_tracking_model", create_tracking_model)
     model = Sam3VideoModel()
 
     assert isinstance(model.video_feat, FakeVideoFeatBlock)
     assert isinstance(model.video_mem, FakeVideoMemBlock)
     assert isinstance(model.video_track, FakeVideoTrackBlock)
-    assert isinstance(model.track_mgr, TrackMgr)
     assert isinstance(model.runtime, FakeVideo)
-    assert model.video_track.calls == [
-        ("make_tracker", model.video_feat, model.video_mem)
+    assert calls == [
+        {
+            "backbone": model.video_feat,
+            "maskmem_backbone": model.video_mem.encoder,
+            "transformer": model.video_track.transformer,
+            "image_pe": model.video_track.image_pe,
+            "mask_decoder": model.video_track.mask_decoder,
+            "output_valid_embed": model.video_track.output_valid_embed,
+            "output_invalid_embed": model.video_track.output_invalid_embed,
+        }
     ]
 
 
@@ -392,10 +403,9 @@ def test_video_model_loads_path_with_from_ckpt(monkeypatch):
         def load_state_dict(self, state, strict=False):
             calls.append(("load_state_dict", state, strict))
 
-    class FakeTrack(FakeVideoTrackBlock):
-        def make_tracker(self, video_feat, video_mem):
-            calls.append(("make_tracker", video_feat, video_mem))
-            return FakeRuntime()
+    def create_tracking_model(**kwargs):
+        calls.append(("create_tracking_model", kwargs))
+        return FakeRuntime()
 
     class FakeCheckpoint:
         def block_state(self, prefix):
@@ -410,12 +420,12 @@ def test_video_model_loads_path_with_from_ckpt(monkeypatch):
     monkeypatch.setattr(model_module, "Checkpoint", FakeCheckpoint)
     monkeypatch.setattr(model_module, "VideoFeat", FakeVideoFeatBlock)
     monkeypatch.setattr(model_module, "VideoMem", FakeVideoMemBlock)
-    monkeypatch.setattr(model_module, "VideoTrack", FakeTrack)
-    monkeypatch.setattr(model_module, "TrackMgr", type("TrackMgr", (nn.Module,), {}))
+    monkeypatch.setattr(model_module, "VideoTrack", FakeVideoTrackBlock)
+    monkeypatch.setattr(model_module, "create_tracking_model", create_tracking_model)
 
     Sam3VideoModel("model.pt")
 
-    assert calls[0][0] == "make_tracker"
+    assert calls[0][0] == "create_tracking_model"
     assert calls[1:] == [
         ("load", "model.pt"),
         ("block_state", "video"),

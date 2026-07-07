@@ -85,7 +85,9 @@ class Sam3DualViTDetNeck(nn.Module):
         if add_sam2_neck:
             self.sam2_convs = deepcopy(self.convs)
 
-    def forward(self, tensor_list: list[torch.Tensor]) -> tuple[
+    def forward(
+        self, tensor_list: list[torch.Tensor]
+    ) -> tuple[
         list[torch.Tensor],
         list[torch.Tensor],
         list[torch.Tensor] | None,

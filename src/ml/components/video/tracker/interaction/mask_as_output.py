@@ -18,9 +18,9 @@ def use_mask_as_output(
     out_scale = 20.0
     out_bias = -10.0
     mask_inputs_float = mask_inputs.to(backbone_features.dtype)
-    assert mask_inputs.shape[0] == len(
-        objects_in_mask
-    ), f"{mask_inputs.shape[0]} != {len(objects_in_mask)}"
+    assert mask_inputs.shape[0] == len(objects_in_mask), (
+        f"{mask_inputs.shape[0]} != {len(objects_in_mask)}"
+    )
 
     low_res_masks, high_res_masks, ious, object_score_logits, appearing = (
         make_mask_outputs(

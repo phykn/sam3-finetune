@@ -23,9 +23,9 @@ def determine_mode(
     if point_inputs is None:
         return "propagation_only"
     if prev_sam_mask_logits is not None:
-        assert (
-            objects_to_interact is not None
-        ), "objects_to_interact must be specified when refining with prev_sam_mask_logits"
+        assert objects_to_interact is not None, (
+            "objects_to_interact must be specified when refining with prev_sam_mask_logits"
+        )
         return "interaction_only"
     if is_init_cond_frame:
         return "interaction_only"

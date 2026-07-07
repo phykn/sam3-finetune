@@ -308,9 +308,9 @@ def split_transition_masks(
     assert gt_masks is not None
     new_idxs = new_idx_per_transition[frame_idx]
     assert sorted(new_idxs) == new_idxs
-    assert new_idxs[0] == len(
-        valid_objects_prior[frame_idx]
-    ), f"{new_idxs=}; {gt_masks.shape=}; {valid_objects_prior[frame_idx]=}"
+    assert new_idxs[0] == len(valid_objects_prior[frame_idx]), (
+        f"{new_idxs=}; {gt_masks.shape=}; {valid_objects_prior[frame_idx]=}"
+    )
     assert new_idxs[-1] == len(gt_masks) - 1, f"{new_idxs=}; {gt_masks.shape=}"
     return gt_masks[: new_idxs[0]], gt_masks[new_idxs], new_idxs
 

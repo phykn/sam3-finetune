@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 
 from ....structures import BatchedDatapoint
-from ..sam import build_sam_heads
+from ..sam_heads import build_sam_heads
 from .decoder.heads import forward_sam_heads
 from .frame.features import (
     forward_image,

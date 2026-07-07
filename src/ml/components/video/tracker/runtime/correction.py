@@ -153,9 +153,9 @@ def _run_correction_step(
         method="uniform" if model.training else model.pt_sampling_for_eval,
     )
     point_inputs = concat_points(point_inputs, new_points, new_labels)
-    assert values["low_res_masks"].shape[0] > max(
-        objects_to_interact
-    ), f"interacting {objects_to_interact} in {values['low_res_masks'].shape}?"
+    assert values["low_res_masks"].shape[0] > max(objects_to_interact), (
+        f"interacting {objects_to_interact} in {values['low_res_masks'].shape}?"
+    )
 
     if model.iter_use_prev_mask_pred:
         mask_inputs = values["low_res_masks"][objects_to_interact]

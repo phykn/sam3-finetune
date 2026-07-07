@@ -37,7 +37,7 @@ def load_visual(path: str | Path) -> Mapping:
     return load_pth(path)
 
 
-def unwrap_state(ckpt: Mapping):
+def unwrap_state(ckpt: Mapping) -> Mapping:
     model = ckpt.get("model")
     return model if isinstance(model, Mapping) else ckpt
 
@@ -48,15 +48,15 @@ class Checkpoint:
     ignored: list[str]
 
     @classmethod
-    def load(cls, path: str | Path):
+    def load(cls, path: str | Path) -> "Checkpoint":
         return cls.from_state(load_pth(path))
 
     @classmethod
-    def from_state(cls, ckpt: Mapping):
+    def from_state(cls, ckpt: Mapping) -> "Checkpoint":
         state, ignored = remap_model(ckpt)
         return cls(state, ignored)
 
-    def block_state(self, prefix: str):
+    def block_state(self, prefix: str) -> dict[str, torch.Tensor]:
         prefix = prefix.rstrip(".") + "."
         return {
             key.removeprefix(prefix): val
@@ -65,7 +65,7 @@ class Checkpoint:
         }
 
 
-def remap_model(ckpt: Mapping):
+def remap_model(ckpt: Mapping) -> tuple[dict[str, torch.Tensor], list[str]]:
     state = {}
     ignored = []
 
@@ -81,7 +81,7 @@ def remap_model(ckpt: Mapping):
     return state, ignored
 
 
-def _remap_key(key: str):
+def _remap_key(key: str) -> str | None:
     if key.startswith(LANG):
         return None
 
@@ -91,7 +91,7 @@ def _remap_key(key: str):
     return None
 
 
-def _add_aliases(state, key, val) -> None:
+def _add_aliases(state: dict[str, torch.Tensor], key: str, val: torch.Tensor) -> None:
     for src, dsts in ALIAS:
         if not key.startswith(src):
             continue

@@ -1,10 +1,18 @@
 import numpy as np
 import torch
+from PIL import Image
+from torch import nn
 
 from ...data import image as image_data
 
 
-def start(model, image, mask, obj_id, device):
+def start(
+    model: nn.Module,
+    image: Image.Image | np.ndarray,
+    mask: np.ndarray | torch.Tensor,
+    obj_id: int,
+    device: str | torch.device,
+) -> dict[str, object]:
     tensor, features, orig_hw = cache_frame(model, image, device)
     state = model.init_state(
         video_height=orig_hw[0],
@@ -25,7 +33,13 @@ def start(model, image, mask, obj_id, device):
     return {"state": state, "obj_id": obj_id, "next_frame": 1}
 
 
-def predict(model, state, image, device, threshold):
+def predict(
+    model: nn.Module,
+    state: dict[str, object],
+    image: Image.Image | np.ndarray,
+    device: str | torch.device,
+    threshold: float,
+) -> dict[str, object]:
     frame_idx = state["next_frame"]
     tensor, features, _ = cache_frame(model, image, device)
     tracker_state = state["state"]
@@ -49,7 +63,11 @@ def predict(model, state, image, device, threshold):
     return format_output(result, threshold)
 
 
-def cache_frame(model, image, device):
+def cache_frame(
+    model: nn.Module,
+    image: Image.Image | np.ndarray,
+    device: str | torch.device,
+) -> tuple[torch.Tensor, dict[str, object], tuple[int, int]]:
     tensor, orig_hw = image_data.make_tensor(image, model.image_size, device)
     features = model.forward_image(
         tensor,
@@ -60,7 +78,9 @@ def cache_frame(model, image, device):
     return tensor, features, orig_hw
 
 
-def mask_tensor(mask, device):
+def mask_tensor(
+    mask: np.ndarray | torch.Tensor, device: str | torch.device
+) -> torch.Tensor:
     mask = torch.as_tensor(np.asarray(mask), dtype=torch.float32, device=device)
     if mask.ndim == 2:
         mask = mask[None]
@@ -69,7 +89,10 @@ def mask_tensor(mask, device):
     return mask
 
 
-def format_output(result, threshold):
+def format_output(
+    result: tuple[int, list[int], torch.Tensor, torch.Tensor, torch.Tensor],
+    threshold: float,
+) -> dict[str, object]:
     frame_idx, obj_ids, low_res, video_res, scores = result
     masks = (video_res[:, 0] > threshold).detach().cpu().numpy()
     return {

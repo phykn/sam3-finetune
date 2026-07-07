@@ -3,7 +3,6 @@ from torch import nn
 
 from ..components.sam.prompt_encoder import PositionEmbeddingRandom
 from ..components.video.create import create_transformer, make_two_way_transformer
-from ..components.video.model import create_video_memory_model
 from ..components.video.multiplex import MultiplexMaskDecoder
 
 
@@ -49,14 +48,6 @@ class VideoTrack(nn.Module):
             self.output_valid_embed.copy_(ckpt.state["video.output_valid_embed"])
             self.output_invalid_embed.copy_(ckpt.state["video.output_invalid_embed"])
         return self
-
-    def make_tracker(self, video_feat, video_mem):
-        return create_video_memory_model(
-            backbone=video_feat,
-            maskmem_backbone=video_mem.encoder,
-            transformer=self.transformer,
-            video_track=self,
-        )
 
     def forward(self, frame, memory, multimask=True) -> dict[str, object]:
         encoded = self.encode(frame, memory)

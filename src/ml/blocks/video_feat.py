@@ -1,8 +1,8 @@
 from ..components.backbone.create import create_vision_backbone
-from ..components.video.frame import VideoFeat as BaseVideoFeat
+from ..components.video.frame import VideoFrame
 
 
-class VideoFeat(BaseVideoFeat):
+class VideoFeat(VideoFrame):
     def __init__(self) -> None:
         super().__init__(vision_backbone=create_vision_backbone(), scalp=0)
 

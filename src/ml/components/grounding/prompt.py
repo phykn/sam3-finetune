@@ -247,9 +247,9 @@ class Prompt:
             if device is None:
                 device = tensor.device
             else:
-                assert (
-                    device == tensor.device
-                ), f"Device mismatch for {name} embeddings."
+                assert device == tensor.device, (
+                    f"Device mismatch for {name} embeddings."
+                )
 
         return lengths["box"], lengths["point"], lengths["mask"], batch_size, device
 

@@ -331,9 +331,9 @@ def append_object_pointer_prompts(
         obj_pos = encode_temporal_positions(model, pos_list, device=device, dummy=True)
 
     obj_pos = obj_pos.unsqueeze(1).expand(-1, batch_size, -1)
-    assert (
-        model.mem_dim == channels
-    ), f"obj_ptrs.shape = {obj_ptrs.shape}, C = {channels}"
+    assert model.mem_dim == channels, (
+        f"obj_ptrs.shape = {obj_ptrs.shape}, C = {channels}"
+    )
     obj_pos = obj_pos.repeat_interleave(multiplex_state.multiplex_count, dim=0)
 
     prompts.append(obj_ptrs)

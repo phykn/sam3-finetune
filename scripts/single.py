@@ -7,7 +7,6 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.ml.model import Sam3ImageModel  # noqa: E402
 from src.predict.single import SinglePredictor  # noqa: E402
 
 WEIGHT = ROOT / "weight" / "sam3.1_multiplex.pt"
@@ -24,8 +23,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     image = Image.open(IMAGE).convert("RGB")
 
-    model = Sam3ImageModel(path=WEIGHT)
-    predictor = SinglePredictor(model, {"device": device})
+    predictor = SinglePredictor.from_path(WEIGHT, {"device": device})
     out = predictor.predict(
         image,
         point_coords=POINT,

@@ -23,7 +23,7 @@ def make_full(
     scores: torch.Tensor,
     orig_hw: tuple[int, int],
     threshold: float,
-):
+) -> dict[str, object]:
     logits = masks.clamp(-32.0, 32.0).float()
     return {
         "masks": resize_masks(masks, orig_hw, threshold)
@@ -40,7 +40,7 @@ def make_low(
     masks: torch.Tensor,
     scores: torch.Tensor,
     threshold: float,
-):
+) -> dict[str, object]:
     logits = masks.clamp(-32.0, 32.0).float()
     return {
         "masks": (logits > threshold).squeeze(0).detach().cpu().numpy(),

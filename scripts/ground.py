@@ -8,7 +8,6 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.ml.model import Sam3GroundingModel, Sam3ImageModel  # noqa: E402
 from src.predict.ground import GroundPredictor  # noqa: E402
 from src.predict.single import SinglePredictor  # noqa: E402
 
@@ -51,14 +50,12 @@ def main():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    model = Sam3GroundingModel(path=WEIGHT, visual_path=VISUAL)
-    predictor = GroundPredictor(
-        model,
-        {
-            "device": device,
-            "top_k": 1,
-            "sim_thr": 0.75,
-        },
+    predictor = GroundPredictor.from_path(
+        WEIGHT,
+        VISUAL,
+        device=device,
+        top_k=1,
+        sim_thr=0.75,
     )
     encoded = [
         predictor.encode_ref(ref_image, mask=ref["masks"], name=ref["name"])
@@ -68,7 +65,7 @@ def main():
     for item in out.values():
         item.pop("raw", None)
 
-    del encoded, predictor, model
+    del encoded, predictor
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
@@ -80,8 +77,7 @@ def main():
 
 
 def segment_refs(image, device):
-    model = Sam3ImageModel(path=WEIGHT)
-    predictor = SinglePredictor(model, {"device": device})
+    predictor = SinglePredictor.from_path(WEIGHT, {"device": device})
     refs = []
     for ref in CONCEPTS:
         masks = []
@@ -107,8 +103,7 @@ def segment_refs(image, device):
 
 
 def refine(image, out, device):
-    model = Sam3ImageModel(path=WEIGHT)
-    predictor = SinglePredictor(model, {"device": device})
+    predictor = SinglePredictor.from_path(WEIGHT, {"device": device})
     for item in out.values():
         masks = []
         scores = []

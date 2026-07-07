@@ -90,9 +90,9 @@ class MultiplexMaskDecoder(nn.Module):
         )
 
         if self.decode_mask_with_shared_tokens:
-            assert (
-                multimask_outputs_only
-            ), "multimask_outputs_only must be True if decode_mask_with_shared_tokens"
+            assert multimask_outputs_only, (
+                "multimask_outputs_only must be True if decode_mask_with_shared_tokens"
+            )
 
         self.num_mask_output_per_object = num_multimask_outputs
         if not self.multimask_outputs_only:
@@ -242,9 +242,9 @@ class MultiplexMaskDecoder(nn.Module):
         batch_size = image_embeddings.shape[0]
         tokens = prepare_tokens(self, batch_size, extra_per_object_embeddings)
         src = image_embeddings
-        assert (
-            image_pe.size(0) == 1
-        ), "image_pe should have size 1 in batch dim (from `get_dense_pe()`)"
+        assert image_pe.size(0) == 1, (
+            "image_pe should have size 1 in batch dim (from `get_dense_pe()`)"
+        )
         pos_src = torch.repeat_interleave(image_pe, tokens.shape[0], dim=0)
         batch, channels, height, width = src.shape
 

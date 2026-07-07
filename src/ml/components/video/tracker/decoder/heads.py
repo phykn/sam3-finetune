@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-from ...sam import get_propagation_dense_pe
+from ...sam_heads import get_propagation_dense_pe
 from ..multiplex.state import MultiplexState
 from ..outputs import NO_OBJ_SCORE, SAMOutput
 

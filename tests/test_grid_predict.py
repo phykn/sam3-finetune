@@ -255,6 +255,37 @@ def test_filter_candidates_ranks_smaller_crop_before_box_nms():
         "crop": (0, 0, 4, 4),
     }
 
-    out = filter_candidates([full, small], nms=0.5, max_masks=1)
+    out = filter_candidates([full, small], nms=0.5)
 
     assert out == [small]
+
+
+def test_filter_candidates_has_no_count_limit_after_nms():
+    items = [
+        {
+            "bbox": (index * 10, 0, index * 10 + 4, 4),
+            "score": 1.0,
+            "stability_score": 1.0,
+            "crop": (0, 0, 100, 100),
+            "image_size": (100, 100),
+        }
+        for index in range(50)
+    ]
+
+    out = filter_candidates(items, nms=0.5)
+
+    assert len(out) == 50
+
+
+def test_grid_predictor_filters_by_min_stability_arg():
+    predictor = GridPredictor(FakeSingle(), min_stability=0.8)
+    item = {
+        "area": 100,
+        "stability_score": 0.75,
+        "low_box": (2, 2, 4, 4),
+        "low_shape": (8, 8),
+        "crop": (0, 0, 8, 8),
+        "image_size": (8, 8),
+    }
+
+    assert not predictor._keep(item)

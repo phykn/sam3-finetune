@@ -50,7 +50,7 @@ def main():
 
 def make_ref_mask(image, device):
     model = Sam3ImageModel(path=WEIGHT)
-    predictor = SinglePredictor(model, {"device": device})
+    predictor = SinglePredictor(model, device=device)
     out = predictor.predict(image, point_coords=POINT, point_labels=LABEL)
     index = int(np.argmax(out["scores"]))
     mask = out["masks"][index].copy()

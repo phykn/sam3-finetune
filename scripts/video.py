@@ -8,7 +8,6 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.ml.model import Sam3ImageModel, Sam3VideoModel  # noqa: E402
 from src.predict.single import SinglePredictor  # noqa: E402
 from src.predict.video import VideoPredictor  # noqa: E402
 
@@ -33,8 +32,7 @@ def main():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    model = Sam3VideoModel(path=WEIGHT)
-    predictor = VideoPredictor(model, {"device": device})
+    predictor = VideoPredictor.from_path(WEIGHT, {"device": device})
     state = predictor.start(frames[0], ref_mask, obj_id=1)
     outputs = [predictor.predict(frame, state) for frame in frames[1:]]
 
@@ -54,8 +52,7 @@ def main():
 
 
 def segment_reference(image, device):
-    model = Sam3ImageModel(path=WEIGHT)
-    predictor = SinglePredictor(model, {"device": device})
+    predictor = SinglePredictor.from_path(WEIGHT, {"device": device})
     out = predictor.predict(
         image,
         point_coords=POINT,

@@ -44,9 +44,9 @@ def init_memory_encoder(
         self.maskmem_backbone.out_proj, "weight"
     ):
         mem_dim = self.maskmem_backbone.out_proj.weight.shape[0]
-        assert (
-            mem_dim == self.hidden_dim
-        ), "there should be no compression of memory embeddings"
+        assert mem_dim == self.hidden_dim, (
+            "there should be no compression of memory embeddings"
+        )
 
     self.num_maskmem = num_maskmem
     self.sincos_tpos_enc = sincos_tpos_enc

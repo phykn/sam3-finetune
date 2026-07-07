@@ -5,14 +5,14 @@ from .mask_selection import select_dynamic_multimask
 
 def check_forward_args(decoder, multimask_output):
     if decoder.num_multimask_outputs <= 0:
-        assert (
-            not multimask_output
-        ), f"multimask_output must be False with {decoder.num_multimask_outputs=}"
+        assert not multimask_output, (
+            f"multimask_output must be False with {decoder.num_multimask_outputs=}"
+        )
 
     if decoder.multimask_outputs_only:
-        assert (
-            multimask_output
-        ), f"multimask_output must be True with {decoder.multimask_outputs_only=}"
+        assert multimask_output, (
+            f"multimask_output must be True with {decoder.multimask_outputs_only=}"
+        )
 
 
 def select_mask_outputs(decoder, masks, iou_pred, multimask_output):
@@ -57,16 +57,16 @@ def check_forward_shapes(
             else decoder.num_multimask_outputs
         )
         assert masks.shape[2] == expected_count, f"{masks.shape=}, {expected_count=}"
-        assert (
-            iou_pred.shape[2] == expected_count
-        ), f"{iou_pred.shape=}, {expected_count=}"
+        assert iou_pred.shape[2] == expected_count, (
+            f"{iou_pred.shape=}, {expected_count=}"
+        )
         if decoder.use_multimask_token_for_obj_ptr:
             if decoder.decode_mask_with_shared_tokens:
                 assert sam_tokens_out.shape[2] == 1, f"{sam_tokens_out.shape=}"
             else:
-                assert (
-                    sam_tokens_out.shape[2] == expected_count
-                ), f"{sam_tokens_out.shape=}, {expected_count=}"
+                assert sam_tokens_out.shape[2] == expected_count, (
+                    f"{sam_tokens_out.shape=}, {expected_count=}"
+                )
         return
 
     assert masks.shape[2] == 1, f"{masks.shape=}"
@@ -116,9 +116,9 @@ def prepare_object_mask_tokens(decoder, batch_size, extra_per_object_embeddings)
 
 def split_tokens(decoder, hs):
     if decoder.decode_mask_attribute_with_shared_tokens:
-        assert (
-            hs.shape[1] == decoder.num_mask_tokens
-        ), f"{hs.shape=}, {decoder.num_mask_tokens=}"
+        assert hs.shape[1] == decoder.num_mask_tokens, (
+            f"{hs.shape=}, {decoder.num_mask_tokens=}"
+        )
         mask_tokens_out = hs[:, : decoder.num_mask_tokens]
         obj_score_token_out = mask_tokens_out if decoder.pred_obj_scores else None
         return obj_score_token_out, mask_tokens_out, mask_tokens_out
@@ -132,9 +132,9 @@ def split_tokens(decoder, hs):
     iou_token_out = hs[:, start : start + decoder.multiplex_count, :]
     start += decoder.multiplex_count
     mask_tokens_out = hs[:, start : start + decoder.num_mask_tokens, :]
-    assert (
-        hs.shape[1] == start + decoder.num_mask_tokens
-    ), f"{hs.shape=}, {start=}, {decoder.num_mask_tokens=}"
+    assert hs.shape[1] == start + decoder.num_mask_tokens, (
+        f"{hs.shape=}, {start=}, {decoder.num_mask_tokens=}"
+    )
     return obj_score_token_out, iou_token_out, mask_tokens_out
 
 

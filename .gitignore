@@ -4,5 +4,6 @@
 AGENTS.md
 __pycache__/
 *.py[cod]
+outputs/
 sam3-main/
 weight/

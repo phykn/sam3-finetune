@@ -1,26 +1,58 @@
+from collections.abc import Iterator
+from pathlib import Path
+
 import numpy as np
 import torch
 from PIL import Image
 
 from .grid_ops.boxes import filter_candidates, is_edge_cut
-from .grid_ops.candidates import format_logits, format_masks, make_candidate
+from .grid_ops.candidates import (
+    expand_mask,
+    format_logits,
+    format_masks,
+    make_candidate,
+)
 from .grid_ops.points import filter_points, make_points
 from .grid_ops.tiles import make_crops
+from .single import SinglePredictor
 
-MIN_STABILITY = 0.75
+
+def _batches(points: np.ndarray, batch_size: int) -> Iterator[np.ndarray]:
+    for start in range(0, len(points), batch_size):
+        yield points[start : start + batch_size]
+
+
+def _match(value: int | tuple[int, ...], count: int) -> tuple[int, ...]:
+    if isinstance(value, int):
+        return (value,) * count
+    value = tuple(value)
+    if len(value) == 1:
+        return value * count
+    if len(value) != count:
+        raise ValueError("points_per_side must have length 1 or match tiles")
+    return value
+
+
+def _local_point(item: dict[str, object]) -> np.ndarray:
+    crop = item["crop"]
+    point = item["point"]
+    return np.array(
+        [[[point[0] - crop[0], point[1] - crop[1]]]],
+        dtype=np.float32,
+    )
 
 
 class GridPredictor:
     def __init__(
         self,
-        single,
-        tiles=(1, 2),
-        points_per_side=(10, 10),
-        overlap=0.25,
-        batch_size=64,
-        min_area=64,
-        max_masks=40,
-        nms=0.7,
+        single: SinglePredictor,
+        tiles: tuple[int, ...] = (1, 2),
+        points_per_side: int | tuple[int, ...] = (10, 10),
+        overlap: float = 0.25,
+        batch_size: int = 64,
+        min_area: int = 64,
+        nms: float = 0.7,
+        min_stability: float = 0.75,
     ) -> None:
         self.single = single
         self.tiles = tuple(tiles)
@@ -28,46 +60,96 @@ class GridPredictor:
         self.overlap = float(overlap)
         self.batch_size = int(batch_size)
         self.min_area = int(min_area)
-        self.max_masks = int(max_masks)
         self.nms = float(nms)
-        self.before = []
-        self.after = []
+        self.min_stability = float(min_stability)
+        self.before: list[dict[str, object]] = []
+        self.after: list[dict[str, object]] = []
 
-    @torch.inference_mode()
-    def predict(self, image: Image.Image):
-        image = image.convert("RGB")
-        items = []
-        embeds = {}
-        for tile, side in zip(self.tiles, self.points_per_side):
-            for crop_index, crop in enumerate(
-                make_crops(image.size, tile, self.overlap)
-            ):
-                key = (tile, crop_index)
-                crop_items, embed = self._predict_crop(
-                    image,
-                    crop,
-                    tile,
-                    crop_index,
-                    side,
-                )
-                embeds[key] = embed
-                items.extend(crop_items)
+    @classmethod
+    def from_path(
+        cls,
+        path: str | Path,
+        device: str | torch.device = "cuda",
+        tiles: tuple[int, ...] = (1, 2),
+        points_per_side: int | tuple[int, ...] = (10, 10),
+        overlap: float = 0.25,
+        batch_size: int = 64,
+        min_area: int = 64,
+        nms: float = 0.7,
+        min_stability: float = 0.75,
+    ) -> "GridPredictor":
+        single = SinglePredictor.from_path(path, {"device": device})
+        return cls(
+            single,
+            tiles=tiles,
+            points_per_side=points_per_side,
+            overlap=overlap,
+            batch_size=batch_size,
+            min_area=min_area,
+            nms=nms,
+            min_stability=min_stability,
+        )
 
-        self.before = filter_candidates(items, self.nms, self.max_masks)
-        refined = self._refine(self.before, embeds)
-        self.after = filter_candidates(refined, self.nms, self.max_masks)
-        return self.after
+    def _keep(self, item: dict[str, object]) -> bool:
+        return (
+            item["area"] >= self.min_area
+            and item["stability_score"] >= self.min_stability
+            and not is_edge_cut(item)
+        )
 
-    def _predict_crop(self, image, crop, tile, crop_index, side):
-        crop_image = image.crop(crop)
-        embed = self.single.encode(crop_image)
-        points = filter_points(
-            make_points(crop_image.size, side),
+    @staticmethod
+    def expand_mask(item: dict[str, object], image_size: tuple[int, int]) -> np.ndarray:
+        return expand_mask(item, image_size)
+
+    @staticmethod
+    def _points(
+        crop_size: tuple[int, int],
+        crop: tuple[int, int, int, int],
+        tile: int,
+        crop_index: int,
+        image_size: tuple[int, int],
+        side: int,
+    ) -> np.ndarray:
+        return filter_points(
+            make_points(crop_size, side),
             crop,
             tile,
             crop_index,
-            image.size,
+            image_size,
         )
+
+    def iter_points(
+        self,
+        image_size: tuple[int, int],
+    ) -> Iterator[tuple[int, int, tuple[int, int, int, int], np.ndarray]]:
+        for tile, side in zip(self.tiles, self.points_per_side):
+            crops = make_crops(image_size, tile, self.overlap)
+            for crop_index, crop in enumerate(crops):
+                crop_size = (crop[2] - crop[0], crop[3] - crop[1])
+                yield (
+                    tile,
+                    crop_index,
+                    crop,
+                    self._points(
+                        crop_size,
+                        crop,
+                        tile,
+                        crop_index,
+                        image_size,
+                        side,
+                    ),
+                )
+
+    def _predict_crop(
+        self,
+        image: Image.Image,
+        crop: tuple[int, int, int, int],
+        tile: int,
+        crop_index: int,
+        points: np.ndarray,
+    ) -> tuple[list[dict[str, object]], dict[str, object]]:
+        crop_image = image.crop(crop)
+        embed = self.single.encode(crop_image)
         items = []
 
         for batch in _batches(points, self.batch_size):
@@ -91,27 +173,21 @@ class GridPredictor:
                     crop_index,
                     image.size,
                 )
-                if item is not None:
-                    item["refine_logit"] = logit.astype(np.float16, copy=True)
-                if item is not None and self._keep(item):
-                    items.append(item)
+                if item is None or not self._keep(item):
+                    continue
+                item["refine_logit"] = logit.astype(np.float16, copy=True)
+                items.append(item)
         return items, embed
 
-    def _refine(self, items, embeds):
+    def _refine(
+        self,
+        items: list[dict[str, object]],
+        embeds: dict[tuple[int, int], dict[str, object]],
+    ) -> list[dict[str, object]]:
         refined = []
         for item in items:
             crop = item["crop"]
-            point = np.array(
-                [
-                    [
-                        [
-                            item["point"][0] - crop[0],
-                            item["point"][1] - crop[1],
-                        ]
-                    ]
-                ],
-                dtype=np.float32,
-            )
+            point = _local_point(item)
             out = self.single.refine_low(
                 embeds[(item["tile"], item["crop_index"])],
                 item["refine_logit"],
@@ -135,25 +211,24 @@ class GridPredictor:
                 refined.append(new_item)
         return refined
 
-    def _keep(self, item):
-        return (
-            item["area"] >= self.min_area
-            and item["stability_score"] >= MIN_STABILITY
-            and not is_edge_cut(item)
-        )
+    @torch.inference_mode()
+    def predict(self, image: Image.Image) -> list[dict[str, object]]:
+        image = image.convert("RGB")
+        items = []
+        embeds = {}
+        for tile, crop_index, crop, points in self.iter_points(image.size):
+            key = (tile, crop_index)
+            crop_items, embed = self._predict_crop(
+                image,
+                crop,
+                tile,
+                crop_index,
+                points,
+            )
+            embeds[key] = embed
+            items.extend(crop_items)
 
-
-def _batches(points, batch_size):
-    for start in range(0, len(points), batch_size):
-        yield points[start : start + batch_size]
-
-
-def _match(value, count):
-    if isinstance(value, int):
-        return (value,) * count
-    value = tuple(value)
-    if len(value) == 1:
-        return value * count
-    if len(value) != count:
-        raise ValueError("points_per_side must have length 1 or match tiles")
-    return value
+        self.before = filter_candidates(items, self.nms)
+        refined = self._refine(self.before, embeds)
+        self.after = filter_candidates(refined, self.nms)
+        return self.after

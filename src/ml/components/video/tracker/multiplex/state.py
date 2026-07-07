@@ -65,21 +65,21 @@ class MultiplexState:
 
         self.object_ids = object_ids
         if self.object_ids is not None:
-            assert (
-                len(self.object_ids) == self.total_valid_entries
-            ), "object_ids should map 1:1 to the valid entries"
+            assert len(self.object_ids) == self.total_valid_entries, (
+                "object_ids should map 1:1 to the valid entries"
+            )
 
         all_object_idxs = set()
         for bucket in self.assignments:
             valid_entries_in_bucket = sum(1 for x in bucket if x != PADDING_NUM)
-            assert (
-                valid_entries_in_bucket <= self.allowed_bucket_capacity
-            ), f"{valid_entries_in_bucket=} > {self.allowed_bucket_capacity=}"
+            assert valid_entries_in_bucket <= self.allowed_bucket_capacity, (
+                f"{valid_entries_in_bucket=} > {self.allowed_bucket_capacity=}"
+            )
             for obj_idx in bucket:
                 if obj_idx >= 0:
-                    assert (
-                        obj_idx < self.total_non_padding_entries
-                    ), f"object ID {obj_idx} >= {self.total_non_padding_entries}"
+                    assert obj_idx < self.total_non_padding_entries, (
+                        f"object ID {obj_idx} >= {self.total_non_padding_entries}"
+                    )
                     assert obj_idx not in all_object_idxs, "object IDs must be unique"
                     all_object_idxs.add(obj_idx)
 
@@ -101,9 +101,9 @@ class MultiplexState:
     ) -> list[int]:
         assert num_objects > 0, f"{num_objects=} must be positive"
         if not allow_new_buckets:
-            assert (
-                self.available_slots >= num_objects
-            ), f"not enough available slots {self.available_slots} < {num_objects}"
+            assert self.available_slots >= num_objects, (
+                f"not enough available slots {self.available_slots} < {num_objects}"
+            )
 
         return list(
             range(
@@ -159,9 +159,9 @@ class MultiplexState:
 
         original_num_entries = self.total_valid_entries
         self._initialize_assignments(self.assignments, object_ids=self.object_ids)
-        assert (
-            self.total_valid_entries == original_num_entries + num_new_objects
-        ), f"{self.total_valid_entries=} != {original_num_entries=} + {num_new_objects=}"
+        assert self.total_valid_entries == original_num_entries + num_new_objects, (
+            f"{self.total_valid_entries=} != {original_num_entries=} + {num_new_objects=}"
+        )
 
         logger.info(
             f"Filled {slots_filled} slots and created {buckets_created} new buckets"
@@ -174,9 +174,9 @@ class MultiplexState:
         missing_indices = mark_removed_objects(self.assignments, object_indices)
 
         if strict:
-            assert (
-                len(missing_indices) == 0
-            ), f"Failed to remove objects: {missing_indices}"
+            assert len(missing_indices) == 0, (
+                f"Failed to remove objects: {missing_indices}"
+            )
 
         buckets_to_remove, buckets_to_keep = split_removed_buckets(self.assignments)
         drop_buckets(self.assignments, buckets_to_remove)
@@ -227,9 +227,9 @@ class MultiplexState:
 
     def mux(self, x: torch.Tensor) -> torch.Tensor:
         num_valid_entries = x.shape[0]
-        assert (
-            num_valid_entries == self.total_valid_entries
-        ), f"{num_valid_entries=} != {self.total_valid_entries=}"
+        assert num_valid_entries == self.total_valid_entries, (
+            f"{num_valid_entries=} != {self.total_valid_entries=}"
+        )
         output_shape = (
             self.num_buckets,
             self.multiplex_count,
@@ -245,9 +245,9 @@ class MultiplexState:
     def demux(self, x: torch.Tensor) -> torch.Tensor:
         num_buckets, multiplex_count = x.shape[:2]
         assert num_buckets == self.num_buckets, f"{num_buckets=} != {self.num_buckets=}"
-        assert (
-            multiplex_count == self.multiplex_count
-        ), f"{multiplex_count=} != {self.multiplex_count=}"
+        assert multiplex_count == self.multiplex_count, (
+            f"{multiplex_count=} != {self.multiplex_count=}"
+        )
         output_shape = (self.total_valid_entries,) + x.shape[2:]
 
         x_flat = x.reshape(num_buckets * multiplex_count, -1)
