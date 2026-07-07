@@ -1,6 +1,6 @@
 import torch
 from src.build import build_image_model
-from src.model.model import Sam3GroundingModel, Sam3ImageModel, Sam3VideoModel
+from src.ml.model import Sam3GroundingModel, Sam3ImageModel, Sam3VideoModel
 from torch import nn
 
 
@@ -57,29 +57,86 @@ class FakeVideoVision(nn.Module):
         return {"propagation": {"features": images}}
 
 
-class FakeVideoFeat(nn.Module):
+class FakeVideo(nn.Module):
+    image_size = 16
+
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    def from_ckpt(self, ckpt, strict=False):
+        self.calls.append(("from_ckpt", ckpt, strict))
+        return self
+
+    def init_state(self, *args, **kwargs):
+        self.calls.append(("init_state", args, kwargs))
+        return {"state": "video"}
+
+    def add_new_masks(self, *args, **kwargs):
+        self.calls.append(("add_new_masks", args, kwargs))
+        return {"masks": "added"}
+
+    def propagate_in_video_preflight(self, *args, **kwargs):
+        self.calls.append(("preflight", args, kwargs))
+        return {"preflight": True}
+
+    def propagate_in_video(self, *args, **kwargs):
+        self.calls.append(("propagate", args, kwargs))
+        return iter(("frame_out",))
+
+    def forward_image(self, *args, **kwargs):
+        self.calls.append(("forward_image", args, kwargs))
+        return {"image": "features"}
+
+    def forward(self, *args, **kwargs):
+        self.calls.append(("forward", args, kwargs))
+        return {"forward": "out"}
+
+
+class FakeVideoFeatBlock(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    def forward_image(self, *args, **kwargs):
+        self.calls.append(("forward_image", args, kwargs))
+        return {"sam2_backbone_out": "image_features"}
+
     def forward(self, features):
+        self.calls.append(("forward", features))
         return {"frame": features}
 
 
-class FakeVideoMem(nn.Module):
+class FakeVideoMemBlock(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+        self.encoder = object()
+
     def forward(self, frame, mask, obj_id=None):
+        self.calls.append((frame, mask, obj_id))
         return {"memory": frame, "mask": mask, "obj_id": obj_id}
 
 
-class FakeVideoTrack(nn.Module):
-    def forward(self, frame, memory, multimask=False):
-        return {"track": frame, "memory": memory, "multimask": multimask}
+class FakeVideoTrackBlock(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.calls = []
 
+    def make_tracker(self, video_feat, video_mem):
+        self.calls.append(("make_tracker", video_feat, video_mem))
+        return FakeVideo()
 
-class FakeTrackMgr(nn.Module):
-    def forward(self, track, ground, track_ids=None, memory=None, state=None):
+    def forward(self, frame, memory, multimask=True):
+        self.calls.append((frame, memory, multimask))
+        masks = torch.zeros(1, 16, 3, 2, 2)
+        masks[:, 0, 2] = 2
+        iou = torch.tensor([[[0.1, 0.2, 0.9]] + [[0.0, 0.0, 0.0]] * 15])
+        scores = torch.ones(1, 16, 1)
         return {
-            "managed": track,
-            "ground": ground,
-            "track_ids": track_ids,
-            "memory": memory,
-            "state": state,
+            "propagated_mask_logits": masks,
+            "obj_scores": scores,
+            "raw": {"iou_pred": iou},
         }
 
 
@@ -139,42 +196,49 @@ def test_grounding_model_connects_blocks():
 def test_video_model_connects_blocks():
     model = Sam3VideoModel.__new__(Sam3VideoModel)
     nn.Module.__init__(model)
-    model.vision = FakeVideoVision()
-    model.video_feat = FakeVideoFeat()
-    model.video_mem = FakeVideoMem()
-    model.video_track = FakeVideoTrack()
-    model.track_mgr = FakeTrackMgr()
+    model.runtime = FakeVideo()
 
-    out = model(
-        reference_images="ref",
-        reference_mask="mask",
-        next_images="next",
-        obj_id=7,
-        multimask=True,
-        ground={"pred_logits": "ground"},
+    assert model.image_size == 16
+    assert model.init_state(device="cpu") == {"state": "video"}
+    assert model.add_new_masks("state", masks="mask") == {"masks": "added"}
+    assert model.propagate_in_video_preflight("state") == {"preflight": True}
+    assert list(model.propagate_in_video("state")) == ["frame_out"]
+    assert model.forward_image("image") == {"image": "features"}
+    assert model("batch") == {"forward": "out"}
+    assert model.runtime.calls == [
+        ("init_state", (), {"device": "cpu"}),
+        ("add_new_masks", ("state",), {"masks": "mask"}),
+        ("preflight", ("state",), {}),
+        ("propagate", ("state",), {}),
+        ("forward_image", ("image",), {}),
+        ("forward", ("batch",), {}),
+    ]
+
+
+def test_video_model_assembles_video_blocks(monkeypatch):
+    from src.ml import model as model_module
+
+    monkeypatch.setattr(model_module, "VideoFeat", FakeVideoFeatBlock)
+    monkeypatch.setattr(model_module, "VideoMem", FakeVideoMemBlock)
+    monkeypatch.setattr(model_module, "VideoTrack", FakeVideoTrackBlock)
+    monkeypatch.setattr(
+        model_module, "TrackMgr", TrackMgr := type("TrackMgr", (nn.Module,), {})
     )
 
-    assert model.vision.calls == [
-        {
-            "images": "ref",
-            "need_sam3": False,
-            "need_interactive": False,
-            "need_propagation": True,
-        },
-        {
-            "images": "next",
-            "need_sam3": False,
-            "need_interactive": False,
-            "need_propagation": True,
-        },
+    model = Sam3VideoModel()
+
+    assert isinstance(model.video_feat, FakeVideoFeatBlock)
+    assert isinstance(model.video_mem, FakeVideoMemBlock)
+    assert isinstance(model.video_track, FakeVideoTrackBlock)
+    assert isinstance(model.track_mgr, TrackMgr)
+    assert isinstance(model.runtime, FakeVideo)
+    assert model.video_track.calls == [
+        ("make_tracker", model.video_feat, model.video_mem)
     ]
-    assert out["track"]["track"] == {"frame": {"features": "next"}}
-    assert out["track"]["memory"]["obj_id"] == 7
-    assert out["manager"]["ground"] == {"pred_logits": "ground"}
 
 
 def test_grounding_model_skips_visual_token_when_path_is_none(monkeypatch):
-    from src.model import model as model_module
+    from src.ml import model as model_module
 
     calls = []
 
@@ -209,7 +273,7 @@ def test_grounding_model_skips_visual_token_when_path_is_none(monkeypatch):
 def test_grounding_model_accepts_visual_token_path(monkeypatch):
     from pathlib import Path
 
-    from src.model import model as model_module
+    from src.ml import model as model_module
 
     calls = []
 
@@ -238,7 +302,7 @@ def test_grounding_model_accepts_visual_token_path(monkeypatch):
 
 
 def test_image_model_loads_path_with_from_ckpt(monkeypatch):
-    from src.model import model as model_module
+    from src.ml import model as model_module
 
     calls = []
 
@@ -275,7 +339,7 @@ def test_image_model_loads_path_with_from_ckpt(monkeypatch):
 
 
 def test_grounding_model_loads_path_with_from_ckpt(monkeypatch):
-    from src.model import model as model_module
+    from src.ml import model as model_module
 
     calls = []
 
@@ -320,42 +384,42 @@ def test_grounding_model_loads_path_with_from_ckpt(monkeypatch):
 
 
 def test_video_model_loads_path_with_from_ckpt(monkeypatch):
-    from src.model import model as model_module
+    from src.ml import model as model_module
 
     calls = []
 
-    class Block(nn.Module):
-        def __init__(self, name):
-            super().__init__()
-            self.name = name
+    class FakeRuntime(nn.Module):
+        def load_state_dict(self, state, strict=False):
+            calls.append(("load_state_dict", state, strict))
 
-        def from_ckpt(self, ckpt, strict=False):
-            calls.append((self.name, ckpt, strict))
-            return self
-
-    class Empty(nn.Module):
-        pass
+    class FakeTrack(FakeVideoTrackBlock):
+        def make_tracker(self, video_feat, video_mem):
+            calls.append(("make_tracker", video_feat, video_mem))
+            return FakeRuntime()
 
     class FakeCheckpoint:
+        def block_state(self, prefix):
+            calls.append(("block_state", prefix))
+            return {"w": "state"}
+
         @classmethod
         def load(cls, path):
             calls.append(("load", path))
-            return "ckpt"
+            return cls()
 
     monkeypatch.setattr(model_module, "Checkpoint", FakeCheckpoint)
-    monkeypatch.setattr(model_module, "VisionCore", lambda: Block("vision"))
-    monkeypatch.setattr(model_module, "VideoFeat", Empty)
-    monkeypatch.setattr(model_module, "VideoMem", lambda: Block("video_mem"))
-    monkeypatch.setattr(model_module, "VideoTrack", lambda: Block("video_track"))
-    monkeypatch.setattr(model_module, "TrackMgr", Empty)
+    monkeypatch.setattr(model_module, "VideoFeat", FakeVideoFeatBlock)
+    monkeypatch.setattr(model_module, "VideoMem", FakeVideoMemBlock)
+    monkeypatch.setattr(model_module, "VideoTrack", FakeTrack)
+    monkeypatch.setattr(model_module, "TrackMgr", type("TrackMgr", (nn.Module,), {}))
 
     Sam3VideoModel("model.pt")
 
-    assert calls == [
+    assert calls[0][0] == "make_tracker"
+    assert calls[1:] == [
         ("load", "model.pt"),
-        ("vision", "ckpt", False),
-        ("video_mem", "ckpt", False),
-        ("video_track", "ckpt", False),
+        ("block_state", "video"),
+        ("load_state_dict", {"w": "state"}, False),
     ]
 
 

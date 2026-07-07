@@ -1,4 +1,4 @@
-from .model.model import Sam3GroundingModel, Sam3ImageModel, Sam3VideoModel
+from .ml.model import Sam3GroundingModel, Sam3ImageModel, Sam3VideoModel
 
 
 def build_image_model(config: dict) -> Sam3ImageModel:

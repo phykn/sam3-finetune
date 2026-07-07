@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 from PIL import Image
-from src.predict.result import SingleResult
 from src.predict.single import SinglePredictor
 
 
@@ -77,10 +76,9 @@ def test_single_predictor_predicts_from_box():
         multimask=False,
     )
 
-    assert isinstance(out, SingleResult)
-    assert out.masks.shape == (1, 10, 20)
-    assert out.logits.shape == (1, 288, 288)
-    np.testing.assert_allclose(out.scores, np.array([0.75], dtype=np.float32))
+    assert out["masks"].shape == (1, 10, 20)
+    assert out["logits"].shape == (1, 288, 288)
+    np.testing.assert_allclose(out["scores"], np.array([0.75], dtype=np.float32))
     coords, labels = model.prompts[0][0]
     assert coords.shape == (1, 2, 2)
     assert labels.tolist() == [[2, 3]]
@@ -100,6 +98,55 @@ def test_single_predictor_uses_dummy_point_for_mask_only_prompt():
     coords, labels = model.prompts[0][0]
     assert coords.shape == (1, 1, 2)
     assert labels.tolist() == [[-1]]
+
+
+def test_single_predictor_refines_from_logit():
+    model = FakeModel()
+    predictor = SinglePredictor(model, {"device": "cpu", "image_size": 1008})
+    logit = np.ones((288, 288), dtype=np.float32)
+
+    out = predictor.refine(
+        Image.new("RGB", (20, 10), color=(0, 0, 0)),
+        logit,
+    )
+
+    assert out["masks"].shape == (1, 10, 20)
+    assert model.prompts[0][2].dtype == torch.float32
+    assert model.decodes[0]["multimask"] is False
+
+
+def test_single_predictor_refines_low_from_logit():
+    model = FakeModel()
+    predictor = SinglePredictor(model, {"device": "cpu", "image_size": 1008})
+    embed = predictor.encode(Image.new("RGB", (20, 10), color=(0, 0, 0)))
+
+    out = predictor.refine_low(
+        embed,
+        np.ones((288, 288), dtype=np.float32),
+        point_coords=np.array([[[10.0, 5.0]]], dtype=np.float32),
+        point_labels=np.array([[1]], dtype=np.int32),
+    )
+
+    assert out["masks"].shape == (1, 288, 288)
+    assert model.prompts[0][2].dtype == torch.float32
+    assert model.decodes[0]["multimask"] is False
+
+
+def test_single_predictor_can_keep_low_res_masks():
+    model = FakeModel()
+    predictor = SinglePredictor(model, {"device": "cpu", "image_size": 1008})
+    embed = predictor.encode(Image.new("RGB", (20, 10), color=(0, 0, 0)))
+
+    out = predictor.predict_embed_low(
+        embed,
+        point_coords=np.array([[[10.0, 5.0]]], dtype=np.float32),
+        point_labels=np.array([[1]], dtype=np.int32),
+        multimask=False,
+    )
+
+    assert out["masks"].shape == (1, 288, 288)
+    assert out["logits"].shape == (1, 288, 288)
+    assert model.decodes[0]["multimask"] is False
 
 
 def test_single_predictor_rejects_empty_prompt():

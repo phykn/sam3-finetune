@@ -1,23 +1,10 @@
-# Runtime dependencies for the new src/ rewrite.
-#
-# Install these into the workspace-local .venv from D:\code\sam3.
-# Install PyTorch separately with the CUDA wheel/index that matches the machine.
-# Example: install torch and torchvision separately with the CUDA wheel index
-# that matches the machine.
+# Install PyTorch and torchvision separately with the CUDA wheel/index that
+# matches the machine.
 
 numpy
 pillow
-tqdm
-typing_extensions
-iopath
 timm
 einops
 opencv-python
+tqdm
 pytest
-
-# Needed only for generating the cached "visual" language feature from sam3-main.
-triton-windows; platform_system == "Windows"
-pycocotools
-psutil
-ftfy
-regex
