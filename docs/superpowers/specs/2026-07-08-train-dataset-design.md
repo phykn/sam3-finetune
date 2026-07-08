@@ -75,6 +75,19 @@ loading, and item assembly. Image augmentation can later live under
 `src/data/augment` without mixing image and prompt transforms in the dataset
 class.
 
+The prompt augmentation files are split by prompt type:
+
+```text
+src/data/augment/
+  prompt/
+    point.py
+    box.py
+    mask.py
+```
+
+Each file owns only its prompt type. Shared helpers should stay minimal; add
+them only when duplication becomes distracting.
+
 `target` is always the training target mask. It is exact for object clicks and
 empty for background point clicks.
 
