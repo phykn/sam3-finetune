@@ -21,7 +21,7 @@ def test_base_dataset_returns_box_prompt_item(tmp_path):
     )
     path = write_sample(tmp_path / "sample.json", [obj])
 
-    dataset = BaseDataset([str(path)], config={"prompt": "box", "box_jitter": 0.0})
+    dataset = BaseDataset([str(path)], prompts=["box"], box_jitter=0.0)
     item = dataset[0]
 
     assert len(dataset) == 1
@@ -138,7 +138,7 @@ def test_train_dataset_skips_empty_objects(tmp_path):
     )
     path = write_sample(tmp_path / "sample.json", [full, empty])
 
-    dataset = TrainDataset([str(path)], config={"prompt": "box", "box_jitter": 0.0})
+    dataset = TrainDataset([str(path)], prompts=["box"], box_jitter=0.0)
 
     assert len(dataset) == 1
 
@@ -152,7 +152,7 @@ def test_train_dataset_returns_box_prompt_item(tmp_path):
     )
     path = write_sample(tmp_path / "sample.json", [obj])
 
-    dataset = TrainDataset([str(path)], config={"prompt": "box", "box_jitter": 0.0})
+    dataset = TrainDataset([str(path)], prompts=["box"], box_jitter=0.0)
     item = dataset[0]
 
     assert set(item) == {"image", "prompt", "target", "has_object"}
@@ -175,7 +175,7 @@ def test_train_dataset_inherits_base_behavior(tmp_path):
     )
     path = write_sample(tmp_path / "sample.json", [obj])
 
-    dataset = TrainDataset([str(path)], config={"prompt": "box", "box_jitter": 0.0})
+    dataset = TrainDataset([str(path)], prompts=["box"], box_jitter=0.0)
 
     assert isinstance(dataset, BaseDataset)
     assert dataset[0]["prompt"]["box"].tolist() == [1.0, 1.0, 3.0, 3.0]
@@ -192,7 +192,8 @@ def test_train_dataset_returns_background_point_item(tmp_path):
 
     dataset = TrainDataset(
         [str(path)],
-        config={"prompt": "point", "bg_prob": 1.0},
+        prompts=["point"],
+        bg_prob=1.0,
     )
     item = dataset[0]
 
@@ -204,7 +205,7 @@ def test_train_dataset_returns_background_point_item(tmp_path):
     assert obj.mask(item["image"].shape)[y, x] == 0
 
 
-def test_train_dataset_returns_mask_prompt_item(tmp_path):
+def test_train_dataset_returns_mask_prompt_item(tmp_path, monkeypatch):
     obj = Object(
         object_id=1,
         class_id=2,
@@ -213,7 +214,8 @@ def test_train_dataset_returns_mask_prompt_item(tmp_path):
     )
     path = write_sample(tmp_path / "sample.json", [obj])
 
-    dataset = TrainDataset([str(path)], config={"prompt": "mask", "mask_ops": ("none",)})
+    monkeypatch.setattr(mask.np.random, "choice", lambda ops: "none")
+    dataset = TrainDataset([str(path)], prompts=["mask"])
     item = dataset[0]
 
     assert item["prompt"]["type"] == "mask"

@@ -8,20 +8,23 @@ from .augment.prompt import mask as mask_aug
 from .augment.prompt import point as point_aug
 from .sample import Sample, load
 
-DEFAULT_CONFIG: dict[str, Any] = {
-    "prompt": "point",
-    "bg_prob": 0.2,
-    "box_jitter": 0.1,
-    "mask_ops": ("none", "shift", "erode", "dilate", "blur", "resize"),
-}
+PROMPTS = ("point", "box", "mask")
+MASK_OPS = ("none", "shift", "erode", "dilate", "blur", "resize")
 
 
 class BaseDataset(Dataset):
-    def __init__(self, paths: list[str], config: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        paths: list[str],
+        prompts: list[str] | tuple[str, ...] = PROMPTS,
+        bg_prob: float = 0.2,
+        box_jitter: float = 0.1,
+    ) -> None:
         self.paths = paths
-        self.config = DEFAULT_CONFIG.copy()
-        if config is not None:
-            self.config.update(config)
+        self.prompts = tuple(prompts)
+        self.bg_prob = bg_prob
+        self.box_jitter = box_jitter
+        self._check_prompts()
         self.items = self._collect_object_items()
 
     def __len__(self) -> int:
@@ -32,7 +35,7 @@ class BaseDataset(Dataset):
         sample = self._load_sample(sample_index)
         obj = sample.objects[object_index]
         target = obj.mask(sample.image.shape).astype(np.uint8, copy=False)
-        prompt = self.config["prompt"]
+        prompt = self.prompts[int(np.random.randint(len(self.prompts)))]
 
         if prompt == "point":
             return self._make_point_item(sample, target)
@@ -44,6 +47,13 @@ class BaseDataset(Dataset):
 
     def _load_sample(self, index: int) -> Sample:
         return load(self.paths[index])
+
+    def _check_prompts(self) -> None:
+        if len(self.prompts) == 0:
+            raise ValueError("prompts is empty")
+        for prompt in self.prompts:
+            if prompt not in PROMPTS:
+                raise ValueError(f"unknown prompt type: {prompt}")
 
     def _collect_object_items(self) -> list[tuple[int, int]]:
         items: list[tuple[int, int]] = []
@@ -58,7 +68,7 @@ class BaseDataset(Dataset):
         out = point_aug.sample_point_prompt(
             target,
             self._make_union_mask(sample),
-            bg_prob=float(self.config["bg_prob"]),
+            bg_prob=self.bg_prob,
         )
         prompt = self._empty_prompt("point")
         prompt["points"] = out["points"]
@@ -75,7 +85,7 @@ class BaseDataset(Dataset):
         prompt["box"] = box_aug.jitter_mask_box(
             target,
             sample.image.shape,
-            amount=float(self.config["box_jitter"]),
+            amount=self.box_jitter,
         )
         return {
             "image": sample.image.array,
@@ -88,7 +98,7 @@ class BaseDataset(Dataset):
         prompt = self._empty_prompt("mask")
         prompt["mask"] = mask_aug.degrade_mask_prompt(
             target,
-            ops=tuple(self.config["mask_ops"]),
+            ops=MASK_OPS,
         )
         return {
             "image": sample.image.array,
