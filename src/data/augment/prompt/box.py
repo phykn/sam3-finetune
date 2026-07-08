@@ -1,7 +1,11 @@
 import numpy as np
 
 
-def jitter_mask_box(target, image_shape, amount=0.1):
+def jitter_mask_box(
+    target: np.ndarray,
+    image_shape: tuple[int, ...],
+    amount: float = 0.1,
+) -> np.ndarray:
     base = find_tight_box(target)
     if amount <= 0:
         return base
@@ -27,7 +31,7 @@ def jitter_mask_box(target, image_shape, amount=0.1):
     return out
 
 
-def find_tight_box(target):
+def find_tight_box(target: np.ndarray) -> np.ndarray:
     ys, xs = np.where(target > 0)
     return np.array(
         [

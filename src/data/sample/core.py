@@ -10,7 +10,7 @@ class Image:
     shape: tuple[int, ...] | None = None
     id: str | int | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.array = np.asarray(self.array, dtype=np.uint8)
         if self.shape is None:
             self.shape = tuple(self.array.shape)
@@ -28,11 +28,11 @@ class Object:
     metrics: dict[str, Any] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.box = tuple(self.box)
         self.roi = np.asarray(self.roi, dtype=np.uint8)
 
-    def mask(self, shape):
+    def mask(self, shape: object) -> np.ndarray:
         out = np.zeros(tuple(shape)[:2], dtype=np.uint8)
         x0, y0, x1, y1 = self.box
         out[y0:y1, x0:x1] = self.roi

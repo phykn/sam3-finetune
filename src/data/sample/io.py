@@ -22,7 +22,7 @@ def from_json(data: dict[str, Any]) -> Sample:
     return Sample(image=img, objects=objs)
 
 
-def save(sample: Sample, path: str | Path):
+def save(sample: Sample, path: str | Path) -> None:
     path = Path(path)
     with path.open("w", encoding="utf-8") as file:
         json.dump(to_json(sample), file, indent=2)

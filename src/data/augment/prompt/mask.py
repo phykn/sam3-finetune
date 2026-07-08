@@ -4,7 +4,10 @@ from PIL import Image, ImageFilter
 OPS = ("none", "shift", "erode", "dilate", "blur", "resize")
 
 
-def degrade_mask_prompt(target, ops=None):
+def degrade_mask_prompt(
+    target: np.ndarray,
+    ops: tuple[str, ...] | None = None,
+) -> np.ndarray:
     ops = OPS if ops is None else tuple(ops)
     op = str(np.random.choice(ops))
 
@@ -23,7 +26,7 @@ def degrade_mask_prompt(target, ops=None):
     raise ValueError(f"unknown mask op: {op}")
 
 
-def _shift_mask(target):
+def _shift_mask(target: np.ndarray) -> np.ndarray:
     height, width = target.shape
     box = _find_tight_box(target)
     if box is None:
@@ -48,7 +51,7 @@ def _shift_mask(target):
     return out
 
 
-def _make_coarse_mask(target):
+def _make_coarse_mask(target: np.ndarray) -> np.ndarray:
     height, width = target.shape
     small = (max(1, width // 2), max(1, height // 2))
     image = _to_pil_mask(target)
@@ -57,20 +60,20 @@ def _make_coarse_mask(target):
     return _to_soft_float(image)
 
 
-def _find_tight_box(target):
+def _find_tight_box(target: np.ndarray) -> tuple[int, int, int, int] | None:
     ys, xs = np.where(target > 0)
     if len(xs) == 0:
         return None
     return xs.min(), ys.min(), xs.max() + 1, ys.max() + 1
 
 
-def _to_pil_mask(target):
+def _to_pil_mask(target: np.ndarray) -> Image.Image:
     return Image.fromarray((target > 0).astype(np.uint8) * 255, mode="L")
 
 
-def _to_binary_float(image):
+def _to_binary_float(image: Image.Image) -> np.ndarray:
     return (np.asarray(image) > 127).astype(np.float32)
 
 
-def _to_soft_float(image):
+def _to_soft_float(image: Image.Image) -> np.ndarray:
     return np.asarray(image, dtype=np.float32) / 255.0

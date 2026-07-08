@@ -1,7 +1,11 @@
 import numpy as np
 
 
-def sample_point_prompt(target, union, bg_prob=0.2):
+def sample_point_prompt(
+    target: np.ndarray,
+    union: np.ndarray,
+    bg_prob: float = 0.2,
+) -> dict[str, object]:
     if np.random.random() < bg_prob:
         ys, xs = np.where(union == 0)
         if len(xs) > 0:
@@ -23,5 +27,5 @@ def sample_point_prompt(target, union, bg_prob=0.2):
     }
 
 
-def _make_point_array(x, y):
+def _make_point_array(x: int, y: int) -> np.ndarray:
     return np.array([[float(x), float(y)]], dtype=np.float32)

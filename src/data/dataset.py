@@ -1,12 +1,14 @@
+from typing import Any
+
 import numpy as np
 from torch.utils.data import Dataset
 
 from .augment.prompt import box as box_aug
 from .augment.prompt import mask as mask_aug
 from .augment.prompt import point as point_aug
-from .sample import load
+from .sample import Sample, load
 
-DEFAULT_CONFIG = {
+DEFAULT_CONFIG: dict[str, Any] = {
     "prompt": "point",
     "bg_prob": 0.2,
     "box_jitter": 0.1,
@@ -15,28 +17,28 @@ DEFAULT_CONFIG = {
 
 
 class BaseDataset(Dataset):
-    def __init__(self, paths):
+    def __init__(self, paths: list[str]) -> None:
         self.paths = paths
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.paths)
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int) -> Sample:
         return load(self.paths[index])
 
 
 class TrainDataset(BaseDataset):
-    def __init__(self, paths, config=None):
+    def __init__(self, paths: list[str], config: dict[str, Any] | None = None) -> None:
         super().__init__(paths)
         self.config = DEFAULT_CONFIG.copy()
         if config is not None:
             self.config.update(config)
         self.items = self._collect_object_items()
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.items)
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int) -> dict[str, Any]:
         sample_index, object_index = self.items[index]
         sample = BaseDataset.__getitem__(self, sample_index)
         obj = sample.objects[object_index]
@@ -51,8 +53,8 @@ class TrainDataset(BaseDataset):
             return self._make_mask_item(sample, target)
         raise ValueError(f"unknown prompt type: {prompt}")
 
-    def _collect_object_items(self):
-        items = []
+    def _collect_object_items(self) -> list[tuple[int, int]]:
+        items: list[tuple[int, int]] = []
         for sample_index in range(len(self.paths)):
             sample = BaseDataset.__getitem__(self, sample_index)
             for object_index, obj in enumerate(sample.objects):
@@ -60,11 +62,11 @@ class TrainDataset(BaseDataset):
                     items.append((sample_index, object_index))
         return items
 
-    def _make_point_item(self, sample, target):
+    def _make_point_item(self, sample: Sample, target: np.ndarray) -> dict[str, Any]:
         out = point_aug.sample_point_prompt(
             target,
             self._make_union_mask(sample),
-            bg_prob=self.config["bg_prob"],
+            bg_prob=float(self.config["bg_prob"]),
         )
         prompt = self._empty_prompt("point")
         prompt["points"] = out["points"]
@@ -76,12 +78,12 @@ class TrainDataset(BaseDataset):
             "has_object": out["has_object"],
         }
 
-    def _make_box_item(self, sample, target):
+    def _make_box_item(self, sample: Sample, target: np.ndarray) -> dict[str, Any]:
         prompt = self._empty_prompt("box")
         prompt["box"] = box_aug.jitter_mask_box(
             target,
             sample.image.shape,
-            amount=self.config["box_jitter"],
+            amount=float(self.config["box_jitter"]),
         )
         return {
             "image": sample.image.array,
@@ -90,11 +92,11 @@ class TrainDataset(BaseDataset):
             "has_object": True,
         }
 
-    def _make_mask_item(self, sample, target):
+    def _make_mask_item(self, sample: Sample, target: np.ndarray) -> dict[str, Any]:
         prompt = self._empty_prompt("mask")
         prompt["mask"] = mask_aug.degrade_mask_prompt(
             target,
-            ops=self.config["mask_ops"],
+            ops=tuple(self.config["mask_ops"]),
         )
         return {
             "image": sample.image.array,
@@ -103,13 +105,13 @@ class TrainDataset(BaseDataset):
             "has_object": True,
         }
 
-    def _make_union_mask(self, sample):
+    def _make_union_mask(self, sample: Sample) -> np.ndarray:
         out = np.zeros(sample.image.shape[:2], dtype=bool)
         for obj in sample.objects:
             out |= obj.mask(sample.image.shape).astype(bool)
         return out.astype(np.uint8)
 
-    def _empty_prompt(self, kind):
+    def _empty_prompt(self, kind: str) -> dict[str, Any]:
         return {
             "type": kind,
             "points": None,
