@@ -31,7 +31,7 @@ class TrainDataset(BaseDataset):
         self.config = DEFAULT_CONFIG.copy()
         if config is not None:
             self.config.update(config)
-        self.items = self._items()
+        self.items = self._collect_object_items()
 
     def __len__(self):
         return len(self.items)
@@ -44,14 +44,14 @@ class TrainDataset(BaseDataset):
         prompt = self.config["prompt"]
 
         if prompt == "point":
-            return self._point_item(sample, target)
+            return self._make_point_item(sample, target)
         if prompt == "box":
-            return self._box_item(sample, target)
+            return self._make_box_item(sample, target)
         if prompt == "mask":
-            return self._mask_item(sample, target)
+            return self._make_mask_item(sample, target)
         raise ValueError(f"unknown prompt type: {prompt}")
 
-    def _items(self):
+    def _collect_object_items(self):
         items = []
         for sample_index in range(len(self.paths)):
             sample = BaseDataset.__getitem__(self, sample_index)
@@ -60,13 +60,13 @@ class TrainDataset(BaseDataset):
                     items.append((sample_index, object_index))
         return items
 
-    def _point_item(self, sample, target):
+    def _make_point_item(self, sample, target):
         out = point_aug.sample_point_prompt(
             target,
-            self._union(sample),
+            self._make_union_mask(sample),
             bg_prob=self.config["bg_prob"],
         )
-        prompt = self._prompt("point")
+        prompt = self._empty_prompt("point")
         prompt["points"] = out["points"]
         prompt["point_labels"] = out["point_labels"]
         return {
@@ -76,8 +76,8 @@ class TrainDataset(BaseDataset):
             "has_object": out["has_object"],
         }
 
-    def _box_item(self, sample, target):
-        prompt = self._prompt("box")
+    def _make_box_item(self, sample, target):
+        prompt = self._empty_prompt("box")
         prompt["box"] = box_aug.jitter_mask_box(
             target,
             sample.image.shape,
@@ -90,8 +90,8 @@ class TrainDataset(BaseDataset):
             "has_object": True,
         }
 
-    def _mask_item(self, sample, target):
-        prompt = self._prompt("mask")
+    def _make_mask_item(self, sample, target):
+        prompt = self._empty_prompt("mask")
         prompt["mask"] = mask_aug.degrade_mask_prompt(
             target,
             ops=self.config["mask_ops"],
@@ -103,13 +103,13 @@ class TrainDataset(BaseDataset):
             "has_object": True,
         }
 
-    def _union(self, sample):
+    def _make_union_mask(self, sample):
         out = np.zeros(sample.image.shape[:2], dtype=bool)
         for obj in sample.objects:
             out |= obj.mask(sample.image.shape).astype(bool)
         return out.astype(np.uint8)
 
-    def _prompt(self, kind):
+    def _empty_prompt(self, kind):
         return {
             "type": kind,
             "points": None,
