@@ -1,22 +1,21 @@
 import numpy as np
 
 
-def make(target, image_shape, jitter=0.1, rng=None):
-    rng = np.random.default_rng() if rng is None else rng
+def jitter(target, image_shape, amount=0.1):
     base = tight(target)
-    if jitter <= 0:
+    if amount <= 0:
         return base
 
     height, width = tuple(image_shape)[:2]
     x0, y0, x1, y1 = base
-    dx = (x1 - x0) * float(jitter)
-    dy = (y1 - y0) * float(jitter)
+    dx = (x1 - x0) * float(amount)
+    dy = (y1 - y0) * float(amount)
     out = np.array(
         [
-            x0 + rng.uniform(-dx, dx),
-            y0 + rng.uniform(-dy, dy),
-            x1 + rng.uniform(-dx, dx),
-            y1 + rng.uniform(-dy, dy),
+            x0 + np.random.uniform(-dx, dx),
+            y0 + np.random.uniform(-dy, dy),
+            x1 + np.random.uniform(-dx, dx),
+            y1 + np.random.uniform(-dy, dy),
         ],
         dtype=np.float32,
     )

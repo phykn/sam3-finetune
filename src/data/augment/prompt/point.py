@@ -1,12 +1,11 @@
 import numpy as np
 
 
-def make(target, union, bg_prob=0.2, rng=None):
-    rng = np.random.default_rng() if rng is None else rng
-    if rng.random() < bg_prob:
+def sample(target, union, bg_prob=0.2):
+    if np.random.random() < bg_prob:
         ys, xs = np.where(union == 0)
         if len(xs) > 0:
-            index = int(rng.integers(len(xs)))
+            index = int(np.random.randint(len(xs)))
             return {
                 "points": _point(xs[index], ys[index]),
                 "point_labels": np.array([1], dtype=np.int64),
@@ -15,7 +14,7 @@ def make(target, union, bg_prob=0.2, rng=None):
             }
 
     ys, xs = np.where(target > 0)
-    index = int(rng.integers(len(xs)))
+    index = int(np.random.randint(len(xs)))
     return {
         "points": _point(xs[index], ys[index]),
         "point_labels": np.array([1], dtype=np.int64),
