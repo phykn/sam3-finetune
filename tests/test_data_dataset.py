@@ -12,7 +12,7 @@ def write_sample(path, objects):
     return path
 
 
-def test_base_dataset_loads_sample_json(tmp_path):
+def test_base_dataset_returns_box_prompt_item(tmp_path):
     obj = Object(
         object_id=1,
         class_id=2,
@@ -21,13 +21,15 @@ def test_base_dataset_loads_sample_json(tmp_path):
     )
     path = write_sample(tmp_path / "sample.json", [obj])
 
-    dataset = BaseDataset([str(path)])
-    sample = dataset[0]
+    dataset = BaseDataset([str(path)], config={"prompt": "box", "box_jitter": 0.0})
+    item = dataset[0]
 
     assert len(dataset) == 1
-    assert sample.image.shape == (6, 8, 3)
-    assert sample.image.id == "img-1"
-    assert sample.objects[0].object_id == 1
+    assert item["image"].shape == (6, 8, 3)
+    assert item["prompt"]["type"] == "box"
+    assert item["prompt"]["box"].tolist() == [1.0, 1.0, 3.0, 3.0]
+    assert item["target"].sum() == 4
+    assert item["has_object"] is True
 
 
 def test_point_prompt_samples_object_click_inside_mask():
@@ -162,6 +164,21 @@ def test_train_dataset_returns_box_prompt_item(tmp_path):
     assert item["prompt"]["mask"] is None
     assert item["target"].sum() == 4
     assert item["has_object"] is True
+
+
+def test_train_dataset_inherits_base_behavior(tmp_path):
+    obj = Object(
+        object_id=1,
+        class_id=2,
+        box=(1, 1, 3, 3),
+        roi=np.ones((2, 2), dtype=np.uint8),
+    )
+    path = write_sample(tmp_path / "sample.json", [obj])
+
+    dataset = TrainDataset([str(path)], config={"prompt": "box", "box_jitter": 0.0})
+
+    assert isinstance(dataset, BaseDataset)
+    assert dataset[0]["prompt"]["box"].tolist() == [1.0, 1.0, 3.0, 3.0]
 
 
 def test_train_dataset_returns_background_point_item(tmp_path):

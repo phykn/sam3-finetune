@@ -28,14 +28,15 @@ Out of scope:
 
 ### BaseDataset
 
-`BaseDataset(paths)` stores a list of JSON paths and loads a `Sample` by index.
-It does not scan directories. Train/valid split code owns the path list.
+`BaseDataset(paths, config)` stores a list of JSON paths and exposes object-level
+items. It does not scan directories. Train/valid split code owns the path list.
+Shared dataset behavior lives here so `TrainDataset` and future `ValidDataset`
+do not duplicate indexing, prompt generation, or item assembly.
 
 ### TrainDataset
 
-`TrainDataset(paths, config)` extends `BaseDataset` and exposes object-level
-items. Each item selects one object from one sample and builds the configured
-prompt type.
+`TrainDataset` extends `BaseDataset` but does not add behavior yet. Train-only
+behavior will be added there later when it is explicitly needed.
 
 `config` starts with these fields:
 
@@ -157,8 +158,9 @@ input scaling remain a later train-loop or collate responsibility.
 
 Use narrow checks first:
 
-- `BaseDataset` loads a JSON path and returns a `Sample`.
-- `TrainDataset` length equals the number of non-empty objects.
+- `BaseDataset` returns object-level items.
+- `BaseDataset` length equals the number of non-empty objects.
+- `TrainDataset` inherits `BaseDataset` behavior.
 - Point prompt returns one point with label `1`.
 - Background point items return an empty target and `has_object == False`.
 - Box prompt is clipped and valid.

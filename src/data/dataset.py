@@ -17,19 +17,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 
 class BaseDataset(Dataset):
-    def __init__(self, paths: list[str]) -> None:
-        self.paths = paths
-
-    def __len__(self) -> int:
-        return len(self.paths)
-
-    def __getitem__(self, index: int) -> Sample:
-        return load(self.paths[index])
-
-
-class TrainDataset(BaseDataset):
     def __init__(self, paths: list[str], config: dict[str, Any] | None = None) -> None:
-        super().__init__(paths)
+        self.paths = paths
         self.config = DEFAULT_CONFIG.copy()
         if config is not None:
             self.config.update(config)
@@ -40,7 +29,7 @@ class TrainDataset(BaseDataset):
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         sample_index, object_index = self.items[index]
-        sample = BaseDataset.__getitem__(self, sample_index)
+        sample = self._load_sample(sample_index)
         obj = sample.objects[object_index]
         target = obj.mask(sample.image.shape).astype(np.uint8, copy=False)
         prompt = self.config["prompt"]
@@ -53,10 +42,13 @@ class TrainDataset(BaseDataset):
             return self._make_mask_item(sample, target)
         raise ValueError(f"unknown prompt type: {prompt}")
 
+    def _load_sample(self, index: int) -> Sample:
+        return load(self.paths[index])
+
     def _collect_object_items(self) -> list[tuple[int, int]]:
         items: list[tuple[int, int]] = []
         for sample_index in range(len(self.paths)):
-            sample = BaseDataset.__getitem__(self, sample_index)
+            sample = self._load_sample(sample_index)
             for object_index, obj in enumerate(sample.objects):
                 if obj.mask(sample.image.shape).sum() > 0:
                     items.append((sample_index, object_index))
@@ -119,3 +111,7 @@ class TrainDataset(BaseDataset):
             "box": None,
             "mask": None,
         }
+
+
+class TrainDataset(BaseDataset):
+    pass
