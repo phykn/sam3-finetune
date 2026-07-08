@@ -1,13 +1,13 @@
 import numpy as np
 
-from src.data.dataset import BaseDataset, TrainDataset
+from src.data.dataset import BaseDataset, IMAGE_OPS, TrainDataset
 from src.data.augment.prompt import box, mask, point
 from src.data.sample import Image, Object, Sample, save
 
 
-def write_sample(path, objects):
-    image = Image(array=np.zeros((6, 8, 3), dtype=np.uint8), id="img-1")
-    sample = Sample(image=image, objects=objects)
+def write_sample(path, objects, image=None):
+    array = np.zeros((6, 8, 3), dtype=np.uint8) if image is None else image
+    sample = Sample(image=Image(array=array, id="img-1"), objects=objects)
     save(sample, path)
     return path
 
@@ -224,3 +224,50 @@ def test_train_dataset_returns_mask_prompt_item(tmp_path, monkeypatch):
     assert item["prompt"]["box"] is None
     assert np.array_equal(item["prompt"]["mask"], item["target"].astype(np.float32))
     assert item["has_object"] is True
+
+
+def test_train_dataset_applies_each_image_aug_op(tmp_path):
+    obj = Object(
+        object_id=1,
+        class_id=2,
+        box=(10, 10, 20, 20),
+        roi=np.ones((10, 10), dtype=np.uint8),
+    )
+    image = np.full((40, 40, 3), 120, dtype=np.uint8)
+    path = write_sample(tmp_path / "sample.json", [obj], image=image)
+
+    for op in IMAGE_OPS:
+        dataset = TrainDataset(
+            [str(path)],
+            prompts=["box"],
+            box_jitter=0.0,
+            image_aug=True,
+            image_ops=[op],
+        )
+        item = dataset[0]
+
+        assert item["image"].shape == image.shape
+        assert item["image"].dtype == np.uint8
+        assert item["target"].shape == image.shape[:2]
+        assert item["prompt"]["box"].tolist() == [10.0, 10.0, 20.0, 20.0]
+
+
+def test_train_dataset_image_dropout_adds_black_hole(tmp_path):
+    obj = Object(
+        object_id=1,
+        class_id=2,
+        box=(10, 10, 20, 20),
+        roi=np.ones((10, 10), dtype=np.uint8),
+    )
+    image = np.full((40, 40, 3), 120, dtype=np.uint8)
+    path = write_sample(tmp_path / "sample.json", [obj], image=image)
+    dataset = TrainDataset(
+        [str(path)],
+        prompts=["box"],
+        image_aug=True,
+        image_ops=["dropout"],
+    )
+
+    item = dataset[0]
+
+    assert (item["image"] == 0).any()
