@@ -4,28 +4,28 @@ from PIL import Image, ImageFilter
 OPS = ("none", "shift", "erode", "dilate", "blur", "resize")
 
 
-def degrade(target, ops=None):
+def degrade_mask_prompt(target, ops=None):
     ops = OPS if ops is None else tuple(ops)
     op = str(np.random.choice(ops))
 
     if op == "none":
         return target.astype(np.float32, copy=False)
     if op == "shift":
-        return _shift(target).astype(np.float32, copy=False)
+        return _shift_mask(target).astype(np.float32, copy=False)
     if op == "erode":
-        return _binary(_image(target).filter(ImageFilter.MinFilter(3)))
+        return _to_binary_float(_to_pil_mask(target).filter(ImageFilter.MinFilter(3)))
     if op == "dilate":
-        return _binary(_image(target).filter(ImageFilter.MaxFilter(3)))
+        return _to_binary_float(_to_pil_mask(target).filter(ImageFilter.MaxFilter(3)))
     if op == "blur":
-        return _soft(_image(target).filter(ImageFilter.BoxBlur(2)))
+        return _to_soft_float(_to_pil_mask(target).filter(ImageFilter.BoxBlur(2)))
     if op == "resize":
-        return _resize(target)
+        return _make_coarse_mask(target)
     raise ValueError(f"unknown mask op: {op}")
 
 
-def _shift(target):
+def _shift_mask(target):
     height, width = target.shape
-    box = _box(target)
+    box = _find_tight_box(target)
     if box is None:
         return np.zeros_like(target, dtype=np.uint8)
 
@@ -48,29 +48,29 @@ def _shift(target):
     return out
 
 
-def _resize(target):
+def _make_coarse_mask(target):
     height, width = target.shape
     small = (max(1, width // 2), max(1, height // 2))
-    image = _image(target)
+    image = _to_pil_mask(target)
     image = image.resize(small, Image.Resampling.BILINEAR)
     image = image.resize((width, height), Image.Resampling.BILINEAR)
-    return _soft(image)
+    return _to_soft_float(image)
 
 
-def _box(target):
+def _find_tight_box(target):
     ys, xs = np.where(target > 0)
     if len(xs) == 0:
         return None
     return xs.min(), ys.min(), xs.max() + 1, ys.max() + 1
 
 
-def _image(target):
+def _to_pil_mask(target):
     return Image.fromarray((target > 0).astype(np.uint8) * 255, mode="L")
 
 
-def _binary(image):
+def _to_binary_float(image):
     return (np.asarray(image) > 127).astype(np.float32)
 
 
-def _soft(image):
+def _to_soft_float(image):
     return np.asarray(image, dtype=np.float32) / 255.0
