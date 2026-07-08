@@ -1,64 +1,59 @@
+import albumentations as A
 import numpy as np
-from PIL import Image, ImageFilter
 
-OPS = ("none", "brightness", "contrast", "saturation", "blur", "noise")
+OPS = ("none", "brightness", "contrast", "saturation", "blur", "noise", "dropout")
 
 
 def augment_pixel(image: np.ndarray) -> np.ndarray:
     op = str(np.random.choice(OPS))
+    return _apply_op(image, op)
+
+
+def _apply_op(image: np.ndarray, op: str) -> np.ndarray:
+    transform = _make_transform(op)
+    return transform(image=_uint8(image))["image"]
+
+
+def _make_transform(op: str) -> A.BasicTransform:
     if op == "none":
-        return _uint8(image)
+        return A.NoOp(p=1)
     if op == "brightness":
-        return _brightness(image)
+        return A.RandomBrightnessContrast(
+            brightness_limit=0.2,
+            contrast_limit=0.0,
+            p=1,
+        )
     if op == "contrast":
-        return _contrast(image)
+        return A.RandomBrightnessContrast(
+            brightness_limit=0.0,
+            contrast_limit=0.2,
+            p=1,
+        )
     if op == "saturation":
-        return _saturation(image)
+        return A.HueSaturationValue(
+            hue_shift_limit=0,
+            sat_shift_limit=20,
+            val_shift_limit=0,
+            p=1,
+        )
     if op == "blur":
-        return _blur(image)
+        return A.GaussianBlur(
+            blur_limit=(3, 5),
+            sigma_limit=(0.5, 1.5),
+            p=1,
+        )
     if op == "noise":
-        return _noise(image)
+        return A.GaussNoise(p=1)
+    if op == "dropout":
+        return A.CoarseDropout(
+            num_holes_range=(1, 1),
+            hole_height_range=(0.05, 0.2),
+            hole_width_range=(0.05, 0.2),
+            fill=0,
+            p=1,
+        )
     raise ValueError(f"unknown pixel op: {op}")
-
-
-def _brightness(image: np.ndarray) -> np.ndarray:
-    factor = np.random.uniform(0.8, 1.2)
-    return _clip(_uint8(image).astype(np.float32) * factor)
-
-
-def _contrast(image: np.ndarray) -> np.ndarray:
-    factor = np.random.uniform(0.8, 1.2)
-    array = _uint8(image).astype(np.float32)
-    mean = array.mean(axis=(0, 1), keepdims=True)
-    return _clip((array - mean) * factor + mean)
-
-
-def _saturation(image: np.ndarray) -> np.ndarray:
-    factor = np.random.uniform(0.8, 1.2)
-    array = _uint8(image).astype(np.float32)
-    gray = (
-        array[..., 0:1] * 0.299
-        + array[..., 1:2] * 0.587
-        + array[..., 2:3] * 0.114
-    )
-    return _clip((array - gray) * factor + gray)
-
-
-def _blur(image: np.ndarray) -> np.ndarray:
-    radius = np.random.uniform(0.5, 1.5)
-    pil = Image.fromarray(_uint8(image), mode="RGB")
-    return np.asarray(pil.filter(ImageFilter.GaussianBlur(radius)), dtype=np.uint8)
-
-
-def _noise(image: np.ndarray) -> np.ndarray:
-    std = np.random.uniform(3.0, 8.0)
-    array = _uint8(image).astype(np.float32)
-    return _clip(array + np.random.normal(0.0, std, array.shape))
 
 
 def _uint8(image: np.ndarray) -> np.ndarray:
     return np.asarray(image, dtype=np.uint8)
-
-
-def _clip(image: np.ndarray) -> np.ndarray:
-    return np.clip(image, 0, 255).astype(np.uint8)
