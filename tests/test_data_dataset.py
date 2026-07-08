@@ -1,7 +1,7 @@
 import numpy as np
 
 from src.data.dataset import BaseDataset
-from src.data.augment.prompt import point
+from src.data.augment.prompt import box, point
 from src.data.sample import Image, Object, Sample, save
 
 
@@ -66,3 +66,33 @@ def test_point_prompt_samples_background_as_positive_click():
     assert union[y, x] == 0
     assert out["target"].sum() == 0
     assert out["has_object"] is False
+
+
+def test_box_prompt_uses_tight_mask_box_without_jitter():
+    target = np.zeros((6, 8), dtype=np.uint8)
+    target[2:5, 1:6] = 1
+
+    out = box.make(
+        target,
+        image_shape=(6, 8, 3),
+        jitter=0.0,
+        rng=np.random.default_rng(0),
+    )
+
+    assert out.dtype == np.float32
+    assert out.tolist() == [1.0, 2.0, 6.0, 5.0]
+
+
+def test_box_prompt_jitter_stays_inside_image_and_valid():
+    target = np.zeros((6, 8), dtype=np.uint8)
+    target[1:5, 2:7] = 1
+
+    out = box.make(
+        target,
+        image_shape=(6, 8, 3),
+        jitter=0.5,
+        rng=np.random.default_rng(2),
+    )
+
+    assert 0.0 <= out[0] < out[2] <= 8.0
+    assert 0.0 <= out[1] < out[3] <= 6.0
