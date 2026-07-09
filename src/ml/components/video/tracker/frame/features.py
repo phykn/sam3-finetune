@@ -161,7 +161,7 @@ def get_image_feature(self, inference_state, frame_idx, batch_size):
             need_interactive_out=True,
             need_propagation_out=True,
         )
-        inference_state["cached_features"] = {frame_idx: (image, backbone_out)}
+        inference_state["cached_features"][frame_idx] = (image, backbone_out)
 
     features = self._prepare_backbone_features(backbone_out)
     return image, features

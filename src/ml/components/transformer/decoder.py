@@ -580,9 +580,11 @@ class TransformerDecoder(nn.Module):
 
                 # clamp to mitigate numerical issues
                 if self.clamp_presence_logits:
-                    intermediate_layer_presence_logits.clamp(
-                        min=-self.clamp_presence_logit_max_val,
-                        max=self.clamp_presence_logit_max_val,
+                    intermediate_layer_presence_logits = (
+                        intermediate_layer_presence_logits.clamp(
+                            min=-self.clamp_presence_logit_max_val,
+                            max=self.clamp_presence_logit_max_val,
+                        )
                     )
 
                 intermediate_presence_logits.append(intermediate_layer_presence_logits)

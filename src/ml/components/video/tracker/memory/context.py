@@ -9,22 +9,32 @@ def select_closest_cond_frames(
 
     assert max_cond_frame_num >= 2, "we should allow using 2+ conditioning frames"
     selected_outputs = {}
+
+    def add_frame(index):
+        if index is None:
+            return
+        if index in selected_outputs:
+            return
+        if len(selected_outputs) >= max_cond_frame_num:
+            return
+        selected_outputs[index] = cond_frame_outputs[index]
+
     if keep_first_cond_frame:
         first_idx = min((t for t in cond_frame_outputs if t < frame_idx), default=None)
         if first_idx is None:
             first_idx = max(
                 (t for t in cond_frame_outputs if t > frame_idx), default=None
             )
-        if first_idx is not None:
-            selected_outputs[first_idx] = cond_frame_outputs[first_idx]
+        add_frame(first_idx)
 
     idx_before = max((t for t in cond_frame_outputs if t < frame_idx), default=None)
-    if idx_before is not None:
-        selected_outputs[idx_before] = cond_frame_outputs[idx_before]
-
     idx_after = min((t for t in cond_frame_outputs if t >= frame_idx), default=None)
-    if idx_after is not None:
-        selected_outputs[idx_after] = cond_frame_outputs[idx_after]
+    closest_anchors = sorted(
+        (t for t in (idx_before, idx_after) if t is not None),
+        key=lambda x: (abs(x - frame_idx), x),
+    )
+    for index in closest_anchors:
+        add_frame(index)
 
     remaining_count = max_cond_frame_num - len(selected_outputs)
     remaining_indices = sorted(
