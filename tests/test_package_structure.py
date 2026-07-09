@@ -49,6 +49,8 @@ def test_shared_modules_are_grouped_by_responsibility() -> None:
         "src/ml/components/sam/prompt_encoder.py",
         "src/build.py",
         "config/model.yaml",
+        "config/finetune_model.yaml",
+        "config/finetune.yaml",
         "src/ml/model.py",
         "src/ml/components/video/tracker/model.py",
         "src/io/checkpoint.py",

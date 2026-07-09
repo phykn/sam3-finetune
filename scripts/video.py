@@ -10,6 +10,9 @@ sys.path.insert(0, str(ROOT))
 
 from src.predict.single import SinglePredictor  # noqa: E402
 from src.predict.video import VideoPredictor  # noqa: E402
+from src.data import pack  # noqa: E402
+from src.data.sample import Image as DataImage  # noqa: E402
+from src.data.sample import Object, Sample, load, save  # noqa: E402
 
 WEIGHT = ROOT / "weight" / "sam3.1_multiplex.pt"
 FRAMES = [
@@ -38,11 +41,14 @@ def main():
 
     OUT.mkdir(parents=True, exist_ok=True)
     output = OUT / "heli_video.png"
-    make_sheet(frames, ref_mask, ref_score, outputs).save(output)
+    result = OUT / "heli_video.json"
+    save_result(make_result(frames, ref_mask, ref_score, outputs), result)
+    make_sheet(load_result(result)).save(output)
 
     print(f"device: {device}")
     print(f"frames: {[str(path) for path in FRAMES]}")
     print(f"point: {POINT[0].tolist()}")
+    print(f"json: {result}")
     print(f"reference score: {ref_score:.4f}")
     print(f"reference mask pixels: {int(ref_mask.sum())}")
     for index, out in enumerate(outputs, start=2):
@@ -63,19 +69,51 @@ def segment_reference(image, device):
     return out["masks"][index], float(out["scores"][index])
 
 
-def make_sheet(frames, ref_mask, ref_score, outputs):
-    panels = [
-        draw_point(frames[0]),
-        draw_mask(frames[0], ref_mask, ref_score),
-        draw_mask(frames[1], outputs[0]["masks"][0], outputs[0]["scores"][0]),
-        draw_mask(frames[2], outputs[1]["masks"][0], outputs[1]["scores"][0]),
-    ]
-    sheet = Image.new("RGB", (frames[0].width * 2, frames[0].height * 2), "white")
+def make_result(frames, ref_mask, ref_score, outputs):
+    image = frames[-1]
+    out = outputs[-1]
+    objects = []
+    for index, mask in enumerate(out["masks"], start=1):
+        box, roi = pack.box_roi(mask)
+        objects.append(
+            Object(
+                object_id=index,
+                class_id=None,
+                box=box,
+                roi=roi,
+                metrics={"score": float(out["scores"][index - 1])},
+            )
+        )
+    return Sample(
+        image=DataImage(array=np.asarray(image, dtype=np.uint8)),
+        objects=objects,
+    )
+
+
+def save_result(result, path):
+    save(result, path)
+
+
+def load_result(path):
+    return load(path)
+
+
+def make_sheet(result):
+    image = Image.fromarray(result.image.array, mode="RGB")
+    panels = [image.copy(), draw_objects(result)]
+    sheet = Image.new("RGB", (image.width * 2, image.height), "white")
     for index, panel in enumerate(panels):
-        x = frames[0].width * (index % 2)
-        y = frames[0].height * (index // 2)
-        sheet.paste(panel, (x, y))
+        sheet.paste(panel, (image.width * index, 0))
     return sheet
+
+
+def draw_objects(result):
+    image = Image.fromarray(result.image.array, mode="RGB")
+    for obj in result.objects:
+        mask = obj.mask(result.image.shape).astype(bool)
+        overlay(image, mask, MASK_COLOR)
+        draw_box(image, find_box(mask), f"{float(obj.metrics['score']):.3f}")
+    return image
 
 
 def draw_point(image):

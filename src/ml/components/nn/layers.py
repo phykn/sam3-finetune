@@ -36,8 +36,10 @@ class MLPBlock(nn.Module):
         self.lin2 = nn.Linear(mlp_dim, embedding_dim)
         self.act = act()
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.lin2(self.act(self.lin1(x)))
+    def forward(self, x: torch.Tensor, mix: torch.Tensor | None = None) -> torch.Tensor:
+        if mix is None:
+            return self.lin2(self.act(self.lin1(x)))
+        return self.lin2(self.act(self.lin1(x, mix)), mix)
 
 
 class LayerNorm2d(nn.Module):

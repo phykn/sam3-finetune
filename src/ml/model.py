@@ -61,6 +61,9 @@ class Sam3ImageModel(nn.Module):
         image_pe: torch.Tensor,
         multimask: bool = True,
         repeat_image: bool = False,
+        mix: torch.Tensor | None = None,
+        cond=None,
+        prompt_type=None,
     ):
         return self.sam_mask(
             image_embed,
@@ -69,6 +72,7 @@ class Sam3ImageModel(nn.Module):
             image_pe,
             multimask,
             repeat_image,
+            mix=mix,
         )
 
     @property

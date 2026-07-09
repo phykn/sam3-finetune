@@ -41,6 +41,7 @@ class SamMask(nn.Module):
         image_pe: torch.Tensor,
         multimask=True,
         repeat_image=False,
+        mix: torch.Tensor | None = None,
     ):
         sparse, dense = prompt
         return self.mask_decoder(
@@ -51,4 +52,5 @@ class SamMask(nn.Module):
             multimask_output=multimask,
             repeat_image=repeat_image,
             high_res_features=list(high_res),
+            mix=mix,
         )

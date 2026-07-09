@@ -121,8 +121,11 @@ def test_grid_predictor_runs_tiles_and_batches_points():
     assert all("refine_logit" not in item for item in out)
     assert all(item["segmentation"].shape[0] <= 2 for item in out)
     assert all(shape[1:] == (1, 2) for shape, _labels, _multimask in single.batches)
-    assert sum(mask is not None for mask in single.masks) == len(out)
-    assert len(single.refine_logits) == len(out)
+    assert sum(mask is not None for mask in single.masks) == len(single.refine_logits)
+    assert len(single.refine_logits) < len(out)
+    assert any(
+        logit.ndim == 3 and logit.shape[0] > 1 for logit in single.refine_logits
+    )
     assert all(logit.dtype.kind == "f" for logit in single.refine_logits)
 
 

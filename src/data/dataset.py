@@ -35,6 +35,9 @@ class BaseDataset(Dataset):
         self,
         paths: list[str],
         prompts: list[str] | tuple[str, ...] = PROMPTS,
+        conds: list[int] | tuple[int, ...] | None = None,
+        labels: list[dict[str, list[float]]] | tuple[dict[str, list[float]], ...]
+        | None = None,
         bg_prob: float = 0.2,
         box_jitter: float = 0.1,
         image_aug: bool = False,
@@ -45,6 +48,8 @@ class BaseDataset(Dataset):
         mask_size: int = MASK_SIZE,
     ) -> None:
         self.paths = paths
+        self.conds = None if conds is None else tuple(int(cond) for cond in conds)
+        self.labels = None if labels is None else tuple(labels)
         self.prompts = tuple(prompts)
         self.bg_prob = bg_prob
         self.box_jitter = box_jitter
@@ -55,6 +60,8 @@ class BaseDataset(Dataset):
         self.size = size
         self.mask_size = mask_size
         self._check_prompts()
+        self._check_conds()
+        self._check_labels()
         self._check_image_ops()
         self._check_scale()
         self._check_size()
@@ -75,12 +82,15 @@ class BaseDataset(Dataset):
         prompt = self.prompts[int(np.random.randint(len(self.prompts)))]
 
         if prompt == "point":
-            return self._make_point_item(image, target, union)
-        if prompt == "box":
-            return self._make_box_item(image, target)
-        if prompt == "mask":
-            return self._make_mask_item(image, target)
-        raise ValueError(f"unknown prompt type: {prompt}")
+            item = self._make_point_item(image, target, union)
+        elif prompt == "box":
+            item = self._make_box_item(image, target)
+        elif prompt == "mask":
+            item = self._make_mask_item(image, target)
+        else:
+            raise ValueError(f"unknown prompt type: {prompt}")
+        self._add_sample_data(item, sample_index)
+        return item
 
     def _load_sample(self, index: int) -> Sample:
         return load(self.paths[index])
@@ -91,6 +101,23 @@ class BaseDataset(Dataset):
         for prompt in self.prompts:
             if prompt not in PROMPTS:
                 raise ValueError(f"unknown prompt type: {prompt}")
+
+    def _check_conds(self) -> None:
+        if self.conds is not None and len(self.conds) != len(self.paths):
+            raise ValueError("conds must match paths length")
+
+    def _check_labels(self) -> None:
+        if self.labels is None:
+            return
+        if len(self.labels) != len(self.paths):
+            raise ValueError("labels must match paths length")
+        for label in self.labels:
+            target = label["target"]
+            weight = label["weight"]
+            if len(target) != len(weight):
+                raise ValueError("label target and weight must have same length")
+            if len(target) == 0:
+                raise ValueError("label target is empty")
 
     def _check_image_ops(self) -> None:
         if len(self.image_ops) == 0:
@@ -186,8 +213,9 @@ class BaseDataset(Dataset):
         return {
             "image": image,
             "prompt": prompt,
-            "target": self._resize_binary_mask(out["target"]),
-            "has_object": out["has_object"],
+            "target": self._resize_target_mask(out["target"]),
+            "has_mask": out["has_mask"],
+            "is_auto_bg": out["is_auto_bg"],
         }
 
     def _make_box_item(self, image: np.ndarray, target: np.ndarray) -> dict[str, Any]:
@@ -200,8 +228,9 @@ class BaseDataset(Dataset):
         return {
             "image": image,
             "prompt": prompt,
-            "target": self._resize_binary_mask(target),
-            "has_object": True,
+            "target": self._resize_target_mask(target),
+            "has_mask": True,
+            "is_auto_bg": False,
         }
 
     def _make_mask_item(self, image: np.ndarray, target: np.ndarray) -> dict[str, Any]:
@@ -214,17 +243,14 @@ class BaseDataset(Dataset):
         return {
             "image": image,
             "prompt": prompt,
-            "target": self._resize_binary_mask(target),
-            "has_object": True,
+            "target": self._resize_target_mask(target),
+            "has_mask": True,
+            "is_auto_bg": False,
         }
 
-    def _resize_binary_mask(self, mask: np.ndarray) -> np.ndarray:
-        image = PILImage.fromarray((mask > 0).astype(np.uint8) * 255, mode="L")
-        image = image.resize(
-            (self.mask_size, self.mask_size),
-            PILImage.Resampling.BILINEAR,
-        )
-        return (np.asarray(image) > 0).astype(np.uint8)
+    def _resize_target_mask(self, mask: np.ndarray) -> np.ndarray:
+        mask = (np.asarray(mask) > 0).astype(np.float32)
+        return self._resize_float_mask(mask)
 
     def _resize_float_mask(self, mask: np.ndarray) -> np.ndarray:
         mask = np.asarray(mask, dtype=np.float32)
@@ -253,16 +279,38 @@ class BaseDataset(Dataset):
             "mask": None,
         }
 
+    def _add_sample_data(self, item: dict[str, Any], sample_index: int) -> None:
+        if self.conds is not None:
+            item["cond"] = self.conds[sample_index]
+        if self.labels is not None:
+            label = self.labels[sample_index]
+            target = np.asarray(label["target"], dtype=np.float32)
+            weight = np.asarray(label["weight"], dtype=np.float32)
+            if item["is_auto_bg"] or target[0] == 0:
+                target = np.zeros_like(target)
+                weight = np.zeros_like(weight)
+                weight[0] = 1.0
+                item["has_mask"] = False
+            else:
+                item["has_mask"] = True
+            item["label_target"] = target
+            item["label_weight"] = weight
+
 
 class TrainDataset(BaseDataset):
     def __init__(
         self,
         paths: list[str],
+        conds: list[int] | tuple[int, ...] | None = None,
+        labels: list[dict[str, list[float]]] | tuple[dict[str, list[float]], ...]
+        | None = None,
         bg_prob: float = 0.2,
         box_jitter: float = 0.1,
     ) -> None:
         super().__init__(
             paths=paths,
+            conds=conds,
+            labels=labels,
             bg_prob=bg_prob,
             box_jitter=box_jitter,
             image_aug=True,
@@ -274,10 +322,15 @@ class ValidDataset(BaseDataset):
     def __init__(
         self,
         paths: list[str],
+        conds: list[int] | tuple[int, ...] | None = None,
+        labels: list[dict[str, list[float]]] | tuple[dict[str, list[float]], ...]
+        | None = None,
         bg_prob: float = 0.2,
     ) -> None:
         super().__init__(
             paths=paths,
+            conds=conds,
+            labels=labels,
             prompts=("point",),
             bg_prob=bg_prob,
             box_jitter=0.0,

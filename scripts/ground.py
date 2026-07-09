@@ -10,12 +10,16 @@ sys.path.insert(0, str(ROOT))
 
 from src.predict.ground import GroundPredictor  # noqa: E402
 from src.predict.single import SinglePredictor  # noqa: E402
+from src.data import pack  # noqa: E402
+from src.data.sample import Image as DataImage  # noqa: E402
+from src.data.sample import Object, Sample, load, save  # noqa: E402
 
 WEIGHT = ROOT / "weight" / "sam3.1_multiplex.pt"
 VISUAL = ROOT / "weight" / "visual_token.pt"
 REF = ROOT / "asset" / "frog_ref.jpg"
 TARGET = ROOT / "asset" / "frog_tgt.jpg"
 OUT = ROOT / "outputs" / "ground" / "frog_flower_ground.png"
+JSON = OUT.with_suffix(".json")
 
 CONCEPTS = [
     {
@@ -72,72 +76,185 @@ def main():
     refine(target, out, device)
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    make_sheet(ref_image, refs, target, out).save(OUT)
+    save_result(make_result(ref_image, refs, target, out), JSON)
+    result = load_result(JSON)
+    make_sheet(result).save(OUT)
     print_result(device, refs, out)
 
 
+@torch.inference_mode()
 def segment_refs(image, device):
     predictor = SinglePredictor.from_path(WEIGHT, {"device": device})
+    embed = predictor.encode(image)
     refs = []
     for ref in CONCEPTS:
-        masks = []
-        scores = []
-        for point in ref["points"]:
-            out = predictor.predict(
-                image,
-                point_coords=point[None],
-                point_labels=POINT_LABEL,
-                multimask=True,
-            )
-            index = int(np.argmax(out["scores"]))
-            masks.append(out["masks"][index])
-            scores.append(float(out["scores"][index]))
+        points = ref["points"]
+        point_labels = np.broadcast_to(
+            POINT_LABEL,
+            (len(points), len(POINT_LABEL)),
+        ).copy()
+        out = predictor.predict_embed(
+            embed,
+            point_coords=points[:, None],
+            point_labels=point_labels,
+            multimask=True,
+        )
+        masks = np.asarray(out["masks"], dtype=bool)
+        scores = np.asarray(out["scores"], dtype=np.float32)
+        if masks.ndim == 3:
+            masks = masks[None]
+        if scores.ndim == 1:
+            scores = scores[None]
+        indices = np.argmax(scores, axis=1)
+        rows = np.arange(len(points))
         refs.append(
             {
                 **ref,
-                "masks": np.asarray(masks, dtype=bool),
-                "scores": np.asarray(scores, dtype=np.float32),
+                "masks": masks[rows, indices],
+                "scores": scores[rows, indices],
             }
         )
     return refs
 
 
+@torch.inference_mode()
 def refine(image, out, device):
     predictor = SinglePredictor.from_path(WEIGHT, {"device": device})
+    embed = predictor.encode(image)
     for item in out.values():
-        masks = []
-        scores = []
-        for logit in item["logits"]:
-            refined = predictor.refine(image, logit)
-            masks.append(refined["masks"][0])
-            scores.append(float(refined["scores"][0]))
-        item["refined_masks"] = np.asarray(masks, dtype=bool)
-        item["refined_scores"] = np.asarray(scores, dtype=np.float32)
+        refined = predictor.predict_embed(
+            embed,
+            mask=item["logits"],
+            multimask=False,
+        )
+        masks = np.asarray(refined["masks"], dtype=bool)
+        if masks.ndim == 4 and masks.shape[1] == 1:
+            masks = masks[:, 0]
+        item["refined_masks"] = masks
+        item["refined_scores"] = np.asarray(
+            refined["scores"], dtype=np.float32
+        ).reshape(-1)
 
 
-def make_sheet(ref_image, refs, target, out):
-    panels = [
-        draw_points(ref_image),
-        draw_ref_masks(ref_image, refs),
-        draw_target(target, out, refined=False),
-        draw_target(target, out, refined=True),
-    ]
+def make_result(ref_image, refs, target, out):
+    objects = []
+    for name, item in out.items():
+        masks = item["refined_masks"] if "refined_masks" in item else item["masks"]
+        for index, mask in enumerate(masks):
+            box, roi = pack.box_roi(mask)
+            metrics = {"score": float(item["scores"][index])}
+            if "similarities" in item:
+                metrics["similarity"] = float(item["similarities"][index])
+            if "refined_scores" in item:
+                metrics["refined_score"] = float(item["refined_scores"][index])
+            objects.append(
+                Object(
+                    object_id=len(objects) + 1,
+                    class_id=None,
+                    box=box,
+                    roi=roi,
+                    metrics=metrics,
+                    meta={"name": name},
+                )
+            )
+    return Sample(
+        image=DataImage(array=np.asarray(target, dtype=np.uint8)),
+        objects=objects,
+    )
 
-    cell_w = max(panel.width for panel in panels)
-    cell_h = max(panel.height for panel in panels)
-    sheet = Image.new("RGB", (cell_w * 2, cell_h * 2), "white")
+
+def save_result(result, path):
+    save(result, path)
+
+
+def load_result(path):
+    return load(path)
+
+
+def pack_ref(ref):
+    return {
+        "name": ref["name"],
+        "points": np.asarray(ref["points"], dtype=np.float32).tolist(),
+        "color": list(ref["color"]),
+        "masks": [pack.mask(mask) for mask in ref["masks"]],
+        "scores": np.asarray(ref["scores"], dtype=np.float32).tolist(),
+    }
+
+
+def read_ref(ref):
+    return {
+        "name": ref["name"],
+        "points": np.asarray(ref["points"], dtype=np.float32),
+        "color": tuple(ref["color"]),
+        "masks": np.asarray([pack.read_mask(mask) for mask in ref["masks"]]),
+        "scores": np.asarray(ref["scores"], dtype=np.float32),
+    }
+
+
+def pack_target(item):
+    return {
+        "scores": np.asarray(item["scores"], dtype=np.float32).tolist(),
+        "similarities": np.asarray(
+            item.get("similarities", item["scores"]),
+            dtype=np.float32,
+        ).tolist(),
+        "boxes": np.asarray(item["boxes"], dtype=np.float32).tolist(),
+        "masks": [pack.mask(mask) for mask in item["masks"]],
+        "refined_masks": [pack.mask(mask) for mask in item["refined_masks"]],
+        "refined_scores": np.asarray(item["refined_scores"], dtype=np.float32).tolist(),
+    }
+
+
+def read_target(item):
+    return {
+        "scores": np.asarray(item["scores"], dtype=np.float32),
+        "similarities": np.asarray(item["similarities"], dtype=np.float32),
+        "boxes": np.asarray(item["boxes"], dtype=np.float32),
+        "masks": np.asarray([pack.read_mask(mask) for mask in item["masks"]]),
+        "refined_masks": np.asarray(
+            [pack.read_mask(mask) for mask in item["refined_masks"]]
+        ),
+        "refined_scores": np.asarray(item["refined_scores"], dtype=np.float32),
+    }
+
+
+def make_sheet(result):
+    image = Image.fromarray(result.image.array, mode="RGB")
+    panels = [image.copy(), draw_objects(result)]
+
+    cell_w = image.width
+    cell_h = image.height
+    sheet = Image.new("RGB", (cell_w * 2, cell_h), "white")
     for index, panel in enumerate(panels):
-        x = cell_w * (index % 2)
-        y = cell_h * (index // 2)
-        sheet.paste(panel, (x, y))
+        sheet.paste(panel, (cell_w * index, 0))
     return sheet
 
 
-def draw_points(image):
+def draw_objects(result):
+    image = Image.fromarray(result.image.array, mode="RGB")
+    for index, obj in enumerate(result.objects):
+        color = concept_color(obj.meta.get("name"), index)
+        overlay(image, obj.mask(result.image.shape).astype(bool), color)
+    for index, obj in enumerate(result.objects):
+        color = concept_color(obj.meta.get("name"), index)
+        name = obj.meta.get("name", f"object {obj.object_id}")
+        score = obj.metrics.get("refined_score", obj.metrics.get("score", 0.0))
+        draw_box(image, obj.box, f"{name} {float(score):.3f}", color)
+    return image
+
+
+def concept_color(name, index):
+    for ref in CONCEPTS:
+        if ref["name"] == name:
+            return ref["color"]
+    return (40, 120, 255) if index == 0 else (255, 144, 40)
+
+
+def draw_points(image, refs):
     image = image.copy()
     draw = ImageDraw.Draw(image)
     font = load_font(32)
-    for ref in CONCEPTS:
+    for ref in refs:
         for index, point in enumerate(ref["points"]):
             x, y = point
             radius = 34
@@ -173,15 +290,15 @@ def draw_ref_masks(image, refs):
     return image
 
 
-def draw_target(image, out, refined):
+def draw_target(image, refs, out, refined):
     image = image.copy()
-    for ref in CONCEPTS:
+    for ref in refs:
         item = out[ref["name"]]
         key = "refined_masks" if refined else "masks"
         for mask in item[key]:
             overlay(image, mask, ref["color"])
 
-    for ref in CONCEPTS:
+    for ref in refs:
         item = out[ref["name"]]
         if refined:
             boxes = [find_box(mask) for mask in item["refined_masks"]]
@@ -248,6 +365,7 @@ def print_result(device, refs, out):
     print(f"device: {device}")
     print(f"reference: {REF}")
     print(f"target: {TARGET}")
+    print(f"json: {JSON}")
     print(f"output: {OUT}")
 
     for ref in refs:

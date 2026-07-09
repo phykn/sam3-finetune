@@ -7,17 +7,13 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.predict.grid import GridPredictor  # noqa: E402
-from src.data import pack  # noqa: E402
-from src.data.sample import Image as DataImage  # noqa: E402
-from src.data.sample import Object, Sample, load, save  # noqa: E402
-
 WEIGHT = ROOT / "weight" / "sam3.1_multiplex.pt"
 IMAGE = ROOT / "asset" / "frog_tgt.jpg"
-OUT = ROOT / "outputs" / "grid"
+OUT = ROOT / "outputs" / "finetune_grid"
 TILES = (1, 2)
 POINTS = (10, 10)
 BATCH_SIZE = 4
+COND = 0
 COLORS = (
     (40, 120, 255),
     (255, 144, 40),
@@ -25,7 +21,6 @@ COLORS = (
     (220, 70, 220),
     (255, 210, 60),
 )
-POINT_RADIUS = 8
 
 
 def main():
@@ -34,23 +29,18 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     image = Image.open(IMAGE).convert("RGB")
 
-    predictor = GridPredictor.from_path(
-        WEIGHT,
-        device=device,
-        tiles=TILES,
-        points_per_side=POINTS,
-        batch_size=BATCH_SIZE,
-    )
+    predictor = make_predictor(device)
     masks = predictor.predict(image)
 
     OUT.mkdir(parents=True, exist_ok=True)
     output = OUT / "frog_grid.png"
     result = OUT / "frog_grid.json"
-    save_result(make_result(image, predictor, predictor.before, masks), result)
+    save_result(make_result(image, predictor, masks), result)
     make_sheet(load_result(result)).save(output)
 
     print(f"device: {device}")
     print(f"image: {IMAGE}")
+    print(f"cond: {COND}")
     print(f"json: {result}")
     print(f"output: {output}")
     print(f"masks: {len(masks)}")
@@ -58,22 +48,57 @@ def main():
     print(f"before_refine: {len(predictor.before)}")
 
 
-def make_result(image, predictor, before, after):
+def make_predictor(device):
+    from src.build import build_finetune_model
+    from src.predict.grid import GridPredictor
+    from src.predict.single import SinglePredictor
+
+    model = build_finetune_model(
+        {
+            "path": WEIGHT,
+            "device": device,
+            "num_conditions": 1,
+            "num_experts": 4,
+            "num_labels": 1,
+            "lora_rank": 8,
+            "feature_rank": 16,
+        }
+    )
+    single = SinglePredictor(model, device=device, cond=COND)
+    return GridPredictor(
+        single,
+        tiles=TILES,
+        points_per_side=POINTS,
+        batch_size=BATCH_SIZE,
+    )
+
+
+def make_result(image, predictor, items):
+    from src.data.sample import Image as DataImage
+    from src.data.sample import Sample
+
     return Sample(
         image=DataImage(array=np.asarray(image, dtype=np.uint8)),
-        objects=pack_items(image.size, predictor, after),
+        objects=pack_items(image.size, predictor, items),
     )
 
 
 def save_result(result, path):
+    from src.data.sample import save
+
     save(result, path)
 
 
 def load_result(path):
+    from src.data.sample import load
+
     return load(path)
 
 
 def pack_items(image_size, predictor, items):
+    from src.data import pack
+    from src.data.sample import Object
+
     out = []
     for index, item in enumerate(items, start=1):
         mask = predictor.expand_mask(item, image_size)

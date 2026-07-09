@@ -14,7 +14,8 @@ def sample_point_prompt(
                 "points": _make_point_array(xs[index], ys[index]),
                 "point_labels": np.array([1], dtype=np.int64),
                 "target": np.zeros_like(target, dtype=np.uint8),
-                "has_object": False,
+                "has_mask": False,
+                "is_auto_bg": True,
             }
 
     ys, xs = np.where(target > 0)
@@ -23,7 +24,8 @@ def sample_point_prompt(
         "points": _make_point_array(xs[index], ys[index]),
         "point_labels": np.array([1], dtype=np.int64),
         "target": target.astype(np.uint8, copy=False),
-        "has_object": True,
+        "has_mask": True,
+        "is_auto_bg": False,
     }
 
 

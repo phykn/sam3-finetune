@@ -16,9 +16,11 @@ class SinglePredictor:
         self,
         model: nn.Module,
         device: str | torch.device = "cuda",
+        cond: int = 0,
     ) -> None:
         self.device = torch.device(device)
         self.image_size = 1008
+        self.cond = cond
         self.model = model.to(self.device).eval()
         self._image_pe = None
 
@@ -29,7 +31,11 @@ class SinglePredictor:
         config: dict | None = None,
     ) -> "SinglePredictor":
         config = {} if config is None else config
-        return cls(Sam3ImageModel(path=path), device=config.get("device", "cuda"))
+        return cls(
+            Sam3ImageModel(path=path),
+            device=config.get("device", "cuda"),
+            cond=config.get("cond", 0),
+        )
 
     def autocast(self) -> AbstractContextManager:
         if self.device.type == "cuda":
@@ -91,6 +97,20 @@ class SinglePredictor:
             point_prompt = self._make_dummy_prompt(mask_prompt.shape[0])
         return point_prompt, mask_prompt
 
+    def _prompt_type(
+        self,
+        point_coords: np.ndarray | torch.Tensor | None,
+        box: np.ndarray | torch.Tensor | None,
+        mask: np.ndarray | torch.Tensor | None,
+    ) -> str:
+        if mask is not None:
+            return "mask"
+        if box is not None:
+            return "box"
+        if point_coords is not None:
+            return "point"
+        return "point"
+
     def _decode(
         self,
         embed: dict[str, object],
@@ -99,8 +119,11 @@ class SinglePredictor:
         box: np.ndarray | torch.Tensor | None,
         mask: np.ndarray | torch.Tensor | None,
         multimask: bool,
+        cond: int | torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         sam_prompt = self._make_prompt(embed, point_coords, point_labels, box, mask)
+        prompt_type = self._prompt_type(point_coords, box, mask)
+        cond = self.cond if cond is None else cond
         with self.autocast():
             encoded_prompt = self.model.encode_prompt(
                 points=sam_prompt[0],
@@ -114,6 +137,8 @@ class SinglePredictor:
                 self.get_image_pe(),
                 multimask,
                 True,
+                cond=cond,
+                prompt_type=prompt_type,
             )
         return masks, scores
 
@@ -136,6 +161,7 @@ class SinglePredictor:
         box: np.ndarray | torch.Tensor | None = None,
         mask: np.ndarray | torch.Tensor | None = None,
         multimask: bool = True,
+        cond: int | torch.Tensor | None = None,
     ) -> dict[str, object]:
         masks, scores = self._decode(
             embed,
@@ -144,6 +170,7 @@ class SinglePredictor:
             box,
             mask,
             multimask,
+            cond,
         )
         return mask_format.make_low(masks, scores, 0.0)
 
@@ -156,6 +183,7 @@ class SinglePredictor:
         box: np.ndarray | torch.Tensor | None = None,
         mask: np.ndarray | torch.Tensor | None = None,
         multimask: bool = True,
+        cond: int | torch.Tensor | None = None,
     ) -> dict[str, object]:
         masks, scores = self._decode(
             embed,
@@ -164,6 +192,7 @@ class SinglePredictor:
             box,
             mask,
             multimask,
+            cond,
         )
         return mask_format.make_full(masks, scores, embed["orig_hw"], 0.0)
 
@@ -174,6 +203,7 @@ class SinglePredictor:
         logit: np.ndarray | torch.Tensor,
         point_coords: np.ndarray | torch.Tensor | None = None,
         point_labels: np.ndarray | torch.Tensor | None = None,
+        cond: int | torch.Tensor | None = None,
     ) -> dict[str, object]:
         return self.predict_embed_low(
             embed,
@@ -181,6 +211,7 @@ class SinglePredictor:
             point_labels=point_labels,
             mask=logit,
             multimask=False,
+            cond=cond,
         )
 
     @torch.inference_mode()
@@ -188,8 +219,9 @@ class SinglePredictor:
         self,
         image: Image.Image | np.ndarray,
         logit: np.ndarray | torch.Tensor,
+        cond: int | torch.Tensor | None = None,
     ) -> dict[str, object]:
-        return self.predict(image, mask=logit, multimask=False)
+        return self.predict(image, mask=logit, multimask=False, cond=cond)
 
     @torch.inference_mode()
     def predict(
@@ -200,6 +232,7 @@ class SinglePredictor:
         box: np.ndarray | torch.Tensor | None = None,
         mask: np.ndarray | torch.Tensor | None = None,
         multimask: bool = True,
+        cond: int | torch.Tensor | None = None,
     ) -> dict[str, object]:
         embed = self.encode(image)
         return self.predict_embed(
@@ -209,4 +242,5 @@ class SinglePredictor:
             box=box,
             mask=mask,
             multimask=multimask,
+            cond=cond,
         )

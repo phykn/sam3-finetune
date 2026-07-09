@@ -48,7 +48,8 @@ def test_base_dataset_returns_box_prompt_item(tmp_path):
     assert item["prompt"]["type"] == "box"
     assert item["prompt"]["box"].tolist() == [1.0, 1.0, 3.0, 3.0]
     assert item["target"].sum() == 4
-    assert item["has_object"] is True
+    assert item["has_mask"] is True
+    assert item["is_auto_bg"] is False
 
 
 def test_point_prompt_samples_object_click_inside_mask():
@@ -66,7 +67,8 @@ def test_point_prompt_samples_object_click_inside_mask():
     assert out["point_labels"].tolist() == [1]
     assert target[y, x] == 1
     assert out["target"].sum() == target.sum()
-    assert out["has_object"] is True
+    assert out["has_mask"] is True
+    assert out["is_auto_bg"] is False
 
 
 def test_point_prompt_samples_background_as_positive_click():
@@ -84,7 +86,8 @@ def test_point_prompt_samples_background_as_positive_click():
     assert out["point_labels"].tolist() == [1]
     assert union[y, x] == 0
     assert out["target"].sum() == 0
-    assert out["has_object"] is False
+    assert out["has_mask"] is False
+    assert out["is_auto_bg"] is True
 
 
 def test_box_prompt_uses_tight_mask_box_without_jitter():
@@ -207,7 +210,8 @@ def test_valid_dataset_uses_point_prompt_without_aug(tmp_path):
     assert item["image"].shape == (SIZE, SIZE, 3)
     assert item["target"].shape == (MASK_SIZE, MASK_SIZE)
     assert item["prompt"]["type"] == "point"
-    assert item["has_object"] is True
+    assert item["has_mask"] is True
+    assert item["is_auto_bg"] is False
 
 
 def test_base_dataset_returns_train_item_without_aug(tmp_path):
@@ -228,7 +232,7 @@ def test_base_dataset_returns_train_item_without_aug(tmp_path):
     )
     item = dataset[0]
 
-    assert set(item) == {"image", "prompt", "target", "has_object"}
+    assert set(item) == {"image", "prompt", "target", "has_mask", "is_auto_bg"}
     assert item["image"].shape == (8, 8, 3)
     assert item["prompt"]["type"] == "box"
     assert item["prompt"]["points"] is None
@@ -236,7 +240,152 @@ def test_base_dataset_returns_train_item_without_aug(tmp_path):
     assert item["prompt"]["box"].tolist() == [1.0, 1.0, 3.0, 3.0]
     assert item["prompt"]["mask"] is None
     assert item["target"].sum() == 4
-    assert item["has_object"] is True
+    assert item["has_mask"] is True
+    assert item["is_auto_bg"] is False
+
+
+def test_base_dataset_resizes_target_as_soft_float_mask(tmp_path):
+    obj = Object(
+        object_id=1,
+        class_id=2,
+        box=(1, 1, 3, 3),
+        roi=np.ones((2, 2), dtype=np.uint8),
+    )
+    path = write_sample(tmp_path / "sample.json", [obj])
+    dataset = BaseDataset(
+        [str(path)],
+        prompts=["box"],
+        box_jitter=0.0,
+        size=8,
+        mask_size=5,
+    )
+
+    item = dataset[0]
+
+    assert item["target"].dtype == np.float32
+    assert item["target"].shape == (5, 5)
+    assert item["target"].min() >= 0.0
+    assert item["target"].max() <= 1.0
+    assert ((item["target"] > 0.0) & (item["target"] < 1.0)).any()
+
+
+def test_base_dataset_adds_condition_and_label_from_sample_index(tmp_path):
+    obj_a = Object(
+        object_id=1,
+        class_id=2,
+        box=(1, 1, 3, 3),
+        roi=np.ones((2, 2), dtype=np.uint8),
+    )
+    obj_b = Object(
+        object_id=2,
+        class_id=3,
+        box=(2, 2, 4, 4),
+        roi=np.ones((2, 2), dtype=np.uint8),
+    )
+    path_a = write_sample(tmp_path / "a.json", [obj_a])
+    path_b = write_sample(tmp_path / "b.json", [obj_b])
+
+    dataset = BaseDataset(
+        [str(path_a), str(path_b)],
+        conds=[2, 5],
+        labels=[
+            {"target": [1, 0, 0], "weight": [1, 1, 0]},
+            {"target": [0, 1, 1], "weight": [1, 0, 1]},
+        ],
+        prompts=["box"],
+        box_jitter=0.0,
+        size=8,
+        mask_size=8,
+    )
+
+    first = dataset[0]
+    second = dataset[1]
+
+    assert first["cond"] == 2
+    assert first["label_target"].tolist() == [1.0, 0.0, 0.0]
+    assert first["label_weight"].tolist() == [1.0, 1.0, 0.0]
+    assert second["cond"] == 5
+    assert second["label_target"].tolist() == [0.0, 0.0, 0.0]
+    assert second["label_weight"].tolist() == [1.0, 0.0, 0.0]
+
+
+def test_base_dataset_marks_object_sample_for_mask_and_full_label_loss(tmp_path):
+    obj = Object(
+        object_id=1,
+        class_id=2,
+        box=(1, 1, 3, 3),
+        roi=np.ones((2, 2), dtype=np.uint8),
+    )
+    path = write_sample(tmp_path / "sample.json", [obj])
+
+    dataset = BaseDataset(
+        [str(path)],
+        labels=[{"target": [1, 0, 1], "weight": [1, 1, 1]}],
+        prompts=["box"],
+        box_jitter=0.0,
+        size=8,
+        mask_size=8,
+    )
+
+    item = dataset[0]
+
+    assert item["has_mask"] is True
+    assert item["is_auto_bg"] is False
+    assert item["label_target"].tolist() == [1.0, 0.0, 1.0]
+    assert item["label_weight"].tolist() == [1.0, 1.0, 1.0]
+
+
+def test_base_dataset_marks_background_sample_for_label_only(tmp_path):
+    obj = Object(
+        object_id=1,
+        class_id=2,
+        box=(1, 1, 3, 3),
+        roi=np.ones((2, 2), dtype=np.uint8),
+    )
+    path = write_sample(tmp_path / "sample.json", [obj])
+
+    dataset = BaseDataset(
+        [str(path)],
+        labels=[{"target": [0, 1, 1], "weight": [1, 1, 1]}],
+        prompts=["box"],
+        box_jitter=0.0,
+        size=8,
+        mask_size=8,
+    )
+
+    item = dataset[0]
+
+    assert item["has_mask"] is False
+    assert item["is_auto_bg"] is False
+    assert item["label_target"].tolist() == [0.0, 0.0, 0.0]
+    assert item["label_weight"].tolist() == [1.0, 0.0, 0.0]
+
+
+def test_base_dataset_auto_background_point_uses_label_only(tmp_path):
+    obj = Object(
+        object_id=1,
+        class_id=2,
+        box=(1, 1, 3, 3),
+        roi=np.ones((2, 2), dtype=np.uint8),
+    )
+    path = write_sample(tmp_path / "sample.json", [obj])
+
+    dataset = BaseDataset(
+        [str(path)],
+        labels=[{"target": [1, 0, 1], "weight": [1, 1, 1]}],
+        prompts=["point"],
+        bg_prob=1.0,
+        size=8,
+        mask_size=8,
+    )
+
+    item = dataset[0]
+
+    assert item["target"].sum() == 0
+    assert item["has_mask"] is False
+    assert item["is_auto_bg"] is True
+    assert item["label_target"].tolist() == [0.0, 0.0, 0.0]
+    assert item["label_weight"].tolist() == [1.0, 0.0, 0.0]
 
 
 def test_train_dataset_inherits_base_behavior(tmp_path):
@@ -277,7 +426,8 @@ def test_base_dataset_returns_background_point_item(tmp_path):
     assert item["prompt"]["type"] == "point"
     assert item["prompt"]["point_labels"].tolist() == [1]
     assert item["target"].sum() == 0
-    assert item["has_object"] is False
+    assert item["has_mask"] is False
+    assert item["is_auto_bg"] is True
     assert obj.mask(item["image"].shape)[y, x] == 0
 
 
@@ -304,7 +454,8 @@ def test_base_dataset_returns_mask_prompt_item(tmp_path, monkeypatch):
     assert item["prompt"]["point_labels"] is None
     assert item["prompt"]["box"] is None
     assert np.array_equal(item["prompt"]["mask"], item["target"].astype(np.float32))
-    assert item["has_object"] is True
+    assert item["has_mask"] is True
+    assert item["is_auto_bg"] is False
 
 
 def test_base_dataset_applies_each_image_aug_op(tmp_path):
@@ -625,7 +776,8 @@ def test_base_dataset_background_point_uses_augmented_union(tmp_path, monkeypatc
 
     assert item["prompt"]["points"].tolist() == [[0.0, 0.0]]
     assert item["target"].sum() == 0
-    assert item["has_object"] is False
+    assert item["has_mask"] is False
+    assert item["is_auto_bg"] is True
 
 
 def test_random_rotate_keeps_edge_mask_non_empty(monkeypatch):

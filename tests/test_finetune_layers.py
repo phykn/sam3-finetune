@@ -1,0 +1,294 @@
+import torch
+from torch import nn
+
+from src.finetune.layers.image import ImageAdapter
+from src.finetune.layers.linear import LoraLinear
+from src.finetune.layers.router import Router
+from src.finetune.loss import (
+    auto_bg_label_weight,
+    dice_loss,
+    iou_loss,
+    label_loss,
+    noisy_mask_loss,
+    sigmoid_focal_loss,
+)
+from src.finetune.model import FinetuneModel
+from src.ml.components.sam.transformer import Attention
+
+
+class FakeModel(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.keep = nn.Linear(3, 3)
+        self.sam_mask = nn.Module()
+        self.sam_mask.mask_decoder = nn.Module()
+        self.sam_mask.mask_decoder.transformer = nn.Module()
+        self.sam_mask.mask_decoder.transformer.q_proj = nn.Linear(3, 3)
+        self.sam_mask.mask_decoder.transformer.lin1 = nn.Linear(3, 4)
+
+
+class FakeImageApiModel(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.keep = nn.Linear(3, 3)
+        self.sam_mask = nn.Module()
+        self.sam_mask.mask_decoder = nn.Module()
+        self.sam_mask.mask_decoder.transformer = nn.Module()
+        self.sam_mask.mask_decoder.transformer.q_proj = nn.Linear(256, 256)
+        self.decode_calls = []
+
+    @property
+    def mask_input_size(self):
+        return (288, 288)
+
+    def image_pe(self, device=None):
+        pe = torch.zeros(1, 256, 2, 2)
+        return pe if device is None else pe.to(device)
+
+    def encode_image(self, image):
+        batch = image.shape[0]
+        return {
+            "image_embed": torch.ones(batch, 256, 2, 2),
+            "high_res_features": (
+                torch.ones(batch, 32, 8, 8),
+                torch.ones(batch, 64, 4, 4),
+            ),
+        }
+
+    def encode_prompt(self, points=None, boxes=None, masks=None):
+        batch = points[0].shape[0] if points is not None else masks.shape[0]
+        return torch.zeros(batch, 1, 256), torch.zeros(batch, 256, 2, 2)
+
+    def decode_masks(
+        self,
+        image_embed,
+        high_res_features,
+        prompt,
+        image_pe,
+        multimask=True,
+        repeat_image=False,
+        mix=None,
+    ):
+        self.decode_calls.append(
+            {
+                "image_embed": tuple(image_embed.shape),
+                "high_res": [tuple(item.shape) for item in high_res_features],
+                "prompt": tuple(prompt[0].shape),
+                "image_pe": tuple(image_pe.shape),
+                "multimask": multimask,
+                "repeat_image": repeat_image,
+                "mix": tuple(mix.shape),
+            }
+        )
+        batch = prompt[0].shape[0]
+        return (
+            torch.ones(batch, 1, 8, 8),
+            torch.ones(batch, 1),
+            torch.ones(batch, 1, 256),
+            torch.ones(batch, 1),
+        )
+
+
+def test_router_uses_image_condition_and_prompt_type():
+    router = Router(
+        image_dim=4,
+        num_conditions=3,
+        num_experts=2,
+        hidden_dim=8,
+        embed_dim=6,
+    )
+    image = torch.ones(2, 4, 3, 3)
+    cond = torch.tensor([0, 2])
+    prompts = ["point", "mask"]
+
+    out = router(image, cond, prompts)
+
+    assert out.shape == (2, 2)
+    assert torch.allclose(out.sum(dim=1), torch.ones(2))
+    assert router.cond.weight.shape[1] == 6
+    assert router.prompt.weight.shape[1] == 6
+
+
+def test_lora_linear_keeps_base_frozen_and_adds_expert_delta():
+    base = nn.Linear(3, 2)
+    lora = LoraLinear(base, rank=2, num_experts=2, alpha=2.0)
+    x = torch.ones(2, 3)
+    mix = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
+
+    out = lora(x, mix)
+
+    assert out.shape == (2, 2)
+    assert base.weight.requires_grad is False
+    assert base.bias is not None
+    assert base.bias.requires_grad is False
+    assert any(param.requires_grad for param in lora.adapter_parameters())
+    assert not hasattr(lora, "set_mix")
+
+
+def test_attention_passes_mix_directly_to_lora_layers():
+    attention = Attention(embedding_dim=4, num_heads=2)
+    attention.q_proj = LoraLinear(attention.q_proj, rank=2, num_experts=2)
+    attention.k_proj = LoraLinear(attention.k_proj, rank=2, num_experts=2)
+    attention.v_proj = LoraLinear(attention.v_proj, rank=2, num_experts=2)
+    attention.out_proj = LoraLinear(attention.out_proj, rank=2, num_experts=2)
+    x = torch.ones(1, 3, 4)
+    mix = torch.tensor([[0.7, 0.3]])
+
+    out = attention(q=x, k=x, v=x, mix=mix)
+
+    assert out.shape == x.shape
+
+
+def test_image_adapter_keeps_feature_shape():
+    adapter = ImageAdapter(channels=4, rank=2, num_experts=3)
+    x = torch.ones(2, 4, 5, 6)
+    mix = torch.tensor([[1.0, 0.0, 0.0], [0.2, 0.3, 0.5]])
+
+    out = adapter(x, mix)
+
+    assert out.shape == x.shape
+    assert any(param.requires_grad for param in adapter.parameters())
+
+
+def test_finetune_model_freezes_base_and_wraps_decoder_linear():
+    base = FakeModel()
+    model = FinetuneModel(
+        base,
+        num_conditions=2,
+        num_experts=2,
+        num_labels=3,
+        lora_rank=2,
+        feature_rank=2,
+    )
+
+    assert isinstance(
+        base.sam_mask.mask_decoder.transformer.q_proj,
+        LoraLinear,
+    )
+    assert isinstance(
+        base.sam_mask.mask_decoder.transformer.lin1,
+        LoraLinear,
+    )
+    assert base.keep.weight.requires_grad is False
+    assert len(model.linear_layers) == 2
+    assert all(param.requires_grad for param in model.adapter_parameters())
+
+
+def test_finetune_model_uses_image_model_api_with_mix():
+    base = FakeImageApiModel()
+    model = FinetuneModel(
+        base,
+        num_conditions=3,
+        num_experts=2,
+        num_labels=4,
+        lora_rank=2,
+        feature_rank=2,
+    )
+    image = torch.zeros(1, 3, 16, 16)
+    points = (
+        torch.zeros(3, 1, 2),
+        torch.ones(3, 1, dtype=torch.int),
+    )
+
+    encoded = model.encode_image(image)
+    prompt = model.encode_prompt(points=points)
+    out = model.decode_masks(
+        encoded["image_embed"],
+        tuple(encoded["high_res_features"]),
+        prompt,
+        model.image_pe(),
+        multimask=False,
+        repeat_image=True,
+        cond=1,
+        prompt_type="point",
+    )
+
+    assert out[0].shape == (3, 1, 8, 8)
+    assert model.mask_input_size == (288, 288)
+    assert base.decode_calls == [
+        {
+            "image_embed": (1, 256, 2, 2),
+            "high_res": [(1, 32, 8, 8), (1, 64, 4, 4)],
+            "prompt": (3, 1, 256),
+            "image_pe": (1, 256, 2, 2),
+            "multimask": False,
+            "repeat_image": True,
+            "mix": (1, 2),
+        }
+    ]
+
+
+def test_losses_match_expected_shapes_and_weights():
+    logits = torch.tensor([[[[0.0, 2.0], [-2.0, 0.0]]]])
+    target = torch.tensor([[[[0.0, 1.0], [0.0, 1.0]]]])
+    iou_pred = torch.tensor([[0.5]])
+    label_logits = torch.tensor([[0.0, 2.0, -2.0]])
+    label_target = torch.tensor([[0.0, 1.0, 0.0]])
+    label_weight = torch.tensor([[1.0, 0.0, 1.0]])
+
+    focal = sigmoid_focal_loss(logits.flatten(1), target.flatten(1), num_boxes=1)
+    dice = dice_loss(logits.flatten(1), target.flatten(1), num_boxes=1)
+    iou = iou_loss(logits, target, iou_pred, num_boxes=1)
+    labels = label_loss(label_logits, label_target, label_weight)
+
+    assert focal.ndim == 0
+    assert dice.ndim == 0
+    assert iou.ndim == 0
+    assert labels.ndim == 0
+    assert labels > 0
+
+
+def test_noisy_mask_loss_uses_only_valid_samples():
+    logits = torch.tensor(
+        [
+            [[[0.0, 0.0], [0.0, 0.0]]],
+            [[[10.0, 10.0], [10.0, 10.0]]],
+        ]
+    )
+    target = torch.tensor(
+        [
+            [[[0.0, 0.5], [1.0, 0.0]]],
+            [[[0.0, 0.0], [0.0, 0.0]]],
+        ]
+    )
+    valid = torch.tensor([True, False])
+
+    prob = logits[:1].sigmoid()
+    expected = (prob - target[:1]).flatten(1).pow(2).mean()
+    expected = expected + dice_loss(logits[:1], target[:1], num_boxes=1)
+
+    loss = noisy_mask_loss(logits, target, valid)
+
+    assert torch.allclose(loss, expected)
+
+
+def test_noisy_mask_loss_returns_zero_for_all_invalid_samples():
+    logits = torch.randn(2, 1, 3, 3, requires_grad=True)
+    target = torch.rand(2, 1, 3, 3)
+    valid = torch.tensor([False, False])
+
+    loss = noisy_mask_loss(logits, target, valid)
+    loss.backward()
+
+    assert loss.item() == 0.0
+    assert torch.isfinite(loss)
+    assert torch.equal(logits.grad, torch.zeros_like(logits))
+
+
+def test_auto_bg_label_weight_softens_only_first_label():
+    weights = torch.tensor(
+        [
+            [1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 1.0],
+        ]
+    )
+    object_logits = torch.tensor([[-2.0], [2.0], [2.0]])
+    is_auto_bg = torch.tensor([True, True, False])
+
+    out = auto_bg_label_weight(weights, object_logits, is_auto_bg)
+    expected_bg = 1.0 - object_logits[:2].sigmoid().flatten()
+
+    assert torch.allclose(out[:2, 0], expected_bg)
+    assert out[:2, 1:].sum() == 0
+    assert out[2].tolist() == [1.0, 1.0, 1.0]

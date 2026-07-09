@@ -44,6 +44,7 @@ class TwoWayTransformer(nn.Module):
         image_embedding: Tensor,
         image_pe: Tensor,
         point_embedding: Tensor,
+        mix: Tensor | None = None,
     ) -> tuple[Tensor, Tensor]:
         image_embedding = image_embedding.flatten(2).permute(0, 2, 1)
         image_pe = image_pe.flatten(2).permute(0, 2, 1)
@@ -57,11 +58,12 @@ class TwoWayTransformer(nn.Module):
                 keys=keys,
                 query_pe=point_embedding,
                 key_pe=image_pe,
+                mix=mix,
             )
 
         q = queries + point_embedding
         k = keys + image_pe
-        attn_out = self.final_attn_token_to_image(q=q, k=k, v=keys)
+        attn_out = self.final_attn_token_to_image(q=q, k=k, v=keys, mix=mix)
         queries = queries + attn_out
         queries = self.norm_final_attn(queries)
 
@@ -98,29 +100,34 @@ class TwoWayAttentionBlock(nn.Module):
         self.skip_first_layer_pe = skip_first_layer_pe
 
     def forward(
-        self, queries: Tensor, keys: Tensor, query_pe: Tensor, key_pe: Tensor
+        self,
+        queries: Tensor,
+        keys: Tensor,
+        query_pe: Tensor,
+        key_pe: Tensor,
+        mix: Tensor | None = None,
     ) -> tuple[Tensor, Tensor]:
         if self.skip_first_layer_pe:
-            queries = self.self_attn(q=queries, k=queries, v=queries)
+            queries = self.self_attn(q=queries, k=queries, v=queries, mix=mix)
         else:
             q = queries + query_pe
-            attn_out = self.self_attn(q=q, k=q, v=queries)
+            attn_out = self.self_attn(q=q, k=q, v=queries, mix=mix)
             queries = queries + attn_out
         queries = self.norm1(queries)
 
         q = queries + query_pe
         k = keys + key_pe
-        attn_out = self.cross_attn_token_to_image(q=q, k=k, v=keys)
+        attn_out = self.cross_attn_token_to_image(q=q, k=k, v=keys, mix=mix)
         queries = queries + attn_out
         queries = self.norm2(queries)
 
-        mlp_out = self.mlp(queries)
+        mlp_out = self.mlp(queries, mix=mix)
         queries = queries + mlp_out
         queries = self.norm3(queries)
 
         q = queries + query_pe
         k = keys + key_pe
-        attn_out = self.cross_attn_image_to_token(q=k, k=q, v=queries)
+        attn_out = self.cross_attn_image_to_token(q=k, k=q, v=queries, mix=mix)
         keys = keys + attn_out
         keys = self.norm4(keys)
 
@@ -163,7 +170,13 @@ class Attention(nn.Module):
         x = x.transpose(1, 2)
         return x.reshape(b, n_tokens, n_heads * c_per_head)
 
-    def _attend(self, q: Tensor, k: Tensor, v: Tensor) -> Tensor:
+    def _attend(
+        self,
+        q: Tensor,
+        k: Tensor,
+        v: Tensor,
+        mix: Tensor | None = None,
+    ) -> Tensor:
         dropout_p = self.dropout_p if self.training else 0.0
         if self.use_fa3:
             raise RuntimeError(
@@ -175,13 +188,27 @@ class Attention(nn.Module):
         out = F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
 
         out = self._recombine_heads(out)
-        return self.out_proj(out)
+        return self.out_proj(out) if mix is None else self.out_proj(out, mix)
 
-    def forward(self, q: Tensor, k: Tensor, v: Tensor) -> Tensor:
-        q = self._separate_heads(self.q_proj(q))
-        k = self._separate_heads(self.k_proj(k))
-        v = self._separate_heads(self.v_proj(v))
-        return self._attend(q, k, v)
+    def forward(
+        self,
+        q: Tensor,
+        k: Tensor,
+        v: Tensor,
+        mix: Tensor | None = None,
+    ) -> Tensor:
+        if mix is None:
+            q = self.q_proj(q)
+            k = self.k_proj(k)
+            v = self.v_proj(v)
+        else:
+            q = self.q_proj(q, mix)
+            k = self.k_proj(k, mix)
+            v = self.v_proj(v, mix)
+        q = self._separate_heads(q)
+        k = self._separate_heads(k)
+        v = self._separate_heads(v)
+        return self._attend(q, k, v, mix=mix)
 
 
 class RoPEAttention(Attention):
@@ -220,11 +247,21 @@ class RoPEAttention(Attention):
         self.rope_k_repeat = rope_k_repeat
 
     def forward(
-        self, q: Tensor, k: Tensor, v: Tensor, num_k_exclude_rope: int = 0
+        self,
+        q: Tensor,
+        k: Tensor,
+        v: Tensor,
+        num_k_exclude_rope: int = 0,
+        mix: Tensor | None = None,
     ) -> Tensor:
-        q = self.q_proj(q)
-        k = self.k_proj(k)
-        v = self.v_proj(v)
+        if mix is None:
+            q = self.q_proj(q)
+            k = self.k_proj(k)
+            v = self.v_proj(v)
+        else:
+            q = self.q_proj(q, mix)
+            k = self.k_proj(k, mix)
+            v = self.v_proj(v, mix)
 
         q = self._separate_heads(q)
         k = self._separate_heads(k)
@@ -255,4 +292,4 @@ class RoPEAttention(Attention):
                 repeat_freqs_k=self.rope_k_repeat,
             )
 
-        return self._attend(q, k, v)
+        return self._attend(q, k, v, mix=mix)

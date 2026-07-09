@@ -7,16 +7,12 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.predict.single import SinglePredictor  # noqa: E402
-from src.data import pack  # noqa: E402
-from src.data.sample import Image as DataImage  # noqa: E402
-from src.data.sample import Object, Sample, load, save  # noqa: E402
-
 WEIGHT = ROOT / "weight" / "sam3.1_multiplex.pt"
 IMAGE = ROOT / "asset" / "frog_tgt.jpg"
-OUT = ROOT / "outputs" / "single"
+OUT = ROOT / "outputs" / "finetune_single"
 POINT = np.array([[610.0, 575.0]], dtype=np.float32)
 LABEL = np.array([1], dtype=np.int32)
+COND = 0
 BLUE = (40, 120, 255)
 
 
@@ -26,7 +22,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     image = Image.open(IMAGE).convert("RGB")
 
-    predictor = SinglePredictor.from_path(WEIGHT, {"device": device})
+    predictor = make_predictor(device)
     out = predictor.predict(
         image,
         point_coords=POINT,
@@ -45,13 +41,36 @@ def main():
     print(f"device: {device}")
     print(f"image: {IMAGE}")
     print(f"point: {POINT[0].tolist()}")
+    print(f"cond: {COND}")
     print(f"json: {result}")
     print(f"output: {output}")
     print(f"score: {score:.4f}")
     print(f"mask pixels: {int(mask.sum())}")
 
 
+def make_predictor(device):
+    from src.build import build_finetune_model
+    from src.predict.single import SinglePredictor
+
+    model = build_finetune_model(
+        {
+            "path": WEIGHT,
+            "device": device,
+            "num_conditions": 1,
+            "num_experts": 4,
+            "num_labels": 1,
+            "lora_rank": 8,
+            "feature_rank": 16,
+        }
+    )
+    return SinglePredictor(model, device=device, cond=COND)
+
+
 def make_result(image, mask, score):
+    from src.data import pack
+    from src.data.sample import Image as DataImage
+    from src.data.sample import Object, Sample
+
     box, roi = pack.box_roi(mask)
     point = [float(POINT[0][0]), float(POINT[0][1]), int(LABEL[0])]
     return Sample(
@@ -70,10 +89,14 @@ def make_result(image, mask, score):
 
 
 def save_result(result, path):
+    from src.data.sample import save
+
     save(result, path)
 
 
 def load_result(path):
+    from src.data.sample import load
+
     return load(path)
 
 

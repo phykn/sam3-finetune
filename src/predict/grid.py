@@ -33,13 +33,14 @@ def _match(value: int | tuple[int, ...], count: int) -> tuple[int, ...]:
     return value
 
 
-def _local_point(item: dict[str, object]) -> np.ndarray:
-    crop = item["crop"]
-    point = item["point"]
+def _local_points(items: list[dict[str, object]]) -> np.ndarray:
     return np.array(
-        [[[point[0] - crop[0], point[1] - crop[1]]]],
+        [
+            [item["point"][0] - item["crop"][0], item["point"][1] - item["crop"][1]]
+            for item in items
+        ],
         dtype=np.float32,
-    )
+    )[:, None, :]
 
 
 class GridPredictor:
@@ -184,32 +185,49 @@ class GridPredictor:
         items: list[dict[str, object]],
         embeds: dict[tuple[int, int], dict[str, object]],
     ) -> list[dict[str, object]]:
+        groups = {}
+        for index, item in enumerate(items):
+            key = (item["tile"], item["crop_index"])
+            groups.setdefault(key, []).append((index, item))
+
         refined = []
-        for item in items:
-            crop = item["crop"]
-            point = _local_point(item)
-            out = self.single.refine_low(
-                embeds[(item["tile"], item["crop_index"])],
-                item["refine_logit"],
-                point_coords=point,
-                point_labels=np.ones((1, 1), dtype=np.int32),
-            )
-            masks = format_masks(out["masks"])
-            logits = format_logits(out["logits"])
-            scores = np.asarray(out["scores"]).reshape(-1)
-            new_item = make_candidate(
-                masks[0],
-                logits[0],
-                scores[0],
-                point[0, 0],
-                crop,
-                item["tile"],
-                item["crop_index"],
-                item["image_size"],
-            )
-            if new_item is not None and self._keep(new_item):
-                refined.append(new_item)
-        return refined
+        for key, group in groups.items():
+            embed = embeds[key]
+            for start in range(0, len(group), self.batch_size):
+                chunk = group[start : start + self.batch_size]
+                chunk_items = [item for _index, item in chunk]
+                points = _local_points(chunk_items)
+                logits_in = np.stack([item["refine_logit"] for item in chunk_items])
+                out = self.single.refine_low(
+                    embed,
+                    logits_in,
+                    point_coords=points,
+                    point_labels=np.ones((len(chunk), 1), dtype=np.int32),
+                )
+                masks = format_masks(out["masks"])
+                logits = format_logits(out["logits"])
+                scores = np.asarray(out["scores"]).reshape(-1)
+                for (source_index, item), point, mask, logit, score in zip(
+                    chunk,
+                    points[:, 0, :],
+                    masks,
+                    logits,
+                    scores,
+                ):
+                    new_item = make_candidate(
+                        mask,
+                        logit,
+                        score,
+                        point,
+                        item["crop"],
+                        item["tile"],
+                        item["crop_index"],
+                        item["image_size"],
+                    )
+                    if new_item is not None and self._keep(new_item):
+                        refined.append((source_index, new_item))
+        refined.sort(key=lambda x: x[0])
+        return [item for _index, item in refined]
 
     @torch.inference_mode()
     def predict(self, image: Image.Image) -> list[dict[str, object]]:

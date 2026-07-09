@@ -1,5 +1,7 @@
 import torch
-from src.build import build_image_model
+from src.build import build_finetune_loader, build_image_model, build_finetune_model
+from src.finetune.layers.linear import LoraLinear
+from src.finetune.model import FinetuneModel
 from src.ml.model import Sam3GroundingModel, Sam3ImageModel, Sam3VideoModel
 from torch import nn
 
@@ -9,6 +11,146 @@ def test_build_image_model_returns_image_model():
 
     assert isinstance(model, Sam3ImageModel)
     assert model.training is True
+
+
+def test_image_model_decode_accepts_finetune_options():
+    class FakeSamMask(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.calls = []
+
+        def forward(
+            self,
+            image_embed,
+            high_res_features,
+            prompt,
+            image_pe,
+            multimask,
+            repeat_image,
+            mix=None,
+        ):
+            self.calls.append(
+                {
+                    "multimask": multimask,
+                    "repeat_image": repeat_image,
+                    "mix": mix,
+                }
+            )
+            return "decoded"
+
+    model = Sam3ImageModel.__new__(Sam3ImageModel)
+    nn.Module.__init__(model)
+    model.sam_mask = FakeSamMask()
+
+    out = model.decode_masks(
+        torch.zeros(1, 256, 2, 2),
+        (torch.zeros(1, 32, 8, 8), torch.zeros(1, 64, 4, 4)),
+        (torch.zeros(1, 1, 256), torch.zeros(1, 256, 2, 2)),
+        torch.zeros(1, 256, 2, 2),
+        multimask=False,
+        repeat_image=True,
+        cond=1,
+        prompt_type="point",
+    )
+
+    assert out == "decoded"
+    assert model.sam_mask.calls == [
+        {
+            "multimask": False,
+            "repeat_image": True,
+            "mix": None,
+        }
+    ]
+
+
+def test_build_finetune_model_returns_finetune_model(monkeypatch):
+    import src.build as build_module
+
+    class FakeImageModel(nn.Module):
+        def __init__(self, path=None):
+            super().__init__()
+            self.path = path
+            self.keep = nn.Linear(3, 3)
+            self.sam_mask = nn.Module()
+            self.sam_mask.mask_decoder = nn.Module()
+            self.sam_mask.mask_decoder.transformer = nn.Module()
+            self.sam_mask.mask_decoder.transformer.q_proj = nn.Linear(3, 3)
+
+    monkeypatch.setattr(build_module, "Sam3ImageModel", FakeImageModel)
+
+    model = build_finetune_model(
+        {
+            "path": "image.pt",
+            "device": torch.device("cpu"),
+            "num_conditions": 3,
+            "num_experts": 2,
+            "num_labels": 5,
+            "lora_rank": 2,
+            "feature_rank": 2,
+        }
+    )
+
+    assert isinstance(model, FinetuneModel)
+    assert model.model.path == "image.pt"
+    assert model.router.cond.num_embeddings == 3
+    assert model.label_head.out_features == 5
+    assert isinstance(
+        model.model.sam_mask.mask_decoder.transformer.q_proj,
+        LoraLinear,
+    )
+
+
+def test_build_finetune_loader_uses_loader_config(monkeypatch):
+    import src.build as build_module
+
+    calls = []
+
+    def make_loader(
+        paths,
+        batch_size,
+        conds=None,
+        labels=None,
+        num_workers=4,
+    ):
+        calls.append(
+            {
+                "paths": paths,
+                "batch_size": batch_size,
+                "conds": conds,
+                "labels": labels,
+                "num_workers": num_workers,
+            }
+        )
+        return "loader"
+
+    monkeypatch.setattr(build_module, "make_infinite_train_loader", make_loader)
+
+    loader = build_finetune_loader(
+        {
+            "paths": ["data/a.json", "data/b.json"],
+            "batch_size": 2,
+            "conds": [0, 1],
+            "labels": [
+                {"target": [1, 0], "weight": [1, 1]},
+                {"target": [0, 0], "weight": [1, 0]},
+            ],
+            "num_workers": 0,
+        }
+    )
+
+    assert loader == "loader"
+    assert calls == [
+        {
+            "paths": ["data/a.json", "data/b.json"],
+            "batch_size": 2,
+            "conds": [0, 1],
+            "labels": [
+                {"target": [1, 0], "weight": [1, 1]},
+                {"target": [0, 0], "weight": [1, 0]},
+            ],
+            "num_workers": 0,
+        }
+    ]
 
 
 class FakeVision(nn.Module):

@@ -55,6 +55,8 @@ class FakeModel(torch.nn.Module):
         image_pe,
         multimask=True,
         repeat_image=False,
+        cond=None,
+        prompt_type=None,
     ):
         self.decodes.append(
             {
@@ -63,6 +65,8 @@ class FakeModel(torch.nn.Module):
                 "image_pe": tuple(image_pe.shape),
                 "multimask": multimask,
                 "repeat_image": repeat_image,
+                "cond": cond,
+                "prompt_type": prompt_type,
             }
         )
         batch = prompt[0].shape[0]
@@ -155,6 +159,36 @@ def test_single_predictor_can_keep_low_res_masks():
     assert out["masks"].shape == (1, 288, 288)
     assert out["logits"].shape == (1, 288, 288)
     assert model.decodes[0]["multimask"] is False
+
+
+def test_single_predictor_passes_condition_and_prompt_type():
+    model = FakeModel()
+    predictor = SinglePredictor(model, device="cpu", cond=2)
+    embed = predictor.encode(Image.new("RGB", (20, 10), color=(0, 0, 0)))
+
+    predictor.predict_embed_low(
+        embed,
+        point_coords=np.array([[[10.0, 5.0]]], dtype=np.float32),
+        point_labels=np.array([[1]], dtype=np.int32),
+    )
+    predictor.predict_embed_low(
+        embed,
+        box=np.array([2, 1, 18, 9], dtype=np.float32),
+        cond=1,
+    )
+    predictor.refine_low(
+        embed,
+        np.ones((288, 288), dtype=np.float32),
+        point_coords=np.array([[[10.0, 5.0]]], dtype=np.float32),
+        point_labels=np.array([[1]], dtype=np.int32),
+    )
+
+    assert model.decodes[0]["cond"] == 2
+    assert model.decodes[0]["prompt_type"] == "point"
+    assert model.decodes[1]["cond"] == 1
+    assert model.decodes[1]["prompt_type"] == "box"
+    assert model.decodes[2]["cond"] == 2
+    assert model.decodes[2]["prompt_type"] == "mask"
 
 
 def test_single_predictor_rejects_empty_prompt():

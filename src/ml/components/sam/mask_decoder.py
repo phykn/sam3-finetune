@@ -90,6 +90,7 @@ class MaskDecoder(nn.Module):
         multimask_output: bool,
         repeat_image: bool,
         high_res_features: list[torch.Tensor] | None = None,
+        mix: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         masks, iou_pred, mask_tokens_out, object_score_logits = self.predict_masks(
             image_embeddings=image_embeddings,
@@ -98,6 +99,7 @@ class MaskDecoder(nn.Module):
             dense_prompt_embeddings=dense_prompt_embeddings,
             repeat_image=repeat_image,
             high_res_features=high_res_features,
+            mix=mix,
         )
 
         if multimask_output:
@@ -124,6 +126,7 @@ class MaskDecoder(nn.Module):
         dense_prompt_embeddings: torch.Tensor,
         repeat_image: bool,
         high_res_features: list[torch.Tensor] | None = None,
+        mix: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         s = 0
         if self.pred_obj_scores:
@@ -157,7 +160,7 @@ class MaskDecoder(nn.Module):
         pos_src = torch.repeat_interleave(image_pe, tokens.shape[0], dim=0)
         b, c, h, w = src.shape
 
-        hs, src = self.transformer(src, pos_src, tokens)
+        hs, src = self.transformer(src, pos_src, tokens, mix=mix)
         iou_token_out = hs[:, s, :]
         mask_tokens_out = hs[:, s + 1 : (s + 1 + self.num_mask_tokens), :]
 

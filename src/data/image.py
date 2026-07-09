@@ -21,6 +21,11 @@ def convert_rgb(image: Image.Image | np.ndarray) -> Image.Image:
     return Image.fromarray(image.astype(np.uint8, copy=False), mode="RGB")
 
 
+def to_tensor(image: np.ndarray) -> torch.Tensor:
+    image = np.ascontiguousarray(image)
+    return torch.from_numpy(image).permute(2, 0, 1).float().div(255.0).sub(0.5).div(0.5)
+
+
 def make_tensor(
     image: Image.Image | np.ndarray,
     size: int,
@@ -28,13 +33,11 @@ def make_tensor(
 ) -> tuple[torch.Tensor, tuple[int, int]]:
     image = convert_rgb(image)
     width, height = image.size
-    tensor = torch.from_numpy(np.array(image, dtype=np.uint8, copy=True))
-    tensor = tensor.permute(2, 0, 1).float().div(255.0)
+    tensor = to_tensor(np.array(image, dtype=np.uint8, copy=True))
     tensor = tvf.resize(
         tensor,
         [size, size],
         interpolation=InterpolationMode.BILINEAR,
         antialias=True,
     )
-    tensor = tensor.sub(0.5).div(0.5)
     return tensor.unsqueeze(0).to(device), (height, width)
