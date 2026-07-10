@@ -72,7 +72,7 @@ class FinetuneModel(nn.Module):
             "class_logits": torch.cat(classes, dim=0),
         }
 
-    def adapter_parameters(self) -> list[nn.Parameter]:
+    def trainable_parameters(self) -> list[nn.Parameter]:
         return [param for param in self.parameters() if param.requires_grad]
 
     @property

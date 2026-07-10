@@ -84,7 +84,7 @@ def test_build_finetune_model_returns_finetune_model(monkeypatch):
             "device": torch.device("cpu"),
             "num_conditions": 3,
             "num_experts": 2,
-            "num_labels": 5,
+            "num_classes": 5,
             "lora_rank": 2,
             "feature_rank": 2,
         }

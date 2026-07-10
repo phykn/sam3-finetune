@@ -17,7 +17,7 @@ def build_finetune_model(config: dict) -> FinetuneModel:
         Sam3ImageModel(path=path),
         num_conditions=config.get("num_conditions", 1),
         num_experts=config.get("num_experts", 4),
-        num_labels=config.get("num_labels", 1),
+        num_labels=config.get("num_classes", 1),
         lora_rank=config.get("lora_rank", 8),
         feature_rank=config.get("feature_rank", 16),
     ).to(device)

@@ -1,7 +1,0 @@
-path: null
-device: cuda
-num_conditions: 1
-num_experts: 4
-num_labels: 2
-lora_rank: 8
-feature_rank: 16

@@ -1,21 +1,28 @@
-paths:
-  - data/sample_1.json
-  - data/sample_2.json
-  - data/sample_3.json
-  - data/sample_4.json
-batch_size: 4
-num_workers: 0
-conds:
-  - 0
-  - 0
-  - 0
-  - 0
-labels:
-  - target: [1, 0]
-    weight: [1, 0]
-  - target: [1, 0]
-    weight: [1, 0]
-  - target: [1, 0]
-    weight: [1, 0]
-  - target: [1, 0]
-    weight: [1, 0]
+model:
+  path: null
+  num_conditions: 1
+  num_experts: 4
+  num_classes: 3
+  lora_rank: 8
+  feature_rank: 16
+data:
+  train:
+    paths: []
+    conds: []
+    labels: []
+    batch_size: 4
+    num_workers: 4
+  valid:
+    paths: []
+    conds: []
+    labels: []
+    batch_size: 4
+    num_workers: 4
+train:
+  steps: 1000
+  valid_steps: 10
+  learning_rate: 0.0001
+  save_every: 100
+  clip_grad_norm: 1.0
+  amp: true
+  run_root: run

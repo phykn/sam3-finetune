@@ -59,7 +59,7 @@ def make_predictor(device):
             "device": device,
             "num_conditions": 1,
             "num_experts": 4,
-            "num_labels": 1,
+            "num_classes": 1,
             "lora_rank": 8,
             "feature_rank": 16,
         }
