@@ -291,17 +291,33 @@ class FakeVideoTrackBlock(nn.Module):
 
 class FakeGroundingImage(nn.Module):
     def forward(self, features):
-        return {"image": features}
+        return {
+            "image": features,
+            "vision_features": torch.zeros(1, 1, 1, 1),
+            "vision_mask": None,
+            "vision_pos_enc": (),
+            "backbone_fpn": (),
+            "feat_sizes": (),
+        }
 
 
 class FakeGroundingPromptEncoder(nn.Module):
     def forward(self, image, **kwargs):
-        return {"prompt": kwargs, "image": image}
+        return {
+            "features": torch.zeros(1, 1, 1),
+            "mask": torch.zeros(1, 1, dtype=torch.bool),
+            "prompt": kwargs,
+            "image": image,
+        }
 
 
 class FakeGroundingDecoder(nn.Module):
     def forward(self, image, cond, prompt):
-        return {"pred_logits": image, "pred_boxes": cond, "pred_masks": prompt}
+        return {
+            "pred_logits": {"image": image["image"]},
+            "pred_boxes": cond,
+            "pred_masks": prompt,
+        }
 
 
 class FakeCond(nn.Module):

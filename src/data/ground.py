@@ -44,6 +44,33 @@ def build_boxes(
     return boxes[:, None, :], labels[:, None]
 
 
+def build_box_batch(
+    groups: list[np.ndarray],
+    orig_hw: tuple[int, int],
+    device: str | torch.device,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if not groups:
+        raise ValueError("box groups are empty")
+    count = len(groups)
+    length = max(len(group) for group in groups)
+    boxes = torch.zeros(length, count, 4, dtype=torch.float32, device=device)
+    box_mask = torch.ones(count, length, dtype=torch.bool, device=device)
+    for index, group in enumerate(groups):
+        value = torch.as_tensor(group, dtype=torch.float32, device=device)
+        boxes[: len(value), index] = value
+        box_mask[index, : len(value)] = False
+
+    height, width = orig_hw
+    boxes = boxes / boxes.new_tensor([width, height, width, height])
+    x0, y0, x1, y1 = boxes.unbind(-1)
+    boxes = torch.stack(
+        [(x0 + x1) * 0.5, (y0 + y1) * 0.5, x1 - x0, y1 - y0],
+        dim=-1,
+    )
+    labels = torch.ones(length, count, dtype=torch.long, device=device)
+    return boxes, labels, box_mask
+
+
 def build_masks(
     masks: object | None,
     device: str | torch.device,

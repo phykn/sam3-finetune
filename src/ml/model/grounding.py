@@ -67,7 +67,17 @@ class Sam3GroundingModel(nn.Module):
             mask_mask=mask_mask,
         )
 
+    def encode_box_prompts(self, image, boxes, labels, box_mask):
+        image = GroundingImage.expand(image, boxes.shape[1])
+        return self.ground_prompt(
+            image,
+            boxes=boxes,
+            box_labels=labels,
+            box_mask=box_mask,
+        )
+
     def decode(self, image, prompt):
+        image = GroundingImage.expand(image, prompt["features"].shape[1])
         return self.ground_dec(image, self.cond(), prompt)
 
     def forward(

@@ -280,8 +280,16 @@ class GroundingDecoder(nn.Module):
 
     @staticmethod
     def prompt_inputs(cond, prompt):
-        features = torch.cat([cond["language_features"], prompt["features"]], dim=0)
-        mask = torch.cat([cond["language_mask"], prompt["mask"]], dim=1)
+        batch = prompt["features"].shape[1]
+        language = cond["language_features"]
+        language_mask = cond["language_mask"]
+        if language.shape[1] == 1 and batch != 1:
+            language = language.expand(-1, batch, -1)
+            language_mask = language_mask.expand(batch, -1)
+        if language.shape[1] != batch:
+            raise ValueError("visual token batch does not match prompt batch")
+        features = torch.cat([language, prompt["features"]], dim=0)
+        mask = torch.cat([language_mask, prompt["mask"]], dim=1)
         return features, mask
 
     @staticmethod
