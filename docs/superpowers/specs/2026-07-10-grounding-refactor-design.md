@@ -1,86 +1,62 @@
 # Grounding Reference Refactor Design
 
-**Status:** Approved for implementation planning  
+**Status:** Approved
 **Date:** 2026-07-10  
 **Branch:** `codex/grounding-refactor`
 
-## 1. Goal
+## Goal
 
-Refactor reference-based grounding into a direct mask-only pipeline that:
-
-- extracts class-specific features from one or more reference images;
-- finds every matching object in a new image for each reference class;
-- improves latency and peak VRAM without changing SAM3.1 checkpoint math;
-- returns object-oriented NumPy results that map directly to the existing
-  `Sample`/`Object` JSON schema; and
-- keeps the dependency direction simple:
-
-```text
-data -> grounding components -> grounding blocks -> model -> predictor -> scripts
-```
+Refactor grounding into a box-reference pipeline that extracts class-specific
+features from one or more reference images and predicts matching masks in a new
+image. Improve latency and peak VRAM while preserving the original SAM3.1 box
+prompt and decoder math.
 
 The common case is one reference image. Multiple reference images use the same
-API and remain supported.
+API.
 
-## 2. Current Problems
+## Confirmed Model Boundary
 
-The current grounding path has several mismatched assumptions:
+The SAM3.1 grounding geometry encoder has trained point and box prompt paths. Its
+standard builder does not create a mask encoder, and the official checkpoint has
+no geometry mask-encoder weights.
 
-- `GroundPredictor.encode_ref()` accepts points, boxes, or masks even though the
-  target workflow uses reference masks only.
-- A reference name acts as an implicit class key. Duplicate names overwrite each
-  other in the result dictionary.
-- A three-dimensional mask array is interpreted as several masks in one prompt,
-  but the real geometry encoder asserts that a prompt contains exactly one mask.
-  The existing multiple-mask unit test uses a fake model and does not cover this
-  real checkpoint path.
-- Every reference runs the full decoder separately.
-- The result keeps the decoder `raw` dictionary and therefore retains large GPU
-  tensors after NumPy results have already been created.
-- Results are stored as arrays grouped by reference name instead of objects with
-  an explicit integer `class_id`.
-- `scripts/ground.py` owns reference preparation, prediction, refinement, JSON
-  conversion, and visualization in one large file.
+Reference masks therefore do not belong in the public grounding API. If a caller
+has masks, a separate helper may convert them to boxes later. That conversion is
+not part of this refactor.
 
-## 3. Scope
+The reference and target flow is:
 
-### In scope
+```text
+reference image + reference boxes + integer class IDs
+  -> reference image features
+  -> one feature vector per box
+  -> one geometry prompt per reference-image/class group
 
-- Mask-only public reference input.
-- One or more reference images.
-- Any practical number of masks per reference image.
-- Non-negative integer class IDs.
-- Individual feature vectors for every reference mask.
-- One union grounding prompt for each `(reference image, class_id)` group.
-- Batched and chunked target decoding.
-- Independent results per class.
-- Object-oriented NumPy output and existing JSON conversion.
-- Real SAM3.1 checkpoint parity and CUDA performance measurement.
-- Focused grounding file and function naming cleanup.
+target image
+  -> target image features
+  -> decode all reference-class prompts in bounded chunks
+  -> predicted boxes and masks
+  -> class-specific feature similarity filtering
+  -> object dictionaries
+```
 
-### Out of scope
+Reference box coordinates are never copied to the target image. They only select
+objects in the reference image when the reusable prompt features are created.
 
-- Text/VLM loading or Hugging Face integration.
-- Automatic insertion of grounding results into the video tracker.
-- Cross-class suppression or forced single-class assignment.
-- Learned prototype aggregation.
-- Training or changing SAM3.1 weights.
-- Historical LoRA checkpoint compatibility.
+## Public API
 
-## 4. Public API
-
-Reference encoding accepts an image, full-size masks, and one class ID per mask:
+Reference encoding accepts pixel-space `xyxy` boxes using the same half-open box
+meaning as `src.data.sample.Object.box`:
 
 ```python
 reference = predictor.encode_reference(
     image,
-    masks,       # NumPy-compatible [N, H, W]
-    class_ids,   # NumPy-compatible [N]
+    boxes,       # NumPy-compatible [N, 4], pixel xyxy
+    class_ids,   # NumPy-compatible [N], non-negative integers
 )
 ```
 
-Prediction always receives a list. A single reference image is represented by a
-one-element list, so there is no separate single-reference branch:
+Prediction always consumes a list. One reference image is a one-element list:
 
 ```python
 objects = predictor.predict(target_image, [reference])
@@ -92,97 +68,90 @@ Multiple reference images use the same call:
 objects = predictor.predict(target_image, [reference_a, reference_b])
 ```
 
-The old `encode_ref()` point/box/mask API and reference-name result dictionary are
-removed without compatibility aliases.
+The old `encode_ref()` API, point/mask reference options, reference names, and
+reference-name result dictionary are removed without compatibility aliases.
 
-## 5. Reference Representation
+## Reference Classes and Prompts
 
-`encode_reference()` returns a plain dictionary containing only reusable encoded
-state. It does not keep the full reference image embedding.
+Every reference box keeps its own feature vector and integer class ID. Boxes with
+the same class ID in one reference image form one box prompt. The prompt contains
+all boxes in that class; boxes are not unioned or averaged.
 
-Conceptually it contains:
+For multiple reference images, one prompt group exists for each
+`(reference image, class_id)` pair. Feature vectors with the same class ID are
+combined into one class feature bank across all reference images.
 
-```text
-groups:
-  one encoded prompt for each class present in this reference image
-features:
-  one normalized vector for every input mask, grouped by class_id
-```
+The encoded reference artifact is a private plain dictionary containing:
 
-The exact internal keys are private to `GroundPredictor`; scripts and callers only
-pass the result back to `predict()`.
+- encoded prompt features and prompt masks;
+- one class ID per prompt group;
+- one feature vector per original box; and
+- one class ID per feature vector.
 
-For a reference image `r` and class `c`, all class masks form one union prompt:
+It does not retain the full reference image embedding.
 
-```math
-U_{r,c}(x,y) = \max_{i \in (r,c)} m_i(x,y)
-```
+## Feature and Similarity Math
 
-Each original mask remains separate for similarity measurement. Union is used only
-for the geometry prompt.
-
-## 6. Feature and Similarity Math
-
-Let `F` be the last reference FPN feature map and `m_i` a resized soft mask. The
-feature of reference mask `i` is the normalized masked mean:
+Let `F` be the final reference FPN feature map. A reference box is scaled to that
+feature grid and represented as a rectangular indicator `b_i`. Its normalized
+masked mean is:
 
 ```math
 v_i = \operatorname{normalize}
 \left(
-\frac{\sum_{x,y} F(x,y)m_i(x,y)}
-{\max(\sum_{x,y}m_i(x,y), \epsilon)}
+\frac{\sum_{x,y} F(x,y)b_i(x,y)}
+{\max(\sum_{x,y}b_i(x,y), \epsilon)}
 \right)
 ```
 
-The target candidate feature `u_j` uses the same equation. Similarity between
-candidate `j` and class `c` is the maximum cosine similarity over all reference
-masks with that class ID, including masks from different reference images:
+The target candidate feature `u_j` uses the predicted target mask rather than the
+predicted box. Similarity between candidate `j` and class `c` is the maximum cosine
+similarity over every reference box with that class ID:
 
 ```math
 s_{c,j} = \max_{i:\ class_i=c} v_i^\top u_j
 ```
 
-All reference vectors are retained. They are not averaged into a prototype.
+Reference features are never averaged into a prototype.
 
-The SAM3.1 grounding logit remains the model confidence. Similarity is an
-additional class-specific gate:
+The SAM3.1 grounding score and feature similarity have separate roles:
 
 1. reject model scores below `score_thr`;
 2. reject class similarities below `sim_thr`;
 3. merge prompt-group results for the same class;
-4. apply box NMS within that class using model confidence;
+4. apply box NMS within that class using model confidence; and
 5. apply `top_k` per class when configured.
 
-No NMS is applied across different classes. The same physical object may therefore
-appear more than once with different class IDs.
+Classes are independent. No NMS runs across different classes, so the same target
+object may appear with several class IDs.
 
-## 7. Batched Decode and Memory
+## Batched Decode and Memory
 
-Reference image encoding runs once per reference image. Target image encoding runs
-once per `predict()` call.
+Reference vision encoding runs once per reference image. Target vision encoding
+runs once per `predict()` call.
 
-Each `(reference image, class_id)` union produces one prompt group. Prompt groups
-are decoded in chunks controlled by a positive `prompt_batch_size`, defaulting to
-4. A chunk is stacked along the model batch dimension. Target image features are
-expanded or indexed for that batch; the vision backbone is never rerun per prompt.
+Box prompts are encoded as a padded class batch. Target prompt groups are decoded
+in chunks controlled by positive `prompt_batch_size`, defaulting to 4. Target image
+features are expanded or indexed for a prompt batch; the vision backbone is never
+rerun per prompt.
 
-For `G` prompt groups, decoder call count is:
+For `G` prompt groups, target decoder call count is:
 
 ```text
 ceil(G / prompt_batch_size)
 ```
 
-Peak temporary decode memory is bounded by the chunk size instead of total prompt
-count. Chunk tensors are released after their candidates have been converted to
-the compact intermediate form.
+Temporary decode memory is bounded by the chunk size. Score filtering, target mask
+feature extraction, and similarity filtering stay on the GPU. Only retained
+objects are converted to CPU NumPy values.
 
 The predictor never returns the decoder `raw` dictionary or other GPU tensors.
-Only the small encoded reference artifact intentionally remains on the model
+Small encoded reference prompts and box features intentionally stay on the model
 device for reuse across target images.
 
-## 8. Prediction Result
+## Prediction Result and Existing JSON
 
-`predict()` returns one plain dictionary per detected object:
+`predict()` returns a list of plain object dictionaries:
 
 ```python
 {
@@ -198,141 +167,133 @@ device for reuse across target images.
 }
 ```
 
-All arrays are CPU NumPy arrays. `object_id` is assigned after final filtering and
-is sequential within one prediction.
+The final `box` is the integer bounding box of the returned mask, matching the
+existing JSON object's compact `box + roi` representation. The model-predicted box
+is used internally for NMS and is not returned separately.
 
-This is an in-memory NumPy form of the existing data model, not a new persisted
-schema. Saving uses the existing `sam3.sample.v1` representation:
+This is an in-memory NumPy form of the existing `sam3.sample.v1` model, not a new
+persisted schema:
 
-- `mask` becomes the existing `box` plus compact `roi` through `pack.box_roi()`;
+- `mask` becomes `Object.box` plus `Object.roi` through `pack.box_roi()`;
 - `class_id` becomes `Object.class_id`;
-- `score` and `similarity` remain in `Object.metrics`;
-- the target image becomes the existing `sample.Image`; and
-- low-resolution `logit` is used for optional refinement but is not written to
-  JSON.
+- scores stay in `Object.metrics`;
+- the target image stays in `sample.Image`; and
+- low-resolution `logit` is available for refinement but is not written to JSON.
 
-## 9. Code Boundaries
-
-The grounding predictor keeps one-way orchestration and small helpers:
+## Code Boundaries
 
 ```text
 src/data/ground.py
-  NumPy-to-tensor conversion for grounding prompts
+  pixel xyxy boxes -> padded normalized prompt tensors
 
 src/predict/ground_ops/reference.py
-  reference validation, class grouping, union masks, feature bank assembly
+  validate boxes/classes, group boxes, merge prompts and feature banks
 
 src/predict/ground_ops/sim.py
-  masked mean vectors and class-wise maximum cosine similarity
+  reference box features, target mask features, maximum cosine similarity
 
 src/predict/ground_ops/output.py
-  candidate formatting, filtering, within-class NMS, object dictionaries
+  score/similarity filtering, within-class NMS, object dictionaries
 
 src/predict/ground.py
   encode_reference() and predict() orchestration
 
 src/ml/model/grounding.py
-  public encode/decode model boundary and batch alignment
+  public encode/decode model boundary and encoded-image batch alignment
 
 src/ml/blocks/grounding/*
-  checkpoint-compatible grounding prompt and decoder math
+  checkpoint-compatible box prompt and decoder math
 ```
 
 No dataclass, result wrapper, compatibility adapter, lazy import, or new option
 layer is added.
 
-`scripts/ground.py` becomes a short example that:
+`scripts/ground.py` reads reference `Sample/Object` data directly:
 
-1. loads one or more existing `Sample` JSON references;
-2. converts each reference object's `roi` to full NumPy masks;
-3. uses `Object.class_id` as the reference class ID;
-4. predicts a target image;
-5. optionally refines the returned low-resolution logits; and
-6. saves the result through the existing `Sample`/`Object` JSON path.
+1. load one or more reference samples;
+2. read each object's `box` and integer `class_id`;
+3. encode references;
+4. predict a target image;
+5. optionally refine returned mask logits; and
+6. save through the existing `Sample/Object` JSON path.
 
-## 10. Validation and Errors
+## Validation and Errors
 
 Reference input fails with `ValueError` when:
 
-- masks are not `[N, H, W]` after accepting a single `[H, W]` mask as `N=1`;
-- `class_ids` is not a length-`N` integer sequence;
-- any class ID is negative;
-- any mask is empty;
-- a mask spatial shape differs from its reference image; or
-- there are no masks.
+- boxes are not `[N, 4]` after accepting one `[4]` box as `N=1`;
+- there are no boxes;
+- a box contains non-finite coordinates;
+- a box is empty or lies outside the reference image after clipping;
+- `class_ids` is not a length-`N` integer sequence; or
+- any class ID is negative.
 
-Constructor thresholds and `prompt_batch_size` are validated once. The predictor
-does not silently clamp invalid reference data or invent class IDs.
+Boxes are clipped to reference image bounds. Reversed coordinates are invalid and
+are not silently reordered.
 
-The compatibility target is the SAM3.1 decoder math, checkpoint keys, and raw
-logits/boxes/masks for a single mask prompt. The final public object list is
-intentionally not byte-for-byte compatible: the approved class grouping,
-within-class NMS, object-oriented return type, and removal of `raw` change
-post-processing behavior.
+Constructor thresholds and `prompt_batch_size` are validated once. `predict()`
+requires a non-empty list of encoded references.
 
-## 11. Verification
+## Compatibility Boundary
 
-### Unit and integration tests
+The compatibility target is:
 
-- Masked mean and L2 normalization match explicit tensor math.
-- Class similarity equals the maximum exemplar cosine similarity.
-- Union masks are correct for repeated classes.
-- Repeated class IDs across reference images share one feature bank.
-- Many masks in one class produce one prompt group for that image.
-- A single reference and multiple references use the same list API.
-- The reference and target backbones run exactly once per image.
-- Decoder call count is `ceil(groups / prompt_batch_size)`.
-- Same-class duplicates are removed; cross-class overlaps remain.
-- Returned objects contain CPU NumPy values and no `raw` key or GPU tensor.
-- Object dictionaries round-trip through the existing `Sample`/`Object` JSON.
+- SAM3.1 checkpoint keys and strict load;
+- cached visual-token load;
+- box prompt encoder math; and
+- raw logits, boxes, and masks for a single reference box.
 
-### Real checkpoint checks
+The final public object list is intentionally not compatible with the old
+reference-name dictionary because class grouping, within-class NMS, object output,
+and `raw` removal are approved behavior changes.
 
-- Strictly load `weight/sam3.1_multiplex.pt` and the cached visual tokens.
-- For one reference image, one class, and one mask, compare pre-refactor and
-  refactored grounding logits, boxes, and masks within the existing parity
-  tolerance.
-- Run the upstream grounding parity script after adapting its public call site.
-- Run an actual multi-mask, multi-class reference on CUDA.
+## Verification
 
-### Performance evidence
+### Tests
 
-Measure on the local CUDA device:
+- Box and class validation.
+- Padded class box prompt construction.
+- Box-region masked mean and L2 normalization.
+- Maximum exemplar similarity per class.
+- Repeated classes across reference images.
+- One vision pass per reference image and one per target image.
+- `ceil(groups / prompt_batch_size)` target decoder calls.
+- Same-class NMS and cross-class overlap preservation.
+- CPU NumPy object output without `raw` or GPU tensors.
+- Object dictionary round-trip through existing `Sample/Object` JSON.
+
+### Real checkpoint
+
+- Strictly load `weight/sam3.1_multiplex.pt` and cached visual tokens.
+- Compare the pre-refactor and refactored single-box prompt logits, boxes, and masks
+  within the existing parity tolerance.
+- Run multi-box, multi-class reference prediction on CUDA.
+
+### Performance
+
+Measure sequential prompt-group decoding and chunked decoding on the same loaded
+model and encoded references:
 
 - reference encoding time;
-- target encoding time;
-- prompt decode time;
-- end-to-end latency; and
-- peak allocated CUDA memory.
+- target encoding and decode time;
+- end-to-end latency;
+- peak allocated CUDA memory; and
+- output equality.
 
-Compare chunked decoding with an equivalent sequential prompt-group execution.
 Performance is reported as measured evidence rather than a hardware-independent
-percentage promise. Structural assertions guarantee one backbone pass per image,
+percentage promise. Structural tests guarantee one backbone pass per image,
 bounded chunk memory, and no retained raw result tensors.
 
-### Repository checks
+## Completion Criteria
 
-```powershell
-.\.venv\Scripts\python.exe -m pytest tests
-.\.venv\Scripts\python.exe -m black --check <changed-python-files>
-.\.venv\Scripts\python.exe -m ruff check src tests scripts
-git diff --check
-```
-
-The protected `sam3-main/`, `weight/`, and `asset/` paths are read-only verification
-inputs and are never staged or committed.
-
-## 12. Completion Criteria
-
-- Mask-only integer-class reference API is implemented without compatibility
-  aliases.
-- One and multiple reference images work through the same list API.
-- Many masks remain individual class features while prompt cost scales with
-  reference-image/class groups.
-- Target image encoding occurs once and prompt groups decode in chunks.
-- Results are object dictionaries compatible with the existing JSON data model.
-- Class results are independent and overlap across classes is preserved.
-- No prediction result retains `raw` GPU tensors.
-- Single-mask SAM3.1 grounding math passes real checkpoint parity.
-- Full tests, changed-file Black, repository Ruff, and diff checks pass.
+- Public grounding reference input is `boxes + class_ids` only.
+- One and multiple reference images use the same list API.
+- Each reference box retains an individual feature vector.
+- Same-image/class boxes form one trained box prompt.
+- Target image encoding occurs once and prompt groups decode in bounded chunks.
+- Same-class NMS removes duplicates; cross-class overlaps remain.
+- Results are CPU NumPy object dictionaries compatible with existing JSON.
+- Prediction results retain no `raw` GPU tensors.
+- SAM3.1 strict load and single-box raw decoder parity pass.
 - CUDA latency and peak VRAM measurements are recorded.
+- Full pytest, changed-file Black, repository Ruff, diff, and protected-path checks pass.
