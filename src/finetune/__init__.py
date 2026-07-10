@@ -1,1 +1,1 @@
-from .trainer import FinetuneTrainer
+from .trainer import FinetuneTrainer as FinetuneTrainer
