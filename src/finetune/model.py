@@ -5,9 +5,8 @@ from torch import nn
 
 from ..data import prompt as prompt_data
 from ..ml.model import Sam3ImageModel
-from .layers.image import ImageAdapter
-from .layers.linear import LoraLinear
-from .layers.router import Router
+from .adapter import FeatureAdapter, LoraLinear
+from .router import Router
 
 LORA_NAMES = {"q_proj", "k_proj", "v_proj", "out_proj", "lin1", "lin2"}
 
@@ -30,9 +29,9 @@ class FinetuneModel(nn.Module):
             num_conditions=num_conditions,
             num_experts=num_experts,
         )
-        self.image_adapter = ImageAdapter(256, feature_rank, num_experts)
-        self.high_adapter0 = ImageAdapter(32, feature_rank, num_experts)
-        self.high_adapter1 = ImageAdapter(64, feature_rank, num_experts)
+        self.image_adapter = FeatureAdapter(256, feature_rank, num_experts)
+        self.high_adapter0 = FeatureAdapter(32, feature_rank, num_experts)
+        self.high_adapter1 = FeatureAdapter(64, feature_rank, num_experts)
         self.label_head = nn.Linear(256, num_labels)
         self.linear_layers = nn.ModuleList()
         self._freeze_model()

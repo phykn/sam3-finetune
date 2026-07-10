@@ -18,6 +18,8 @@ class Router(nn.Module):
         embed_dim: int = 16,
     ) -> None:
         super().__init__()
+        if num_conditions <= 0 or num_experts <= 0:
+            raise ValueError("num_conditions and num_experts must be positive")
         self.cond = nn.Embedding(num_conditions, embed_dim)
         self.prompt = nn.Embedding(len(PROMPT_IDS), embed_dim)
         self.net = nn.Sequential(

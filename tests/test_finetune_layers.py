@@ -1,9 +1,8 @@
 import torch
 from torch import nn
 
-from src.finetune.layers.image import ImageAdapter
-from src.finetune.layers.linear import LoraLinear
-from src.finetune.layers.router import Router
+from src.finetune.adapter import FeatureAdapter, LoraLinear
+from src.finetune.router import Router
 from src.finetune.loss import (
     auto_bg_label_weight,
     dice_loss,
@@ -125,6 +124,23 @@ def test_lora_linear_keeps_base_frozen_and_adds_expert_delta():
     assert not hasattr(lora, "set_mix")
 
 
+def test_lora_linear_matches_weighted_expert_sum():
+    base = nn.Linear(2, 2, bias=False)
+    nn.init.ones_(base.weight)
+    layer = LoraLinear(base, rank=1, num_experts=2, alpha=1.0)
+    for down, up in zip(layer.down, layer.up):
+        nn.init.ones_(down.weight)
+        nn.init.ones_(up.weight)
+    x = torch.ones(2, 2)
+    mix = torch.tensor([[1.0, 0.0], [0.25, 0.75]])
+
+    expected = base(x)
+    for expert, (down, up) in enumerate(zip(layer.down, layer.up)):
+        expected = expected + up(down(x)) * mix[:, expert, None]
+
+    assert torch.allclose(layer(x, mix), expected)
+
+
 def test_attention_passes_mix_directly_to_lora_layers():
     attention = Attention(embedding_dim=4, num_heads=2)
     attention.q_proj = LoraLinear(attention.q_proj, rank=2, num_experts=2)
@@ -139,8 +155,8 @@ def test_attention_passes_mix_directly_to_lora_layers():
     assert out.shape == x.shape
 
 
-def test_image_adapter_keeps_feature_shape():
-    adapter = ImageAdapter(channels=4, rank=2, num_experts=3)
+def test_feature_adapter_keeps_feature_shape():
+    adapter = FeatureAdapter(channels=4, rank=2, num_experts=3)
     x = torch.ones(2, 4, 5, 6)
     mix = torch.tensor([[1.0, 0.0, 0.0], [0.2, 0.3, 0.5]])
 
@@ -148,6 +164,21 @@ def test_image_adapter_keeps_feature_shape():
 
     assert out.shape == x.shape
     assert any(param.requires_grad for param in adapter.parameters())
+
+
+def test_feature_adapter_matches_weighted_expert_sum():
+    adapter = FeatureAdapter(channels=2, rank=1, num_experts=2, alpha=1.0)
+    for down, up in zip(adapter.down, adapter.up):
+        nn.init.ones_(down.weight)
+        nn.init.ones_(up.weight)
+    x = torch.ones(2, 2, 1, 1)
+    mix = torch.tensor([[1.0, 0.0], [0.25, 0.75]])
+
+    expected = x.clone()
+    for expert, (down, up) in enumerate(zip(adapter.down, adapter.up)):
+        expected = expected + up(down(x)) * mix[:, expert, None, None, None]
+
+    assert torch.allclose(adapter(x, mix), expected)
 
 
 def test_finetune_model_freezes_base_and_wraps_decoder_linear():
