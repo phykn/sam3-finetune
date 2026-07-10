@@ -29,7 +29,14 @@ def box_vectors(
 
 def mask_vectors(image: dict[str, object], masks: object) -> torch.Tensor:
     feat = tensor(image["backbone_fpn"][-1]).float()
-    masks = torch.as_tensor(np.asarray(masks), dtype=torch.float32, device=feat.device)
+    if isinstance(masks, torch.Tensor):
+        masks = masks.to(device=feat.device, dtype=torch.float32)
+    else:
+        masks = torch.as_tensor(
+            np.asarray(masks),
+            dtype=torch.float32,
+            device=feat.device,
+        )
     if masks.ndim == 2:
         masks = masks[None]
     if masks.ndim == 3:
