@@ -2,8 +2,11 @@ from collections.abc import Iterable
 
 import torch
 
-from ..consolidation.merge import consolidate_temp_output_across_obj
-from ..multiplex.state import MultiplexState
+from ...components.video.tracker.consolidation.merge import (
+    consolidate_temp_output_across_obj,
+)
+from ...components.video.tracker.multiplex.state import MultiplexState
+from .state import output_store
 
 
 @torch.inference_mode()
@@ -34,6 +37,8 @@ def remove_objects(
     clear_user_refined_map: bool = True,
 ):
     obj_ids = list(obj_ids)
+    if len(obj_ids) != len(set(obj_ids)):
+        raise ValueError("obj_ids in one request must be unique")
     updated_frames = []
 
     removed_idxs, removed_ids = resolve_removed_objects(
@@ -46,11 +51,8 @@ def remove_objects(
         clear_user_refined_objects(inference_state, removed_ids)
 
     input_frame_indices = clear_removed_object_inputs(
-        self,
         inference_state,
         removed_idxs,
-        removed_ids,
-        clear_user_refined_map,
     )
 
     old_obj_inds, old_idx_to_new_idx = reindex_objects(
@@ -58,6 +60,7 @@ def remove_objects(
         removed_idxs,
     )
     if not inference_state["obj_ids"]:
+        reset_objects(inference_state)
         return inference_state["obj_ids"], updated_frames
 
     remap_object_containers(inference_state, old_obj_inds, old_idx_to_new_idx)
@@ -107,28 +110,28 @@ def clear_user_refined_objects(inference_state, removed_ids):
         user_refined_map.pop(removed_id, None)
 
 
-def clear_removed_object_inputs(
-    self,
-    inference_state,
-    removed_idxs,
-    removed_ids,
-    clear_user_refined_map,
-):
+def clear_removed_object_inputs(inference_state, removed_idxs):
     frame_indices = set()
-    for obj_idx, obj_id in zip(removed_idxs, removed_ids, strict=True):
-        object_frame_indices = set()
-        object_frame_indices.update(inference_state["point_inputs_per_obj"][obj_idx])
-        object_frame_indices.update(inference_state["mask_inputs_per_obj"][obj_idx])
-        for frame_idx in object_frame_indices:
-            self.clear_all_points_in_frame(
-                inference_state,
-                frame_idx,
-                obj_id,
-                need_output=False,
-                preserve_user_refined=not clear_user_refined_map,
-            )
-        frame_indices.update(object_frame_indices)
+    for obj_idx in removed_idxs:
+        mask_inputs = inference_state["mask_inputs_per_obj"][obj_idx]
+        frame_indices.update(mask_inputs)
+        mask_inputs.clear()
     return frame_indices
+
+
+def reset_objects(inference_state):
+    for key in (
+        "mask_inputs_per_obj",
+        "output_dict_per_obj",
+        "temp_output_dict_per_obj",
+    ):
+        inference_state[key].clear()
+    inference_state["output_dict"] = output_store()
+    inference_state["consolidated_frame_inds"] = output_store(set)
+    inference_state["frames_already_tracked"].clear()
+    inference_state["multiplex_state"] = None
+    inference_state["tracking_has_started"] = False
+    inference_state["first_ann_frame_idx"] = None
 
 
 def reindex_objects(inference_state, removed_idxs):
@@ -148,7 +151,6 @@ def reindex_objects(inference_state, removed_idxs):
 
 def remap_object_containers(inference_state, old_obj_inds, old_idx_to_new_idx):
     for key in (
-        "point_inputs_per_obj",
         "mask_inputs_per_obj",
         "output_dict_per_obj",
         "temp_output_dict_per_obj",

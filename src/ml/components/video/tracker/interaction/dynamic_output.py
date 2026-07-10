@@ -1,8 +1,6 @@
 import torch
 import torch.nn.functional as F
 
-from ..prompt.utils import append_stage_output, merge_stage_output
-
 
 def run_mask_output(
     self,
@@ -73,6 +71,21 @@ def append_mask_outputs(self, prev_output, mask_output):
         append_stage_output(prev_output, mask_output, "iou_score", "ious")
 
 
+def append_stage_output(
+    target,
+    source,
+    target_key,
+    source_key,
+    dim=0,
+    strict=True,
+):
+    if target_key not in target:
+        if strict:
+            raise KeyError(f"{target_key} not found")
+        return
+    target[target_key] = torch.cat([target[target_key], source[source_key]], dim=dim)
+
+
 def merge_mask_outputs(self, prev_output, mask_output, obj_idxs):
     merge_stage_output(
         prev_output, mask_output, "pred_masks", "low_res_masks", obj_idxs
@@ -95,6 +108,23 @@ def merge_mask_outputs(self, prev_output, mask_output, obj_idxs):
     if self.use_memory_selection:
         mask_output["ious"] = mask_output["ious"].squeeze(-1)
         merge_stage_output(prev_output, mask_output, "iou_score", "ious", obj_idxs)
+
+
+def merge_stage_output(
+    target,
+    source,
+    target_key,
+    source_key,
+    source_indices,
+    strict=True,
+):
+    if target_key not in target:
+        if strict:
+            raise KeyError(f"{target_key} not found")
+        return
+    target[target_key][source_indices] = source[source_key].to(
+        dtype=target[target_key].dtype
+    )
 
 
 def append_input_masks(prev_output, new_masks):

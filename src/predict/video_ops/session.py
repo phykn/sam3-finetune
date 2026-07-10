@@ -23,7 +23,7 @@ def start(
         offload_video_to_cpu=False,
         offload_state_to_cpu=False,
     )
-    model.add_new_masks(
+    model.add_masks(
         state,
         frame_idx=0,
         obj_ids=[obj_id],
@@ -31,6 +31,44 @@ def start(
     )
     model.propagate_in_video_preflight(state, run_mem_encoder=True)
     return {"state": state, "obj_id": obj_id, "next_frame": 1}
+
+
+def add_masks(
+    model: nn.Module,
+    session_state: dict[str, object],
+    masks: np.ndarray | torch.Tensor,
+    obj_ids: list[int],
+    device: str | torch.device,
+    frame_idx: int | None = None,
+) -> list[int]:
+    tracker_state = session_state["state"]
+    if frame_idx is None:
+        frame_idx = session_state["next_frame"] - 1
+    if frame_idx not in tracker_state["cached_features"]:
+        raise KeyError(f"frame {frame_idx} is not cached")
+
+    _, ids, _, _ = model.add_masks(
+        tracker_state,
+        frame_idx,
+        obj_ids,
+        mask_tensor(masks, device),
+    )
+    model.propagate_in_video_preflight(tracker_state, run_mem_encoder=True)
+    return list(ids)
+
+
+def remove_objects(
+    model: nn.Module,
+    session_state: dict[str, object],
+    obj_ids: list[int],
+    strict: bool = True,
+) -> list[int]:
+    ids, _ = model.remove_objects(
+        session_state["state"],
+        obj_ids,
+        strict=strict,
+    )
+    return list(ids)
 
 
 def predict(
@@ -51,7 +89,6 @@ def predict(
         tracker_state,
         start_frame_idx=frame_idx,
         max_frame_num_to_track=1,
-        reverse=False,
         tqdm_disable=True,
         run_mem_encoder=True,
     ):
@@ -81,7 +118,10 @@ def cache_frame(
 def mask_tensor(
     mask: np.ndarray | torch.Tensor, device: str | torch.device
 ) -> torch.Tensor:
-    mask = torch.as_tensor(np.asarray(mask), dtype=torch.float32, device=device)
+    if isinstance(mask, torch.Tensor):
+        mask = mask.to(device=device, dtype=torch.float32)
+    else:
+        mask = torch.as_tensor(np.asarray(mask), dtype=torch.float32, device=device)
     if mask.ndim == 2:
         mask = mask[None]
     if mask.ndim != 3:

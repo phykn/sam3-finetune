@@ -30,6 +30,19 @@ class FakeVideoModel(torch.nn.Module):
         state["obj_ids"] = obj_ids
         state["ref_masks"] = masks
 
+    def add_masks(self, state, frame_idx, obj_ids, masks):
+        self.calls.append(("add_masks", frame_idx, list(obj_ids), tuple(masks.shape)))
+        state["obj_ids"] = list(dict.fromkeys([*state.get("obj_ids", []), *obj_ids]))
+        state["ref_masks"] = masks
+        return frame_idx, state["obj_ids"], None, masks[:, None]
+
+    def remove_objects(self, state, obj_ids, strict=True):
+        self.calls.append(("remove_objects", list(obj_ids), strict))
+        state["obj_ids"] = [
+            obj_id for obj_id in state.get("obj_ids", []) if obj_id not in obj_ids
+        ]
+        return state["obj_ids"], []
+
     def propagate_in_video_preflight(self, state, run_mem_encoder=True):
         self.calls.append(("preflight", run_mem_encoder))
         state["preflight"] = True
@@ -78,6 +91,8 @@ def test_video_predictor_propagates_with_tracker_state():
     assert state["state"]["num_frames"] == 2
     assert 1 in state["state"]["cached_features"]
     assert model.calls[-2][2]["need_sam3_out"] is False
+    propagate_call = next(call for call in model.calls if call[0] == "propagate")
+    assert "reverse" not in propagate_call[1]
 
 
 def test_video_predictor_keeps_fixed_threshold():
@@ -103,3 +118,38 @@ def test_format_output_accepts_bfloat16_tensors():
     assert out["masks"][0, 2:4, 3:5].all()
     assert out["scores"].dtype == np.float32
     assert out["logits"].dtype == np.float32
+
+
+def test_video_predictor_adds_masks_on_latest_cached_frame():
+    model = FakeVideoModel()
+    predictor = VideoPredictor(model, device="cpu")
+    state = predictor.start(
+        Image.new("RGB", (4, 5)),
+        np.ones((5, 4), dtype=bool),
+        obj_id=7,
+    )
+
+    ids = predictor.add_masks(
+        state,
+        np.ones((1, 5, 4), dtype=bool),
+        [9],
+    )
+
+    assert ids == [7, 9]
+    assert model.calls[-2][:3] == ("add_masks", 0, [9])
+    assert model.calls[-1] == ("preflight", True)
+
+
+def test_video_predictor_removes_objects():
+    model = FakeVideoModel()
+    predictor = VideoPredictor(model, device="cpu")
+    state = predictor.start(
+        Image.new("RGB", (4, 5)),
+        np.ones((5, 4), dtype=bool),
+        obj_id=7,
+    )
+
+    ids = predictor.remove_objects(state, [7])
+
+    assert ids == []
+    assert model.calls[-1] == ("remove_objects", [7], True)

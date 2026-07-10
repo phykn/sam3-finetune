@@ -3,12 +3,15 @@ from copy import deepcopy
 import numpy as np
 import torch
 
-from ..consolidation.merge import consolidate_temp_output_across_obj
-from ..outputs import NO_OBJ_SCORE
+from ...components.video.tracker.consolidation.merge import (
+    consolidate_temp_output_across_obj,
+)
+from ...components.video.tracker.outputs import NO_OBJ_SCORE
+from .state import cached_frame
 
 
 @torch.inference_mode()
-def add_new_masks(
+def add_masks(
     self,
     inference_state,
     frame_idx,
@@ -18,6 +21,13 @@ def add_new_masks(
     reconditioning=False,
 ):
     obj_ids = _normalize_obj_ids(obj_ids)
+    if not obj_ids:
+        raise ValueError("obj_ids must not be empty")
+    if len(obj_ids) != len(set(obj_ids)):
+        raise ValueError("obj_ids in one request must be unique")
+    if masks.ndim != 3 or masks.shape[0] != len(obj_ids):
+        raise ValueError("masks must have shape N x H x W matching obj_ids")
+    cached_frame(inference_state, frame_idx)
     obj_idxs = _resolve_obj_idxs(self, inference_state, obj_ids, reconditioning)
     mask_inputs, mask_inputs_video_res = _prepare_masks(
         self,
@@ -114,17 +124,11 @@ def get_consolidated_mask_return(
 
 def get_mask_frame_context(self, inference_state, frame_idx):
     is_init_cond_frame = frame_idx not in inference_state["frames_already_tracked"]
-    if is_init_cond_frame:
-        reverse = False
-    else:
-        reverse = inference_state["frames_already_tracked"][frame_idx]["reverse"]
-
     is_cond = is_init_cond_frame or self.add_all_frames_to_correct_as_cond
     storage_key = "cond_frame_outputs" if is_cond else "non_cond_frame_outputs"
     return {
         "is_init_cond_frame": is_init_cond_frame,
         "is_cond": is_cond,
-        "reverse": reverse,
         "storage_key": storage_key,
     }
 
@@ -148,9 +152,7 @@ def run_mask_frame(
         frame_idx=frame_idx,
         batch_size=len(obj_ids),
         is_init_cond_frame=context["is_init_cond_frame"],
-        point_inputs=None,
         mask_inputs=mask_inputs,
-        reverse=context["reverse"],
         run_mem_encoder=False,
         add_to_existing_state=_should_add_to_existing_state(
             inference_state,
@@ -242,7 +244,6 @@ def _store_mask_inputs(inference_state, frame_idx, obj_idxs, mask_inputs_video_r
         inference_state["mask_inputs_per_obj"][obj_idx][frame_idx] = (
             mask_inputs_video_res[index : index + 1]
         )
-        inference_state["point_inputs_per_obj"][obj_idx].pop(frame_idx, None)
 
 
 def _allow_new_buckets(multiplex_state, num_objects, is_new_state, reconditioning):
@@ -315,12 +316,12 @@ def _store_object_outputs(
                 obj_idx : obj_idx + 1
             ]
         }
-        inference_state["temp_output_dict_per_obj"][obj_idx][storage_key][frame_idx] = (
-            obj_frame_out
-        )
-        inference_state["output_dict_per_obj"][obj_idx][storage_key][frame_idx] = (
-            obj_frame_out
-        )
+        inference_state["temp_output_dict_per_obj"][obj_idx][storage_key][
+            frame_idx
+        ] = obj_frame_out
+        inference_state["output_dict_per_obj"][obj_idx][storage_key][
+            frame_idx
+        ] = obj_frame_out
 
 
 def _suppress_overlapping_outputs(

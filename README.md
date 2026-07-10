@@ -95,12 +95,29 @@ video_model = build_video_model(config)
 .\.venv\Scripts\python.exe scripts\video.py
 ```
 
+The video predictor tracks forward from mask prompts. Objects can be added on
+the latest cached frame or removed explicitly:
+
+```python
+from src.predict import VideoPredictor
+
+predictor = VideoPredictor.from_path("weight/sam3.1_multiplex.pt")
+state = predictor.start(first_frame, first_mask, obj_id=1)
+out = predictor.predict(next_frame, state)
+ids = predictor.add_masks(state, new_masks, [2, 3])
+ids = predictor.remove_objects(state, [2])
+```
+
+Automatic discovery is separate from tracking. It requires grounding results
+to be associated with active tracks before calling `add_masks`.
+
 Parity checks against the reference implementation:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\parity_image.py
 .\.venv\Scripts\python.exe scripts\parity_ground.py
 .\.venv\Scripts\python.exe scripts\parity_video.py
+.\.venv\Scripts\python.exe scripts\parity_video_dynamic.py
 ```
 
 ## Test

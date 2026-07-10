@@ -64,8 +64,6 @@ def select_memory_outputs(
     frame_idx,
     output_dict,
     num_frames,
-    track_in_reverse,
-    tpos_sign_mul,
 ):
     assert len(output_dict["cond_frame_outputs"]) > 0
     cond_outputs = output_dict["cond_frame_outputs"]
@@ -76,15 +74,12 @@ def select_memory_outputs(
         keep_first_cond_frame=model.keep_first_cond_frame,
     )
 
-    refs = [
-        ((frame_idx - t) * tpos_sign_mul, out, True)
-        for t, out in selected_cond_outputs.items()
-    ]
+    refs = [(frame_idx - t, out, True) for t, out in selected_cond_outputs.items()]
     stride = 1 if model.training else model.memory_temporal_stride_for_eval
     valid_indices = None
     if model.use_memory_selection:
         valid_indices = filter_memory_frames(
-            model, output_dict, track_in_reverse, frame_idx, num_frames, stride
+            model, output_dict, frame_idx, num_frames, stride
         )
 
     for t_pos in range(1, model.num_maskmem):
@@ -92,7 +87,6 @@ def select_memory_outputs(
         prev_frame_idx = get_previous_memory_frame(
             model,
             frame_idx=frame_idx,
-            track_in_reverse=track_in_reverse,
             t_rel=t_rel,
             stride=stride,
             valid_indices=valid_indices,
@@ -108,26 +102,16 @@ def select_memory_outputs(
     return selected_cond_outputs, unselected_cond_outputs, refs, valid_indices
 
 
-def filter_memory_frames(
-    model, output_dict, track_in_reverse, frame_idx, num_frames, r
-):
-    if (frame_idx == 0 and not track_in_reverse) or (
-        frame_idx == num_frames - 1 and track_in_reverse
-    ):
+def filter_memory_frames(model, output_dict, frame_idx, num_frames, r):
+    if frame_idx == 0:
         return []
 
     max_num = min(num_frames, model.max_obj_ptrs_in_encoder)
 
-    if not track_in_reverse:
-        start = frame_idx - 1
-        end = 0
-        step = -r
-        must_include = frame_idx - 1
-    else:
-        start = frame_idx + 1
-        end = num_frames
-        step = r
-        must_include = frame_idx + 1
+    start = frame_idx - 1
+    end = 0
+    step = -r
+    must_include = frame_idx - 1
 
     valid_indices = []
     for index in range(start, end, step):
@@ -151,7 +135,6 @@ def get_previous_memory_frame(
     model,
     *,
     frame_idx,
-    track_in_reverse,
     t_rel,
     stride,
     valid_indices,
@@ -162,14 +145,10 @@ def get_previous_memory_frame(
         return valid_indices[-t_rel]
 
     if t_rel == 1:
-        return frame_idx + t_rel if track_in_reverse else frame_idx - t_rel
+        return frame_idx - t_rel
 
-    if not track_in_reverse:
-        prev_frame_idx = ((frame_idx - 2) // stride) * stride
-        return prev_frame_idx - (t_rel - 2) * stride
-
-    prev_frame_idx = -(-(frame_idx + 2) // stride) * stride
-    return prev_frame_idx + (t_rel - 2) * stride
+    prev_frame_idx = ((frame_idx - 2) // stride) * stride
+    return prev_frame_idx - (t_rel - 2) * stride
 
 
 def get_maskmem_tpos(model, t_pos, is_selected_cond_frame):
@@ -193,9 +172,6 @@ def encode_temporal_positions(
         torch.tensor(rel_pos_list).pin_memory().to(device=device, non_blocking=True)
         / t_diff_max
     )
-    if not model.sincos_tpos_enc:
-        raise NotImplementedError
-
     tpos_dim = model.hidden_dim if model.proj_tpos_enc_in_obj_ptrs else model.mem_dim
     pos_enc = get_1d_sine_pe(pos_enc, dim=tpos_dim)
     return model.obj_ptr_tpos_proj(pos_enc)
@@ -260,18 +236,14 @@ def collect_object_pointer_refs(
     frame_idx,
     output_dict,
     num_frames,
-    track_in_reverse,
     selected_cond_outputs,
     unselected_cond_outputs,
     valid_indices,
-    tpos_sign_mul,
 ):
     max_obj_ptrs = min(num_frames, model.max_obj_ptrs_in_encoder)
     if not model.training and model.only_obj_ptrs_in_the_past_for_eval:
         ptr_cond_outputs = {
-            t: out
-            for t, out in selected_cond_outputs.items()
-            if (t >= frame_idx if track_in_reverse else t <= frame_idx)
+            t: out for t, out in selected_cond_outputs.items() if t <= frame_idx
         }
     else:
         ptr_cond_outputs = selected_cond_outputs
@@ -279,7 +251,7 @@ def collect_object_pointer_refs(
     refs = [
         (
             (
-                (frame_idx - t) * tpos_sign_mul
+                frame_idx - t
                 if model.use_signed_tpos_enc_to_obj_ptrs
                 else abs(frame_idx - t)
             ),
@@ -290,8 +262,8 @@ def collect_object_pointer_refs(
 
     for t_diff in range(1, max_obj_ptrs):
         if not model.use_memory_selection:
-            t = frame_idx + t_diff if track_in_reverse else frame_idx - t_diff
-            if t < 0 or (num_frames is not None and t >= num_frames):
+            t = frame_idx - t_diff
+            if t < 0:
                 break
         else:
             if -t_diff <= -len(valid_indices):
@@ -341,9 +313,9 @@ def append_object_pointer_prompts(
         obj_pos = encode_temporal_positions(model, pos_list, device=device, dummy=True)
 
     obj_pos = obj_pos.unsqueeze(1).expand(-1, batch_size, -1)
-    assert model.mem_dim == channels, (
-        f"obj_ptrs.shape = {obj_ptrs.shape}, C = {channels}"
-    )
+    assert (
+        model.mem_dim == channels
+    ), f"obj_ptrs.shape = {obj_ptrs.shape}, C = {channels}"
     obj_pos = obj_pos.repeat_interleave(multiplex_state.multiplex_count, dim=0)
 
     prompts.append(obj_ptrs)
@@ -357,21 +329,17 @@ def collect_memory_context(
     frame_idx,
     output_dict,
     num_frames,
-    track_in_reverse,
     device,
     batch_size,
     channels,
     multiplex_state,
 ):
-    tpos_sign_mul = -1 if track_in_reverse else 1
     selected_cond_outputs, unselected_cond_outputs, refs, valid_indices = (
         select_memory_outputs(
             model,
             frame_idx=frame_idx,
             output_dict=output_dict,
             num_frames=num_frames,
-            track_in_reverse=track_in_reverse,
-            tpos_sign_mul=tpos_sign_mul,
         )
     )
     prompts, prompt_pos, image_feats, image_pos = collect_memory_prompts(
@@ -388,11 +356,9 @@ def collect_memory_context(
             frame_idx=frame_idx,
             output_dict=output_dict,
             num_frames=num_frames,
-            track_in_reverse=track_in_reverse,
             selected_cond_outputs=selected_cond_outputs,
             unselected_cond_outputs=unselected_cond_outputs,
             valid_indices=valid_indices,
-            tpos_sign_mul=tpos_sign_mul,
         )
         num_obj_ptr_tokens = append_object_pointer_prompts(
             model,

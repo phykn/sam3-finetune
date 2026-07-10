@@ -3,6 +3,7 @@ from typing import NotRequired, Required, TypedDict
 import torch
 
 NO_OBJ_SCORE = -1024.0
+OUTPUT_KEYS = ("cond_frame_outputs", "non_cond_frame_outputs")
 
 
 class SAMOutput(TypedDict, total=True):
@@ -20,7 +21,6 @@ class StageOutput(TypedDict, total=False):
 
     pred_masks: torch.Tensor
     pred_masks_high_res: torch.Tensor
-    point_inputs: dict[str, torch.Tensor]
     mask_inputs: torch.Tensor
     object_score_logits: torch.Tensor
     obj_ptr: torch.Tensor
@@ -37,5 +37,4 @@ class StageOutput(TypedDict, total=False):
     multistep_pred_multimasks: list[torch.Tensor]
     multistep_pred_multimasks_high_res: list[torch.Tensor]
     multistep_pred_ious: list[torch.Tensor]
-    multistep_point_inputs: list[dict]
     multistep_object_score_logits: list[torch.Tensor]

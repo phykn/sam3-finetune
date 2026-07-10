@@ -121,7 +121,8 @@ def start(model, image, mask, device, nested, upstream):
     if not upstream:
         kwargs["device"] = device
     state = model.init_state(**kwargs)
-    model.add_new_masks(
+    add_masks = model.add_new_masks if upstream else model.add_masks
+    add_masks(
         state,
         frame_idx=0,
         obj_ids=[1],
@@ -139,14 +140,15 @@ def predict(model, state, image, device, nested):
     tracker_state["num_frames"] = max(tracker_state["num_frames"], frame_idx + 1)
 
     result = None
-    for result in model.propagate_in_video(
-        tracker_state,
-        start_frame_idx=frame_idx,
-        max_frame_num_to_track=1,
-        reverse=False,
-        tqdm_disable=True,
-        run_mem_encoder=True,
-    ):
+    kwargs = {
+        "start_frame_idx": frame_idx,
+        "max_frame_num_to_track": 1,
+        "tqdm_disable": True,
+        "run_mem_encoder": True,
+    }
+    if not nested:
+        kwargs["reverse"] = False
+    for result in model.propagate_in_video(tracker_state, **kwargs):
         pass
 
     state["next_frame"] = frame_idx + 1

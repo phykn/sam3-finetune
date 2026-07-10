@@ -67,7 +67,6 @@ def _offload_output(self, current_out, memory_encoder_was_used):
         "pred_masks": current_out["pred_masks"].cpu(),
         "pred_masks_high_res": current_out["pred_masks_high_res"].cpu(),
         "object_score_logits": current_out["object_score_logits"],
-        "multistep_point_inputs": current_out["multistep_point_inputs"],
     }
     if self.use_obj_ptrs_in_encoder:
         trimmed_out["obj_ptr"] = current_out["obj_ptr"]
@@ -118,7 +117,6 @@ def _trim_past_output(self, past_out: StageOutput) -> StageOutput:
         "conditioning_objects": past_out["conditioning_objects"],
         "pred_masks": past_out["pred_masks"],
         "object_score_logits": past_out["object_score_logits"],
-        "multistep_point_inputs": past_out["multistep_point_inputs"],
     }
     if self.use_obj_ptrs_in_encoder:
         trimmed_out["obj_ptr"] = past_out["obj_ptr"]

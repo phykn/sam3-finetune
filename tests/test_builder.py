@@ -214,9 +214,13 @@ class FakeVideo(nn.Module):
         self.calls.append(("init_state", args, kwargs))
         return {"state": "video"}
 
-    def add_new_masks(self, *args, **kwargs):
-        self.calls.append(("add_new_masks", args, kwargs))
+    def add_masks(self, *args, **kwargs):
+        self.calls.append(("add_masks", args, kwargs))
         return {"masks": "added"}
+
+    def remove_objects(self, *args, **kwargs):
+        self.calls.append(("remove_objects", args, kwargs))
+        return [1], []
 
     def propagate_in_video_preflight(self, *args, **kwargs):
         self.calls.append(("preflight", args, kwargs))
@@ -229,10 +233,6 @@ class FakeVideo(nn.Module):
     def forward_image(self, *args, **kwargs):
         self.calls.append(("forward_image", args, kwargs))
         return {"image": "features"}
-
-    def forward(self, *args, **kwargs):
-        self.calls.append(("forward", args, kwargs))
-        return {"forward": "out"}
 
 
 class FakeVideoFeatBlock(nn.Module):
@@ -343,34 +343,34 @@ def test_video_model_connects_blocks():
 
     assert model.image_size == 16
     assert model.init_state(device="cpu") == {"state": "video"}
-    assert model.add_new_masks("state", masks="mask") == {"masks": "added"}
+    assert model.add_masks("state", masks="mask") == {"masks": "added"}
+    assert model.remove_objects("state", [2]) == ([1], [])
     assert model.propagate_in_video_preflight("state") == {"preflight": True}
     assert list(model.propagate_in_video("state")) == ["frame_out"]
     assert model.forward_image("image") == {"image": "features"}
-    assert model("batch") == {"forward": "out"}
     assert model.runtime.calls == [
         ("init_state", (), {"device": "cpu"}),
-        ("add_new_masks", ("state",), {"masks": "mask"}),
+        ("add_masks", ("state",), {"masks": "mask"}),
+        ("remove_objects", ("state", [2]), {}),
         ("preflight", ("state",), {}),
         ("propagate", ("state",), {}),
         ("forward_image", ("image",), {}),
-        ("forward", ("batch",), {}),
     ]
 
 
 def test_video_model_assembles_video_blocks(monkeypatch):
-    import src.ml.model.video as model_module
+    import src.ml.model.video.model as model_module
 
     calls = []
 
-    def create_tracking_model(**kwargs):
-        calls.append(kwargs)
+    def create_runtime(backbone, transformer, maskmem_backbone):
+        calls.append((backbone, transformer, maskmem_backbone))
         return FakeVideo()
 
     monkeypatch.setattr(model_module, "VideoFeat", FakeVideoFeatBlock)
     monkeypatch.setattr(model_module, "VideoMem", FakeVideoMemBlock)
     monkeypatch.setattr(model_module, "VideoTrack", FakeVideoTrackBlock)
-    monkeypatch.setattr(model_module, "create_tracking_model", create_tracking_model)
+    monkeypatch.setattr(model_module, "create_runtime", create_runtime)
     model = Sam3VideoModel()
 
     assert isinstance(model.video_feat, FakeVideoFeatBlock)
@@ -378,15 +378,11 @@ def test_video_model_assembles_video_blocks(monkeypatch):
     assert isinstance(model.video_track, FakeVideoTrackBlock)
     assert isinstance(model.runtime, FakeVideo)
     assert calls == [
-        {
-            "backbone": model.video_feat,
-            "maskmem_backbone": model.video_mem.encoder,
-            "transformer": model.video_track.transformer,
-            "image_pe": model.video_track.image_pe,
-            "mask_decoder": model.video_track.mask_decoder,
-            "output_valid_embed": model.video_track.output_valid_embed,
-            "output_invalid_embed": model.video_track.output_invalid_embed,
-        }
+        (
+            model.video_feat,
+            model.video_track.transformer,
+            model.video_mem.encoder,
+        )
     ]
 
 
@@ -539,7 +535,7 @@ def test_grounding_model_loads_path_with_strict_blocks(monkeypatch):
 
 
 def test_video_model_loads_path_with_strict_block(monkeypatch):
-    import src.ml.model.video as model_module
+    import src.ml.model.video.model as model_module
 
     calls = []
 
@@ -547,8 +543,8 @@ def test_video_model_loads_path_with_strict_block(monkeypatch):
         def load_state_dict(self, state, strict=False):
             calls.append(("load_state_dict", state, strict))
 
-    def create_tracking_model(**kwargs):
-        calls.append(("create_tracking_model", kwargs))
+    def create_runtime(backbone, transformer, maskmem_backbone):
+        calls.append(("create_runtime", backbone, transformer, maskmem_backbone))
         return FakeRuntime()
 
     class FakeCheckpoint:
@@ -564,11 +560,11 @@ def test_video_model_loads_path_with_strict_block(monkeypatch):
     monkeypatch.setattr(model_module, "VideoFeat", FakeVideoFeatBlock)
     monkeypatch.setattr(model_module, "VideoMem", FakeVideoMemBlock)
     monkeypatch.setattr(model_module, "VideoTrack", FakeVideoTrackBlock)
-    monkeypatch.setattr(model_module, "create_tracking_model", create_tracking_model)
+    monkeypatch.setattr(model_module, "create_runtime", create_runtime)
 
     model = Sam3VideoModel("model.pt")
 
-    assert calls[0][0] == "create_tracking_model"
+    assert calls[0][0] == "create_runtime"
     assert calls[1:] == [
         ("load", "model.pt"),
         ("load_block", "video", model.runtime),

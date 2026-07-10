@@ -47,12 +47,6 @@ def find_frame_output(inference_state, frame_idx):
 def find_conditioning_objects(inference_state, frame_idx, batch_size):
     conditioning_objects = set()
     for obj_idx in range(batch_size):
-        if _has_frame_input(
-            inference_state["point_inputs_per_obj"], obj_idx, frame_idx
-        ):
-            conditioning_objects.add(obj_idx)
-            continue
-
         if _has_frame_input(inference_state["mask_inputs_per_obj"], obj_idx, frame_idx):
             conditioning_objects.add(obj_idx)
 

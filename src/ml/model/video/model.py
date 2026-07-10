@@ -1,12 +1,12 @@
 import torch
 from torch import nn
 
-from ...io.checkpoint import Checkpoint
-from ..blocks.video_feat import VideoFeat
-from ..blocks.video_mem import VideoMem
-from ..blocks.video_track import VideoTrack
-from ..components.video.tracking_model import create_tracking_model
-from ..structures import NestedTensor
+from ....io.checkpoint import Checkpoint
+from ...blocks.video_feat import VideoFeat
+from ...blocks.video_mem import VideoMem
+from ...blocks.video_track import VideoTrack
+from ...structures import NestedTensor
+from .runtime import create_runtime
 
 
 class Sam3VideoModel(nn.Module):
@@ -15,15 +15,15 @@ class Sam3VideoModel(nn.Module):
         self.video_feat = VideoFeat()
         self.video_mem = VideoMem()
         self.video_track = VideoTrack()
-        self.runtime = create_tracking_model(
-            backbone=self.video_feat,
-            maskmem_backbone=self.video_mem.encoder,
-            transformer=self.video_track.transformer,
-            image_pe=self.video_track.image_pe,
-            mask_decoder=self.video_track.mask_decoder,
-            output_valid_embed=self.video_track.output_valid_embed,
-            output_invalid_embed=self.video_track.output_invalid_embed,
+        self.runtime = create_runtime(
+            self.video_feat,
+            self.video_track.transformer,
+            self.video_mem.encoder,
         )
+        self.runtime.image_pe_layer = self.video_track.image_pe
+        self.runtime.sam_mask_decoder = self.video_track.mask_decoder
+        self.runtime.output_valid_embed = self.video_track.output_valid_embed
+        self.runtime.output_invalid_embed = self.video_track.output_invalid_embed
         if path is not None:
             self.load_weights(Checkpoint.load(path))
 
@@ -38,8 +38,11 @@ class Sam3VideoModel(nn.Module):
     def init_state(self, *args, **kwargs):
         return self.runtime.init_state(*args, **kwargs)
 
-    def add_new_masks(self, *args, **kwargs):
-        return self.runtime.add_new_masks(*args, **kwargs)
+    def add_masks(self, *args, **kwargs):
+        return self.runtime.add_masks(*args, **kwargs)
+
+    def remove_objects(self, *args, **kwargs):
+        return self.runtime.remove_objects(*args, **kwargs)
 
     def propagate_in_video_preflight(self, *args, **kwargs):
         return self.runtime.propagate_in_video_preflight(*args, **kwargs)
@@ -51,10 +54,3 @@ class Sam3VideoModel(nn.Module):
         if isinstance(image, torch.Tensor):
             image = NestedTensor(image, None)
         return self.runtime.forward_image(image, *args, **kwargs)
-
-    def forward(
-        self,
-        *args,
-        **kwargs,
-    ):
-        return self.runtime(*args, **kwargs)

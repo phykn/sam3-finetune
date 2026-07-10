@@ -1,6 +1,6 @@
 import torch
 
-from ..state import OUTPUT_KEYS
+from ..outputs import OUTPUT_KEYS
 
 
 def run_memory_encoder(

@@ -64,7 +64,6 @@ def prepare_memory_conditioned_features(
     feat_sizes,
     output_dict,
     num_frames,
-    track_in_reverse=False,
     use_prev_mem_frame=True,
     multiplex_state: MultiplexState,
 ):
@@ -81,7 +80,7 @@ def prepare_memory_conditioned_features(
         return current["reshaped"]
 
     if is_init_cond_frame or not use_prev_mem_frame:
-        raise NotImplementedError(
+        raise RuntimeError(
             "Any init cond frame should have gone to _use_mask_as_output instead"
         )
 
@@ -90,7 +89,6 @@ def prepare_memory_conditioned_features(
         frame_idx=frame_idx,
         output_dict=output_dict,
         num_frames=num_frames,
-        track_in_reverse=track_in_reverse,
         current=current,
         multiplex_state=multiplex_state,
     )
@@ -160,7 +158,6 @@ def get_memory_context(
     frame_idx,
     output_dict,
     num_frames,
-    track_in_reverse,
     current,
     multiplex_state,
 ):
@@ -169,7 +166,6 @@ def get_memory_context(
         frame_idx=frame_idx,
         output_dict=output_dict,
         num_frames=num_frames,
-        track_in_reverse=track_in_reverse,
         device=current["device"],
         batch_size=current["batch_size"],
         channels=current["channels"],

@@ -8,7 +8,6 @@ def update_existing_frame_masks(
     output_dict,
     frame_idx,
     is_init_cond_frame,
-    point_inputs,
     mask_inputs,
     run_mem_encoder,
     backbone_features_interactive,
@@ -51,7 +50,6 @@ def update_existing_frame_masks(
             inference_state,
             existing_out,
             is_init_cond_frame=is_init_cond_frame,
-            point_inputs=point_inputs,
             mask_inputs=mask_inputs,
             interactive_pix_feat=interactive_pix_feat,
             interactive_high_res_features=interactive_high_res_features,
@@ -99,7 +97,6 @@ def add_masks_to_existing_frame(
     existing_out,
     *,
     is_init_cond_frame,
-    point_inputs,
     mask_inputs,
     interactive_pix_feat,
     interactive_high_res_features,
@@ -111,28 +108,20 @@ def add_masks_to_existing_frame(
     allow_new_buckets,
     prefer_new_buckets,
 ):
-    new_masks, are_masks_from_pts = _resolve_new_masks(
-        self,
-        is_init_cond_frame=is_init_cond_frame,
-        point_inputs=point_inputs,
-        mask_inputs=mask_inputs,
-        interactive_pix_feat=interactive_pix_feat,
-        interactive_high_res_features=interactive_high_res_features,
-        new_obj_idxs=new_obj_idxs,
-        multiplex_state=inference_state["multiplex_state"],
-    )
+    if mask_inputs is None:
+        raise ValueError("mask inputs are required for object updates")
     self.add_new_masks_to_existing_state(
         interactive_pix_feat=interactive_pix_feat,
         interactive_high_res_features=interactive_high_res_features,
         propagation_vision_feats=propagation_vision_feats,
         propagation_feat_sizes=propagation_feat_sizes,
-        new_masks=new_masks,
+        new_masks=mask_inputs,
         obj_idxs_in_mask=new_obj_idxs,
         obj_ids_in_mask=obj_ids_in_mask,
         prev_output=existing_out,
         multiplex_state=inference_state["multiplex_state"],
         add_mask_to_memory=add_mask_to_memory,
-        are_masks_from_pts=are_masks_from_pts,
+        are_masks_from_pts=False,
         allow_new_buckets=allow_new_buckets,
         prefer_new_buckets=prefer_new_buckets,
     )
@@ -173,33 +162,3 @@ def _get_propagation_features(backbone_features_propagation, run_mem_encoder):
         backbone_features_propagation["vision_feats"],
         backbone_features_propagation["feat_sizes"],
     )
-
-
-def _resolve_new_masks(
-    self,
-    *,
-    is_init_cond_frame,
-    point_inputs,
-    mask_inputs,
-    interactive_pix_feat,
-    interactive_high_res_features,
-    new_obj_idxs,
-    multiplex_state,
-):
-    if mask_inputs is not None:
-        return mask_inputs, False
-    if point_inputs is None:
-        return None, False
-
-    with torch.profiler.record_function("VideoTrackingMultiplexDemo.points_to_masks"):
-        multimask_output = self._use_multimask(is_init_cond_frame, point_inputs)
-        interaction_out = self._forward_sam_heads(
-            backbone_features=interactive_pix_feat,
-            point_inputs=point_inputs,
-            mask_inputs=None,
-            interactive_high_res_features=interactive_high_res_features,
-            multimask_output=multimask_output,
-            objects_to_interact=new_obj_idxs,
-            multiplex_state=multiplex_state,
-        )
-        return interaction_out["low_res_masks"], True

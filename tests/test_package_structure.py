@@ -37,7 +37,9 @@ def test_core_packages_are_grouped_by_responsibility():
         "src/ml/blocks/grounding/decoder.py",
         "src/ml/model/image.py",
         "src/ml/model/grounding.py",
-        "src/ml/model/video.py",
+        "src/ml/model/video/model.py",
+        "src/ml/model/video/runtime.py",
+        "src/ml/model/video/state.py",
         "src/build.py",
     )
 

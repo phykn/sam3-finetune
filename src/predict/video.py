@@ -57,3 +57,30 @@ class VideoPredictor:
                 self.device,
                 0.0,
             )
+
+    @torch.inference_mode()
+    def add_masks(
+        self,
+        state: dict[str, object],
+        masks: np.ndarray | torch.Tensor,
+        obj_ids: list[int],
+        frame_idx: int | None = None,
+    ) -> list[int]:
+        with self.autocast():
+            return session.add_masks(
+                self.model,
+                state,
+                masks,
+                obj_ids,
+                self.device,
+                frame_idx,
+            )
+
+    @torch.inference_mode()
+    def remove_objects(
+        self,
+        state: dict[str, object],
+        obj_ids: list[int],
+        strict: bool = True,
+    ) -> list[int]:
+        return session.remove_objects(self.model, state, obj_ids, strict)
