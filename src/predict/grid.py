@@ -1,11 +1,12 @@
 from collections.abc import Iterator
+from numbers import Integral
 from pathlib import Path
 
 import numpy as np
 import torch
 from PIL import Image
 
-from .grid_ops.boxes import filter_candidates, is_edge_cut
+from .grid_ops.boxes import filter_image, is_edge_cut
 from .grid_ops.candidates import (
     expand_mask,
     format_logits,
@@ -31,14 +32,27 @@ def _class_rows(out: dict[str, object], count: int) -> list[np.ndarray | None]:
 
 
 def _match(value: int | tuple[int, ...], count: int) -> tuple[int, ...]:
-    if isinstance(value, int):
-        return (value,) * count
-    value = tuple(value)
-    if len(value) == 1:
-        return value * count
-    if len(value) != count:
+    try:
+        values = (value,) if isinstance(value, Integral) else tuple(value)
+    except TypeError as error:
+        raise ValueError("points_per_side must contain positive integers") from error
+    if not values or any(
+        isinstance(item, bool) or not isinstance(item, Integral) or item <= 0
+        for item in values
+    ):
+        raise ValueError("points_per_side must contain positive integers")
+    if len(values) == 1:
+        return tuple(int(values[0]) for _ in range(count))
+    if len(values) != count:
         raise ValueError("points_per_side must have length 1 or match tiles")
-    return value
+    return tuple(int(item) for item in values)
+
+
+def _positive_int(value, name, zero=False):
+    minimum = 0 if zero else 1
+    if isinstance(value, bool) or not isinstance(value, Integral) or value < minimum:
+        raise ValueError(f"{name} must be an integer >= {minimum}")
+    return int(value)
 
 
 def _local_points(items: list[dict[str, object]]) -> np.ndarray:
@@ -60,17 +74,37 @@ class GridPredictor:
         overlap: float = 0.25,
         batch_size: int = 64,
         min_area: int = 64,
-        nms: float = 0.7,
-        min_stability: float = 0.75,
+        nms_thr: float = 0.7,
+        stability_thr: float = 0.75,
     ) -> None:
+        try:
+            tiles = tuple(tiles)
+        except TypeError as error:
+            raise ValueError("tiles must contain positive integers") from error
+        if not tiles or any(
+            isinstance(tile, bool) or not isinstance(tile, Integral) or tile <= 0
+            for tile in tiles
+        ):
+            raise ValueError("tiles must contain positive integers")
+        if len(set(tiles)) != len(tiles):
+            raise ValueError("tiles must be unique")
+        overlap = float(overlap)
+        nms_thr = float(nms_thr)
+        stability_thr = float(stability_thr)
+        if not 0 <= overlap < 1:
+            raise ValueError("overlap must be between zero and one")
+        if not 0 <= nms_thr <= 1:
+            raise ValueError("nms_thr must be between zero and one")
+        if not 0 <= stability_thr <= 1:
+            raise ValueError("stability_thr must be between zero and one")
         self.single = single
-        self.tiles = tuple(tiles)
+        self.tiles = tuple(int(tile) for tile in tiles)
         self.points_per_side = _match(points_per_side, len(self.tiles))
-        self.overlap = float(overlap)
-        self.batch_size = int(batch_size)
-        self.min_area = int(min_area)
-        self.nms = float(nms)
-        self.min_stability = float(min_stability)
+        self.overlap = overlap
+        self.batch_size = _positive_int(batch_size, "batch_size")
+        self.min_area = _positive_int(min_area, "min_area", zero=True)
+        self.nms_thr = nms_thr
+        self.stability_thr = stability_thr
         self.before: list[dict[str, object]] = []
         self.after: list[dict[str, object]] = []
 
@@ -84,8 +118,8 @@ class GridPredictor:
         overlap: float = 0.25,
         batch_size: int = 64,
         min_area: int = 64,
-        nms: float = 0.7,
-        min_stability: float = 0.75,
+        nms_thr: float = 0.7,
+        stability_thr: float = 0.75,
     ) -> "GridPredictor":
         single = SinglePredictor.from_path(path, device=device)
         return cls(
@@ -95,14 +129,14 @@ class GridPredictor:
             overlap=overlap,
             batch_size=batch_size,
             min_area=min_area,
-            nms=nms,
-            min_stability=min_stability,
+            nms_thr=nms_thr,
+            stability_thr=stability_thr,
         )
 
     def _keep(self, item: dict[str, object]) -> bool:
         return (
             item["area"] >= self.min_area
-            and item["stability_score"] >= self.min_stability
+            and item["stability_score"] >= self.stability_thr
             and not is_edge_cut(item)
         )
 
@@ -275,7 +309,7 @@ class GridPredictor:
             embeds[key] = embed
             items.extend(crop_items)
 
-        self.before = filter_candidates(items, self.nms)
+        self.before = filter_image(items, self.nms_thr)
         refined = self._refine(self.before, embeds)
-        self.after = filter_candidates(refined, self.nms)
+        self.after = filter_image(refined, self.nms_thr)
         return self.after

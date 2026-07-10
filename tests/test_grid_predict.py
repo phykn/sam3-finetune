@@ -1,8 +1,9 @@
 import numpy as np
+import pytest
 import torch
 from PIL import Image
 from src.predict.grid import GridPredictor
-from src.predict.grid_ops.boxes import filter_candidates, find_box, is_edge_cut
+from src.predict.grid_ops.boxes import filter_crop, filter_image, find_box, is_edge_cut
 from src.predict.grid_ops.candidates import expand_mask, make_candidate
 from src.predict.grid_ops.points import filter_points, make_points
 from src.predict.grid_ops.tiles import make_crops
@@ -107,7 +108,7 @@ def test_grid_predictor_runs_tiles_and_batches_points():
         points_per_side=(2, 1),
         overlap=0.0,
         batch_size=3,
-        nms=1.0,
+        nms_thr=1.0,
         min_area=1,
     )
 
@@ -134,7 +135,7 @@ def test_grid_predictor_keeps_refined_class_scores():
         tiles=(1,),
         points_per_side=1,
         batch_size=1,
-        nms=1.0,
+        nms_thr=1.0,
         min_area=1,
     )
 
@@ -260,25 +261,40 @@ def test_is_edge_cut_ignores_outer_image_edges():
     )
 
 
-def test_filter_candidates_ranks_smaller_crop_before_box_nms():
+def test_image_nms_ranks_smaller_crop_before_higher_score():
     full = {
         "bbox": (1, 1, 7, 7),
-        "score": 1.0,
+        "score": 3.0,
         "stability_score": 1.0,
         "crop": (0, 0, 8, 8),
         "image_size": (8, 8),
     }
     small = {
         **full,
+        "score": 1.0,
         "crop": (0, 0, 4, 4),
     }
 
-    out = filter_candidates([full, small], nms=0.5)
+    out = filter_image([full, small], nms_thr=0.5)
 
     assert out == [small]
 
 
-def test_filter_candidates_has_no_count_limit_after_nms():
+def test_crop_nms_ranks_higher_score_before_stability():
+    stable = {
+        "bbox": (1, 1, 7, 7),
+        "score": 1.0,
+        "stability_score": 1.0,
+        "crop": (0, 0, 8, 8),
+    }
+    scored = {**stable, "score": 2.0, "stability_score": 0.8}
+
+    out = filter_crop([stable, scored], nms_thr=0.5)
+
+    assert out == [scored]
+
+
+def test_image_nms_has_no_count_limit():
     items = [
         {
             "bbox": (index * 10, 0, index * 10 + 4, 4),
@@ -290,13 +306,13 @@ def test_filter_candidates_has_no_count_limit_after_nms():
         for index in range(50)
     ]
 
-    out = filter_candidates(items, nms=0.5)
+    out = filter_image(items, nms_thr=0.5)
 
     assert len(out) == 50
 
 
-def test_grid_predictor_filters_by_min_stability_arg():
-    predictor = GridPredictor(FakeSingle(), min_stability=0.8)
+def test_grid_predictor_filters_by_stability_threshold():
+    predictor = GridPredictor(FakeSingle(), stability_thr=0.8)
     item = {
         "area": 100,
         "stability_score": 0.75,
@@ -307,3 +323,29 @@ def test_grid_predictor_filters_by_min_stability_arg():
     }
 
     assert not predictor._keep(item)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"tiles": ()},
+        {"tiles": 1},
+        {"tiles": (1, 1)},
+        {"tiles": (0,)},
+        {"tiles": (1.5,)},
+        {"points_per_side": 0},
+        {"points_per_side": 1.5},
+        {"points_per_side": (1, 2, 3)},
+        {"overlap": -0.1},
+        {"overlap": 1.0},
+        {"batch_size": 0},
+        {"min_area": -1},
+        {"nms_thr": -0.1},
+        {"nms_thr": 1.1},
+        {"stability_thr": -0.1},
+        {"stability_thr": 1.1},
+    ],
+)
+def test_grid_predictor_rejects_invalid_options(kwargs):
+    with pytest.raises(ValueError):
+        GridPredictor(FakeSingle(), **kwargs)
