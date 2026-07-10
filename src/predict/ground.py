@@ -172,8 +172,8 @@ class GroundPredictor:
             out["similarities"] = np.zeros(0, dtype=np.float32)
             return out
 
-        target = sim.vectors(image, out["masks"])
-        sims = sim.scores(ref, target).detach().cpu().numpy()
+        target = sim.mask_vectors(image, out["masks"])
+        sims = sim.max_scores(ref, target).detach().cpu().numpy()
         keep = sim.select(sims, out["scores"], self.sim_thr, self.top_k)
         out["scores"] = out["scores"][keep]
         out["boxes"] = out["boxes"][keep]
@@ -213,7 +213,7 @@ class GroundPredictor:
             encoded = self.model.encode_prompt(embed["image"], **prompt)
         out = {"name": "ref" if name is None else str(name), "prompt": encoded}
         if mask is not None:
-            out["feature"] = sim.vectors(embed["image"], mask)
+            out["feature"] = sim.mask_vectors(embed["image"], mask)
         return out
 
     @torch.inference_mode()
