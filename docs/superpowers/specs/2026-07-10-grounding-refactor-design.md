@@ -1,7 +1,7 @@
 # Grounding Reference Refactor Design
 
-**Status:** Approved
-**Date:** 2026-07-10  
+**Status:** Implemented
+**Date:** 2026-07-10
 **Branch:** `codex/grounding-refactor`
 
 ## Goal
@@ -34,7 +34,7 @@ reference image + reference boxes + integer class IDs
 
 target image
   -> target image features
-  -> decode all reference-class prompts in bounded chunks
+  -> decode each reference-class prompt while reusing target features
   -> predicted boxes and masks
   -> class-specific feature similarity filtering
   -> object dictionaries
@@ -125,25 +125,27 @@ The SAM3.1 grounding score and feature similarity have separate roles:
 Classes are independent. No NMS runs across different classes, so the same target
 object may appear with several class IDs.
 
-## Batched Decode and Memory
+## Execution and Memory
 
 Reference vision encoding runs once per reference image. Target vision encoding
 runs once per `predict()` call.
 
-Box prompts are encoded as a padded class batch. Target prompt groups are decoded
-in chunks controlled by positive `prompt_batch_size`, defaulting to 4. Target image
-features are expanded or indexed for a prompt batch; the vision backbone is never
+Reference box prompts are encoded as a padded class batch. Target prompt groups
+are decoded one at a time with batch size 1. The target vision backbone is never
 rerun per prompt.
 
-For `G` prompt groups, target decoder call count is:
+For `G` prompt groups, the target decoder call count is `G`.
 
-```text
-ceil(G / prompt_batch_size)
-```
+Target prompt batching was implemented and measured, but rejected for the public
+predictor because the BF16 transformer path is shape-dependent. Identical target
+inputs produced an encoder maximum difference of `0.25` between batch sizes 1 and
+4, which changed the final object count from 12 to 13. Float32 reduced the maximum
+difference to `1.57356e-5`, but did not provide exact equality. Sequential target
+decoding preserves exact single-prompt behavior and keeps the execution direction
+simple.
 
-Temporary decode memory is bounded by the chunk size. Score filtering, target mask
-feature extraction, and similarity filtering stay on the GPU. Only retained
-objects are converted to CPU NumPy values.
+Score filtering, target mask feature extraction, and similarity filtering stay on
+the GPU. Only retained objects are converted to CPU NumPy values.
 
 The predictor never returns the decoder `raw` dictionary or other GPU tensors.
 Small encoded reference prompts and box features intentionally stay on the model
@@ -199,7 +201,7 @@ src/predict/ground.py
   encode_reference() and predict() orchestration
 
 src/ml/model/grounding.py
-  public encode/decode model boundary and encoded-image batch alignment
+  public encode/decode boundary and reference prompt batch alignment
 
 src/ml/blocks/grounding/*
   checkpoint-compatible box prompt and decoder math
@@ -231,8 +233,8 @@ Reference input fails with `ValueError` when:
 Boxes are clipped to reference image bounds. Reversed coordinates are invalid and
 are not silently reordered.
 
-Constructor thresholds and `prompt_batch_size` are validated once. `predict()`
-requires a non-empty list of encoded references.
+Constructor thresholds are validated once. `predict()` requires a non-empty list
+of encoded references.
 
 ## Compatibility Boundary
 
@@ -257,7 +259,7 @@ and `raw` removal are approved behavior changes.
 - Maximum exemplar similarity per class.
 - Repeated classes across reference images.
 - One vision pass per reference image and one per target image.
-- `ceil(groups / prompt_batch_size)` target decoder calls.
+- One target decoder call per prompt group while reusing one target image encoding.
 - Same-class NMS and cross-class overlap preservation.
 - CPU NumPy object output without `raw` or GPU tensors.
 - Object dictionary round-trip through existing `Sample/Object` JSON.
@@ -271,18 +273,18 @@ and `raw` removal are approved behavior changes.
 
 ### Performance
 
-Measure sequential prompt-group decoding and chunked decoding on the same loaded
-model and encoded references:
+Measure repeated sequential prompt-group prediction on the same loaded model and
+encoded references:
 
 - reference encoding time;
 - target encoding and decode time;
 - end-to-end latency;
 - peak allocated CUDA memory; and
-- output equality.
+- repeated output equality.
 
 Performance is reported as measured evidence rather than a hardware-independent
 percentage promise. Structural tests guarantee one backbone pass per image,
-bounded chunk memory, and no retained raw result tensors.
+batch-1 target decoding, and no retained raw result tensors.
 
 ## Completion Criteria
 
@@ -290,7 +292,7 @@ bounded chunk memory, and no retained raw result tensors.
 - One and multiple reference images use the same list API.
 - Each reference box retains an individual feature vector.
 - Same-image/class boxes form one trained box prompt.
-- Target image encoding occurs once and prompt groups decode in bounded chunks.
+- Target image encoding occurs once and prompt groups decode sequentially.
 - Same-class NMS removes duplicates; cross-class overlaps remain.
 - Results are CPU NumPy object dictionaries compatible with existing JSON.
 - Prediction results retain no `raw` GPU tensors.

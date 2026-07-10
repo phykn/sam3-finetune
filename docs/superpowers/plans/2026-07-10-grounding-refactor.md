@@ -1,10 +1,14 @@
 # Grounding Reference Refactor Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. The original pre-execution checkboxes are retained below; final status and evidence are recorded separately.
 
-**Goal:** Build a box-reference grounding predictor that extracts per-box class features, reuses each image backbone result, decodes class prompts in bounded chunks, and returns mask objects compatible with existing JSON.
+**Goal:** Build a box-reference grounding predictor that extracts per-box class features, reuses each image backbone result, decodes class prompts sequentially with exact batch-1 behavior, and returns mask objects compatible with existing JSON.
 
-**Architecture:** Each reference image is encoded once. Pixel `xyxy` boxes are grouped by integer class ID into padded box prompts while every box keeps an individual normalized feature vector. The target image is encoded once, prompt groups are decoded in chunks, and candidates are filtered by maximum same-class feature similarity before within-class NMS.
+**Architecture:** Each reference image is encoded once. Pixel `xyxy` boxes are grouped by integer class ID into padded box prompts while every box keeps an individual normalized feature vector. The target image is encoded once, prompt groups are decoded one at a time, and candidates are filtered by maximum same-class feature similarity before within-class NMS.
+
+**Execution status:** Implemented. Batched target decoding was rejected after CUDA
+measurement showed shape-dependent BF16 differences; sequential decoding preserves
+exact single-prompt behavior while still reusing the target image encoding.
 
 **Tech Stack:** Python 3, PyTorch, NumPy, Pillow, torchvision NMS, pytest, Black, Ruff.
 
@@ -208,14 +212,14 @@ git commit -m "refactor: add grounding object output"
 **Interfaces:**
 - `encode_reference(image, boxes, class_ids) -> dict`.
 - `predict(image, references: list[dict]) -> list[dict]`.
-- Constructor options: `score_thr=0.0`, `nms_thr=0.7`, `top_k=None`, `sim_thr=0.0`, `prompt_batch_size=4`.
+- Constructor options: `score_thr=0.0`, `nms_thr=0.7`, `top_k=None`, `sim_thr=0.0`.
 
 - [ ] **Step 1: Write failing public API tests**
 
 Assert reference classes `[2, 1, 2]` produce prompt classes `[1, 2]`, retain all
 three feature classes, and encode the reference image once. Assert five prompt
-groups with batch size 2 encode the target once and decode batches `[2, 2, 1]`.
-Reject a bare reference dict and an empty list.
+groups encode the target once and decode batches `[1, 1, 1, 1, 1]`. Reject a bare
+reference dict and an empty list.
 
 - [ ] **Step 2: Implement `encode_reference()`**
 
@@ -223,11 +227,11 @@ Encode the image once, validate boxes/classes, compute per-box features, group
 boxes, build the padded box batch, encode class prompts once, and return only
 prompt features/mask/classes and per-box features/classes.
 
-- [ ] **Step 3: Implement chunked `predict()`**
+- [ ] **Step 3: Implement sequential `predict()`**
 
-Merge feature banks and prompt groups, encode target once, decode prompt chunks,
-accumulate filtered candidates, and finalize objects. Never return or retain raw
-decoder output.
+Merge feature banks and prompt groups, encode target once, decode each prompt with
+batch size 1, accumulate filtered candidates, and finalize objects. Never return
+or retain raw decoder output.
 
 - [ ] **Step 4: Remove obsolete behavior**
 
@@ -295,8 +299,8 @@ Importing `scripts.bench_ground` must not load weights or run CUDA work.
 - [ ] **Step 2: Implement benchmark**
 
 Load one model and cached visual tokens, encode several class box prompts, warm up,
-then compare `prompt_batch_size=1` and `4`. Synchronize CUDA, reset/read peak memory,
-assert object outputs match, and print latency, peak VRAM, and counts.
+then measure two repeated predictions. Synchronize CUDA, reset/read peak memory,
+assert repeated object outputs match, and print latency, peak VRAM, and counts.
 
 - [ ] **Step 3: Run real verification**
 
@@ -307,13 +311,13 @@ assert object outputs match, and print latency, peak VRAM, and counts.
 ```
 
 Expected: strict load and raw single-box parity pass; result JSON uses
-`sam3.sample.v1`; sequential and chunked outputs match with measurements printed.
+`sam3.sample.v1`; repeated outputs match with measurements printed.
 
 - [ ] **Step 4: Commit benchmark coverage**
 
 ```powershell
 git add scripts/bench_ground.py scripts/parity_ground.py tests/test_scripts_standalone.py
-git commit -m "test: benchmark grounding prompt batches"
+git commit -m "test: verify grounding inference performance"
 ```
 
 ---
@@ -350,13 +354,31 @@ git status --short
 
 - [ ] **Step 4: Record evidence and commit**
 
-Record full test count, parity values, sequential/chunked latency, peak VRAM, and
-measurement limitations in this plan.
+Record full test count, parity values, repeated latency, peak VRAM, and measurement
+limitations in this plan.
 
 ```powershell
 git add README.md docs/superpowers/plans/2026-07-10-grounding-refactor.md tests
 git commit -m "docs: document grounding box workflow"
 ```
+
+---
+
+## Execution Evidence
+
+- Focused grounding tests: 67 passed.
+- Full test suite: 238 passed.
+- Official SAM3.1 strict checkpoint load: passed.
+- Single-box old/new raw parity: logits, boxes, and masks all had maximum and
+  mean differences of zero; final mask XOR was zero.
+- Final `scripts/ground.py` CUDA run: 20 objects saved and reloaded through the
+  existing JSON path.
+- Repeated CUDA benchmark on NVIDIA GeForce RTX 2060: 12 identical objects;
+  11891.608 ms and 11834.144 ms; 3874.407 MiB peak allocation for both runs.
+- Target batch experiment: BF16 encoder maximum difference `0.25` and object-count
+  drift `12 -> 13` between batch sizes 1 and 4. Float32 maximum difference was
+  `1.57356e-5`. The public predictor therefore uses exact batch-1 target decoding.
+- Changed-file Black, repository Ruff, diff, and protected-path checks passed.
 
 ---
 
@@ -366,10 +388,10 @@ git commit -m "docs: document grounding box workflow"
 - Every box retains an individual normalized feature vector.
 - Same-image/class boxes form one trained box prompt.
 - One and multiple references use the same non-empty list API.
-- Each image backbone runs once and target prompts decode in bounded chunks.
+- Each image backbone runs once and target prompts decode sequentially.
 - Class similarity uses maximum same-class exemplar cosine similarity.
 - Same-class NMS removes duplicates; cross-class overlaps remain.
 - Returned objects contain CPU NumPy masks and no raw GPU tensors.
 - Existing JSON preserves class IDs, compact masks, and metrics.
 - Strict load, raw single-box parity, full tests, style, and protected paths pass.
-- CUDA sequential/chunked equality, latency, and peak VRAM are measured.
+- CUDA repeated-output equality, latency, and peak VRAM are measured.

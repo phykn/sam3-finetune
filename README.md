@@ -96,6 +96,45 @@ video_model = build_video_model(config)
 .\.venv\Scripts\python.exe scripts\video.py
 ```
 
+## Reference Grounding
+
+Grounding uses annotated boxes from one or more reference images to find matching
+objects in a new image. Boxes are pixel-space `(x0, y0, x1, y1)` values with the
+same meaning as `src.data.sample.Object.box`.
+
+```python
+import numpy as np
+
+from src.predict import GroundPredictor
+
+predictor = GroundPredictor.from_path(
+    "weight/sam3.1_multiplex.pt",
+    "weight/visual_token.pt",
+)
+reference = predictor.encode_reference(
+    reference_image,
+    np.array([[20, 30, 80, 100], [100, 25, 160, 95]], dtype=np.float32),
+    np.array([0, 0], dtype=np.int64),
+)
+objects = predictor.predict(target_image, [reference])
+```
+
+Pass additional encoded references in the same list. Every reference box keeps
+its own normalized feature; boxes of the same class in one image form one trained
+box prompt. Target candidates use their predicted masks and the best same-class
+reference similarity. NMS removes duplicates only within a class, so overlaps
+between different classes remain.
+
+Each result is an object dictionary with `object_id`, `class_id`, integer `box`, a
+full boolean `mask`, a low-resolution `logit`, and `score`/`similarity` metrics.
+`scripts/ground.py` converts these objects to the existing `Sample/Object` JSON
+format. Reference masks are not accepted by this API; a mask-to-box helper can be
+added separately if needed.
+
+The target image backbone runs once. Class prompts then decode sequentially with
+batch size 1 to preserve exact SAM3.1 BF16 single-prompt behavior. Score and
+similarity filtering stay on the GPU, and raw decoder tensors are not returned.
+
 The video predictor tracks forward from mask prompts. Objects can be added on
 the latest cached frame or removed explicitly:
 
