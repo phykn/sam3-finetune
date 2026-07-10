@@ -106,8 +106,8 @@ def test_prompt_groups_preserve_reference_order():
         },
         {
             "prompt": {
-                "features": torch.zeros(3, 2, 2),
-                "mask": torch.zeros(2, 3, dtype=torch.bool),
+                "features": torch.zeros(4, 2, 2),
+                "mask": torch.zeros(2, 4, dtype=torch.bool),
             },
             "prompt_classes": np.array([1, 3]),
         },
@@ -115,6 +115,7 @@ def test_prompt_groups_preserve_reference_order():
 
     prompt, classes = reference.prompt_groups(references)
 
-    assert prompt["features"].shape == (3, 3, 2)
-    assert prompt["mask"].shape == (3, 3)
+    assert prompt["features"].shape == (4, 3, 2)
+    assert prompt["mask"].shape == (3, 4)
+    assert prompt["mask"][0].tolist() == [False, False, False, True]
     assert classes.tolist() == [2, 1, 3]

@@ -1,161 +1,131 @@
 import numpy as np
+import pytest
 import torch
 from PIL import Image
+
 from src.predict.ground import GroundPredictor
 
 
 class FakeGroundModel(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.images = []
-        self.prompts = []
-        self.decodes = []
+        self.image_calls = 0
+        self.prompt_calls = []
+        self.decode_batches = []
 
-    def encode_image(self, image):
-        self.images.append(tuple(image.shape))
+    def encode_image(self, _image):
+        self.image_calls += 1
+        features = torch.zeros(1, 2, 2, 2)
+        features[:, 0] = 1
+        return {"backbone_fpn": (features,)}
+
+    def encode_box_prompts(self, image, boxes, labels, box_mask):
+        self.prompt_calls.append((image, boxes, labels, box_mask))
+        batch = boxes.shape[1]
         return {
-            "image": image,
-            "backbone_fpn": (torch.ones(1, 2, 2, 2),),
+            "features": torch.zeros(3, batch, 2),
+            "mask": torch.zeros(batch, 3, dtype=torch.bool),
         }
 
-    def encode_prompt(self, image, **prompt):
-        self.prompts.append(prompt)
+    def decode(self, _image, prompt):
+        batch = prompt["features"].shape[1]
+        self.decode_batches.append(batch)
         return {
-            "features": torch.zeros(1, 1, 2),
-            "mask": torch.zeros(1, 1, dtype=torch.bool),
-            "prompt": prompt,
-        }
-
-    def decode(self, image, prompt):
-        self.decodes.append((image, prompt))
-        return {
-            "pred_logits": torch.tensor([[[2.0], [-2.0]]]),
-            "pred_boxes": torch.tensor([[[0.5, 0.5, 0.5, 0.5], [0.2, 0.2, 0.1, 0.1]]]),
-            "pred_masks": torch.tensor(
-                [
-                    [
-                        [[2.0, 2.0], [2.0, 2.0]],
-                        [[-2.0, -2.0], [-2.0, -2.0]],
-                    ]
-                ]
-            ),
-            "raw": {},
+            "pred_logits": torch.full((batch, 1, 1), 4.0),
+            "pred_boxes": torch.tensor([0.5, 0.5, 0.5, 0.5]).repeat(batch, 1, 1),
+            "pred_masks": torch.full((batch, 1, 2, 2), 2.0),
+            "raw": {"unused": torch.ones(10)},
         }
 
 
-class FakeRefModel(FakeGroundModel):
-    def encode_image(self, image):
-        self.images.append(tuple(image.shape))
-        fpn = torch.tensor([[[[1.0, 0.0], [0.0, 0.0]], [[0.0, 0.0], [0.0, 1.0]]]])
-        return {
-            "image": image,
-            "backbone_fpn": (fpn,),
-        }
-
-    def decode(self, image, prompt):
-        self.decodes.append((image, prompt))
-        return {
-            "pred_logits": torch.tensor([[[4.0], [1.0]]]),
-            "pred_boxes": torch.tensor(
-                [[[0.75, 0.75, 0.4, 0.4], [0.25, 0.25, 0.4, 0.4]]]
-            ),
-            "pred_masks": torch.tensor(
-                [
-                    [
-                        [[-2.0, -2.0], [-2.0, 2.0]],
-                        [[2.0, -2.0], [-2.0, -2.0]],
-                    ]
-                ]
-            ),
-            "raw": {},
-        }
-
-
-def test_ground_predictor_encodes_mask_reference_as_visual_prompt():
+def test_encode_reference_groups_boxes_by_class_and_encodes_image_once():
     model = FakeGroundModel()
     predictor = GroundPredictor(model, device="cpu")
-    mask = np.zeros((8, 8), dtype=bool)
-    mask[2:6, 1:5] = True
 
-    ref = predictor.encode_ref(Image.new("RGB", (8, 8)), mask=mask, name="frog")
+    reference = predictor.encode_reference(
+        Image.new("RGB", (8, 8)),
+        [[0, 0, 4, 4], [4, 4, 8, 8], [1, 1, 3, 3]],
+        [2, 1, 2],
+    )
 
-    prompt = model.prompts[0]
-    assert ref["name"] == "frog"
-    assert prompt["boxes"] is None
-    assert prompt["points"] is None
-    assert prompt["masks"].shape == (1, 1, 1, 8, 8)
-    assert ref["feature"].shape == (1, 2)
+    assert model.image_calls == 1
+    assert reference["prompt_classes"].tolist() == [1, 2]
+    assert reference["feature_classes"].tolist() == [2, 1, 2]
+    _image, boxes, _labels, box_mask = model.prompt_calls[0]
+    assert boxes.shape == (2, 2, 4)
+    assert box_mask.tolist() == [[False, True], [False, False]]
 
 
-def test_ground_predictor_keeps_multiple_mask_reference_features():
+def test_predict_encodes_target_once_and_decodes_prompt_chunks():
+    model = FakeGroundModel()
+    predictor = GroundPredictor(model, device="cpu", prompt_batch_size=2)
+    boxes = [[index, 0, index + 1, 2] for index in range(5)]
+    reference = predictor.encode_reference(
+        Image.new("RGB", (8, 8)),
+        boxes,
+        [0, 1, 2, 3, 4],
+    )
+
+    objects = predictor.predict(Image.new("RGB", (8, 8)), [reference])
+
+    assert model.image_calls == 2
+    assert model.decode_batches == [2, 2, 1]
+    assert [item["class_id"] for item in objects] == [0, 1, 2, 3, 4]
+    assert all("raw" not in item for item in objects)
+    assert all(isinstance(item["mask"], np.ndarray) for item in objects)
+
+
+def test_predict_merges_same_class_features_across_references():
     model = FakeGroundModel()
     predictor = GroundPredictor(model, device="cpu")
-    masks = np.zeros((2, 8, 8), dtype=bool)
-    masks[0, 2:6, 1:5] = True
-    masks[1, :3, :3] = True
-
-    ref = predictor.encode_ref(Image.new("RGB", (8, 8)), mask=masks, name="flower")
-
-    prompt = model.prompts[0]
-    assert prompt["masks"].shape == (2, 1, 1, 8, 8)
-    assert ref["feature"].shape == (2, 2)
-
-
-def test_ground_predictor_predicts_each_reference_separately():
-    model = FakeGroundModel()
-    predictor = GroundPredictor(
-        model,
-        device="cpu",
-        score_thresh=0.5,
-    )
-    ref_a = predictor.encode_ref(
+    first = predictor.encode_reference(
         Image.new("RGB", (8, 8)),
-        box=[1, 1, 6, 6],
-        name="frog",
+        [[0, 0, 4, 4]],
+        [3],
     )
-    ref_b = predictor.encode_ref(
+    second = predictor.encode_reference(
         Image.new("RGB", (8, 8)),
-        box=[2, 2, 7, 7],
-        name="leaf",
+        [[4, 4, 8, 8]],
+        [3],
     )
 
-    out = predictor.predict(Image.new("RGB", (20, 10)), [ref_a, ref_b])
+    objects = predictor.predict(Image.new("RGB", (8, 8)), [first, second])
 
-    assert set(out) == {"frog", "leaf"}
-    assert len(model.decodes) == 2
-    assert out["frog"]["boxes"].shape == (1, 4)
-    assert out["frog"]["masks"].shape == (1, 10, 20)
-    assert out["frog"]["logits"].shape == (1, 2, 2)
-    assert out["frog"]["scores"].tolist() == [float(torch.sigmoid(torch.tensor(2.0)))]
+    assert len(objects) == 1
+    assert objects[0]["class_id"] == 3
 
 
-def test_ground_predictor_reranks_reference_candidates_by_similarity():
-    model = FakeRefModel()
-    predictor = GroundPredictor(
-        model,
-        device="cpu",
-        top_k=1,
-        sim_thr=0.5,
-    )
-    mask = np.zeros((8, 8), dtype=bool)
-    mask[:4, :4] = True
-    ref = predictor.encode_ref(Image.new("RGB", (8, 8)), mask=mask, name="frog")
-
-    out = predictor.predict(Image.new("RGB", (8, 8)), [ref])["frog"]
-
-    assert out["masks"].shape == (1, 8, 8)
-    assert out["scores"].tolist() == [float(torch.sigmoid(torch.tensor(1.0)))]
-    assert out["similarities"][0] > 0.9
-
-
-def test_ground_predictor_keeps_fixed_image_options():
+def test_predict_requires_non_empty_reference_list():
     predictor = GroundPredictor(FakeGroundModel(), device="cpu")
-    assert not hasattr(predictor, "max_masks")
+    image = Image.new("RGB", (8, 8))
 
-    for kwargs in ({"image_size": 512}, {"max_masks": 1}):
-        try:
-            GroundPredictor(FakeGroundModel(), device="cpu", **kwargs)
-        except TypeError:
-            pass
-        else:
-            raise AssertionError(f"Expected TypeError for {kwargs}")
+    with pytest.raises(TypeError, match="list"):
+        predictor.predict(image, {})
+    with pytest.raises(ValueError, match="empty"):
+        predictor.predict(image, [])
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"prompt_batch_size": 0},
+        {"top_k": 0},
+        {"score_thr": -0.1},
+        {"score_thr": 1.1},
+        {"nms_thr": -0.1},
+        {"nms_thr": 1.1},
+        {"sim_thr": -1.1},
+        {"sim_thr": 1.1},
+    ],
+)
+def test_predictor_rejects_invalid_options(kwargs):
+    with pytest.raises(ValueError):
+        GroundPredictor(FakeGroundModel(), device="cpu", **kwargs)
+
+
+def test_predictor_removes_old_reference_options():
+    predictor = GroundPredictor(FakeGroundModel(), device="cpu")
+
+    assert not hasattr(predictor, "encode_ref")
+    with pytest.raises(TypeError):
+        GroundPredictor(FakeGroundModel(), device="cpu", score_thresh=0.5)

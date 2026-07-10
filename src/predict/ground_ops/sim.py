@@ -68,16 +68,5 @@ def max_scores(ref: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     return (target[:, None] * ref[None]).sum(dim=-1).max(dim=1).values
 
 
-def select(
-    similarities: np.ndarray,
-    scores: np.ndarray,
-    threshold: float,
-    top_k: int | None,
-) -> np.ndarray:
-    keep = np.flatnonzero(np.asarray(similarities) >= threshold)
-    keep = keep[np.argsort(-np.asarray(scores)[keep])]
-    return keep if top_k is None else keep[:top_k]
-
-
 def tensor(value: object) -> torch.Tensor:
     return getattr(value, "tensors", value)

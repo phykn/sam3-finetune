@@ -49,10 +49,17 @@ def feature_bank(references):
 
 
 def prompt_groups(references):
-    features = torch.cat(
-        [item["prompt"]["features"] for item in references],
-        dim=1,
-    )
-    mask = torch.cat([item["prompt"]["mask"] for item in references], dim=0)
+    prompts = [item["prompt"] for item in references]
+    length = max(item["features"].shape[0] for item in prompts)
+    batch = sum(item["features"].shape[1] for item in prompts)
+    channels = prompts[0]["features"].shape[2]
+    features = prompts[0]["features"].new_zeros(length, batch, channels)
+    mask = torch.ones(batch, length, dtype=torch.bool, device=features.device)
+    start = 0
+    for prompt in prompts:
+        size, count = prompt["features"].shape[:2]
+        features[:size, start : start + count] = prompt["features"]
+        mask[start : start + count, :size] = prompt["mask"]
+        start += count
     classes = np.concatenate([item["prompt_classes"] for item in references])
     return {"features": features, "mask": mask}, classes

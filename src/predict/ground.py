@@ -3,14 +3,12 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from PIL import Image
 from torch import nn
 
 from ..data import ground, image as image_data
 from ..ml.model import Sam3GroundingModel
-from ..ops.box import cxcywh_to_xyxy, nms_indices
-from .ground_ops import sim
+from .ground_ops import output, reference, sim
 
 
 class GroundPredictor:
@@ -18,17 +16,30 @@ class GroundPredictor:
         self,
         model: nn.Module,
         device: str | torch.device = "cuda",
-        score_thresh: float = 0.0,
-        nms: float = 0.7,
+        score_thr: float = 0.0,
+        nms_thr: float = 0.7,
         top_k: int | None = None,
         sim_thr: float = 0.0,
+        prompt_batch_size: int = 4,
     ) -> None:
+        if not 0 <= score_thr <= 1:
+            raise ValueError("score_thr must be between zero and one")
+        if not 0 <= nms_thr <= 1:
+            raise ValueError("nms_thr must be between zero and one")
+        if not -1 <= sim_thr <= 1:
+            raise ValueError("sim_thr must be between minus one and one")
+        if top_k is not None and top_k <= 0:
+            raise ValueError("top_k must be positive or None")
+        if prompt_batch_size <= 0:
+            raise ValueError("prompt_batch_size must be positive")
+
         self.device = torch.device(device)
         self.image_size = 1008
-        self.score_thresh = float(score_thresh)
-        self.nms = float(nms)
+        self.score_thr = float(score_thr)
+        self.nms_thr = float(nms_thr)
         self.top_k = None if top_k is None else int(top_k)
         self.sim_thr = float(sim_thr)
+        self.prompt_batch_size = int(prompt_batch_size)
         self.model = model.to(self.device).eval()
 
     @classmethod
@@ -37,19 +48,21 @@ class GroundPredictor:
         path: str | Path,
         visual_path: str | Path | None = None,
         device: str | torch.device = "cuda",
-        score_thresh: float = 0.0,
-        nms: float = 0.7,
+        score_thr: float = 0.0,
+        nms_thr: float = 0.7,
         top_k: int | None = None,
         sim_thr: float = 0.0,
+        prompt_batch_size: int = 4,
     ) -> "GroundPredictor":
         model = Sam3GroundingModel(path=path, visual_path=visual_path)
         return cls(
             model,
             device=device,
-            score_thresh=score_thresh,
-            nms=nms,
+            score_thr=score_thr,
+            nms_thr=nms_thr,
             top_k=top_k,
             sim_thr=sim_thr,
+            prompt_batch_size=prompt_batch_size,
         )
 
     def autocast(self) -> AbstractContextManager:
@@ -57,183 +70,81 @@ class GroundPredictor:
             return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
         return nullcontext()
 
-    @staticmethod
-    def scores(logits: torch.Tensor | np.ndarray) -> np.ndarray:
-        scores = torch.as_tensor(logits).float()
-        if scores.dim() == 3 and scores.shape[-1] == 1:
-            scores = scores[..., 0]
-        if scores.dim() == 2:
-            scores = scores[0]
-        return scores.sigmoid().detach().cpu().numpy()
-
-    @staticmethod
-    def boxes(out: dict[str, object], orig_hw: tuple[int, int]) -> np.ndarray:
-        raw = out.get("raw", {})
-        boxes = raw.get("pred_boxes_xyxy", out["pred_boxes"])
-        boxes = torch.as_tensor(boxes).float()
-        if boxes.dim() == 3:
-            boxes = boxes[0]
-        if "pred_boxes_xyxy" not in raw:
-            boxes = cxcywh_to_xyxy(boxes)
-
-        height, width = orig_hw
-        scale = boxes.new_tensor([width, height, width, height])
-        boxes = (boxes * scale).clamp(min=0)
-        boxes[:, 0::2].clamp_(max=width)
-        boxes[:, 1::2].clamp_(max=height)
-        return boxes.detach().cpu().numpy()
-
-    @staticmethod
-    def masks(
-        mask_logits: torch.Tensor | np.ndarray,
-        orig_hw: tuple[int, int],
-    ) -> np.ndarray:
-        masks = torch.as_tensor(mask_logits).float()
-        if masks.dim() == 4:
-            masks = masks[0]
-        if masks.dim() == 3:
-            masks = masks[:, None]
-        masks = F.interpolate(
-            masks,
-            orig_hw,
-            mode="bilinear",
-            align_corners=False,
-        )
-        return (masks[:, 0] > 0).detach().cpu().numpy()
-
-    @staticmethod
-    def logits(mask_logits: torch.Tensor | np.ndarray) -> np.ndarray:
-        masks = torch.as_tensor(mask_logits).float()
-        if masks.dim() == 4:
-            masks = masks[0]
-        return masks.detach().cpu().numpy()
-
-    def _make_prompt(
-        self,
-        embed: dict[str, object],
-        point: object | None = None,
-        point_label: object | None = None,
-        box: object | None = None,
-        mask: object | None = None,
-    ) -> dict[str, object]:
-        if point is not None and point_label is None:
-            point_label = [1]
-
-        points, point_labels = ground.build_points(
-            point,
-            point_label,
-            embed["orig_hw"],
-            self.device,
-        )
-        boxes, box_labels = ground.build_boxes(box, embed["orig_hw"], self.device)
-        masks, mask_labels = ground.build_masks(mask, self.device)
-        return {
-            "points": points,
-            "point_labels": point_labels,
-            "boxes": boxes,
-            "box_labels": box_labels,
-            "masks": masks,
-            "mask_labels": mask_labels,
-        }
-
-    def format(
-        self,
-        out: dict[str, object],
-        orig_hw: tuple[int, int],
-        filter_candidates: bool = True,
-    ) -> dict[str, object]:
-        scores = self.scores(out["pred_logits"])
-        boxes = self.boxes(out, orig_hw)
-        masks = self.masks(out["pred_masks"], orig_hw)
-        logits = self.logits(out["pred_masks"])
-
-        if filter_candidates:
-            keep = np.flatnonzero(scores >= self.score_thresh)
-            if len(keep) > 0:
-                keep = keep[nms_indices(boxes[keep], scores[keep], self.nms)]
-        else:
-            keep = np.arange(len(scores))
-
-        return {
-            "scores": scores[keep],
-            "boxes": boxes[keep],
-            "masks": masks[keep],
-            "logits": logits[keep],
-            "raw": out,
-        }
-
-    def rerank(
-        self,
-        image: dict[str, object],
-        ref: torch.Tensor,
-        out: dict[str, object],
-    ) -> dict[str, object]:
-        if len(out["masks"]) == 0:
-            out["similarities"] = np.zeros(0, dtype=np.float32)
-            return out
-
-        target = sim.mask_vectors(image, out["masks"])
-        sims = sim.max_scores(ref, target).detach().cpu().numpy()
-        keep = sim.select(sims, out["scores"], self.sim_thr, self.top_k)
-        out["scores"] = out["scores"][keep]
-        out["boxes"] = out["boxes"][keep]
-        out["masks"] = out["masks"][keep]
-        out["logits"] = out["logits"][keep]
-        out["similarities"] = sims[keep]
-        return out
-
     def encode(self, image: Image.Image | np.ndarray) -> dict[str, object]:
         tensor, orig_hw = image_data.make_tensor(image, self.image_size, self.device)
         with self.autocast():
-            image = self.model.encode_image(tensor)
-        return {
-            "image": image,
-            "orig_hw": orig_hw,
-        }
+            encoded = self.model.encode_image(tensor)
+        return {"image": encoded, "orig_hw": orig_hw}
 
     @torch.inference_mode()
-    def encode_ref(
+    def encode_reference(
         self,
         image: Image.Image | np.ndarray,
-        point: object | None = None,
-        point_label: object | None = None,
-        box: object | None = None,
-        mask: object | None = None,
-        name: str | None = None,
+        boxes: object,
+        class_ids: object,
     ) -> dict[str, object]:
-        embed = self.encode(image)
-        prompt = self._make_prompt(
-            embed,
-            point=point,
-            point_label=point_label,
-            box=box,
-            mask=mask,
+        encoded = self.encode(image)
+        boxes, class_ids = reference.validate(
+            boxes,
+            class_ids,
+            encoded["orig_hw"],
+        )
+        features = sim.box_vectors(encoded["image"], boxes, encoded["orig_hw"])
+        prompt_classes, grouped = reference.groups(boxes, class_ids)
+        box_batch, labels, box_mask = ground.build_box_batch(
+            grouped,
+            encoded["orig_hw"],
+            self.device,
         )
         with self.autocast():
-            encoded = self.model.encode_prompt(embed["image"], **prompt)
-        out = {"name": "ref" if name is None else str(name), "prompt": encoded}
-        if mask is not None:
-            out["feature"] = sim.mask_vectors(embed["image"], mask)
-        return out
+            prompt = self.model.encode_box_prompts(
+                encoded["image"],
+                box_batch,
+                labels,
+                box_mask,
+            )
+        return {
+            "prompt": {
+                "features": prompt["features"],
+                "mask": prompt["mask"],
+            },
+            "prompt_classes": prompt_classes,
+            "features": features,
+            "feature_classes": class_ids,
+        }
 
     @torch.inference_mode()
     def predict(
         self,
         image: Image.Image | np.ndarray,
-        refs: dict[str, object] | list[dict[str, object]],
-    ) -> dict[str, dict[str, object]]:
-        target = self.encode(image)
-        if isinstance(refs, dict):
-            refs = [refs]
+        references: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        if not isinstance(references, list):
+            raise TypeError("references must be a list")
+        if not references:
+            raise ValueError("references list is empty")
 
-        out = {}
-        for index, ref in enumerate(refs):
-            name = ref.get("name", f"ref_{index}")
+        bank = reference.feature_bank(references)
+        prompts, class_ids = reference.prompt_groups(references)
+        target = self.encode(image)
+        items = []
+        for start in range(0, len(class_ids), self.prompt_batch_size):
+            end = start + self.prompt_batch_size
+            prompt = {
+                "features": prompts["features"][:, start:end],
+                "mask": prompts["mask"][start:end],
+            }
             with self.autocast():
-                raw = self.model.decode(target["image"], ref["prompt"])
-            if "feature" in ref:
-                full = self.format(raw, target["orig_hw"], filter_candidates=False)
-                out[name] = self.rerank(target["image"], ref["feature"], full)
-            else:
-                out[name] = self.format(raw, target["orig_hw"])
-        return out
+                decoded = self.model.decode(target["image"], prompt)
+            items.extend(
+                output.candidates(
+                    decoded,
+                    target["image"],
+                    class_ids[start:end],
+                    bank,
+                    target["orig_hw"],
+                    self.score_thr,
+                    self.sim_thr,
+                )
+            )
+        return output.finish(items, self.nms_thr, self.top_k)
