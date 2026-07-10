@@ -20,7 +20,6 @@ class GroundPredictor:
         nms_thr: float = 0.7,
         top_k: int | None = None,
         sim_thr: float = 0.0,
-        prompt_batch_size: int = 4,
     ) -> None:
         if not 0 <= score_thr <= 1:
             raise ValueError("score_thr must be between zero and one")
@@ -30,16 +29,12 @@ class GroundPredictor:
             raise ValueError("sim_thr must be between minus one and one")
         if top_k is not None and top_k <= 0:
             raise ValueError("top_k must be positive or None")
-        if prompt_batch_size <= 0:
-            raise ValueError("prompt_batch_size must be positive")
-
         self.device = torch.device(device)
         self.image_size = 1008
         self.score_thr = float(score_thr)
         self.nms_thr = float(nms_thr)
         self.top_k = None if top_k is None else int(top_k)
         self.sim_thr = float(sim_thr)
-        self.prompt_batch_size = int(prompt_batch_size)
         self.model = model.to(self.device).eval()
 
     @classmethod
@@ -52,7 +47,6 @@ class GroundPredictor:
         nms_thr: float = 0.7,
         top_k: int | None = None,
         sim_thr: float = 0.0,
-        prompt_batch_size: int = 4,
     ) -> "GroundPredictor":
         model = Sam3GroundingModel(path=path, visual_path=visual_path)
         return cls(
@@ -62,7 +56,6 @@ class GroundPredictor:
             nms_thr=nms_thr,
             top_k=top_k,
             sim_thr=sim_thr,
-            prompt_batch_size=prompt_batch_size,
         )
 
     def autocast(self) -> AbstractContextManager:
@@ -128,8 +121,8 @@ class GroundPredictor:
         prompts, class_ids = reference.prompt_groups(references)
         target = self.encode(image)
         items = []
-        for start in range(0, len(class_ids), self.prompt_batch_size):
-            end = start + self.prompt_batch_size
+        for start in range(len(class_ids)):
+            end = start + 1
             prompt = {
                 "features": prompts["features"][:, start:end],
                 "mask": prompts["mask"][start:end],

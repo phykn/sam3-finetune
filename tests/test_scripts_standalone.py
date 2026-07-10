@@ -28,6 +28,12 @@ def test_script_files_do_not_import_other_script_files() -> None:
     assert offenders == []
 
 
+def test_ground_benchmark_import_has_no_runtime_side_effects() -> None:
+    import scripts.bench_ground as benchmark
+
+    assert callable(benchmark.main)
+
+
 def test_ground_script_refines_logits_in_one_batch(monkeypatch) -> None:
     import scripts.ground as ground
 

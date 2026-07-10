@@ -56,9 +56,9 @@ def test_encode_reference_groups_boxes_by_class_and_encodes_image_once():
     assert box_mask.tolist() == [[False, True], [False, False]]
 
 
-def test_predict_encodes_target_once_and_decodes_prompt_chunks():
+def test_predict_encodes_target_once_and_decodes_prompts_independently():
     model = FakeGroundModel()
-    predictor = GroundPredictor(model, device="cpu", prompt_batch_size=2)
+    predictor = GroundPredictor(model, device="cpu")
     boxes = [[index, 0, index + 1, 2] for index in range(5)]
     reference = predictor.encode_reference(
         Image.new("RGB", (8, 8)),
@@ -69,7 +69,7 @@ def test_predict_encodes_target_once_and_decodes_prompt_chunks():
     objects = predictor.predict(Image.new("RGB", (8, 8)), [reference])
 
     assert model.image_calls == 2
-    assert model.decode_batches == [2, 2, 1]
+    assert model.decode_batches == [1, 1, 1, 1, 1]
     assert [item["class_id"] for item in objects] == [0, 1, 2, 3, 4]
     assert all("raw" not in item for item in objects)
     assert all(isinstance(item["mask"], np.ndarray) for item in objects)
@@ -108,7 +108,6 @@ def test_predict_requires_non_empty_reference_list():
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"prompt_batch_size": 0},
         {"top_k": 0},
         {"score_thr": -0.1},
         {"score_thr": 1.1},
@@ -129,3 +128,5 @@ def test_predictor_removes_old_reference_options():
     assert not hasattr(predictor, "encode_ref")
     with pytest.raises(TypeError):
         GroundPredictor(FakeGroundModel(), device="cpu", score_thresh=0.5)
+    with pytest.raises(TypeError):
+        GroundPredictor(FakeGroundModel(), device="cpu", prompt_batch_size=2)
