@@ -48,7 +48,7 @@ def test_base_dataset_returns_box_prompt_item(tmp_path):
     assert item["prompt"]["type"] == "box"
     assert item["prompt"]["box"].tolist() == [1.0, 1.0, 3.0, 3.0]
     assert item["target"].sum() == 4
-    assert item["has_mask"] is True
+    assert item["mask_valid"] is True
     assert item["is_auto_bg"] is False
 
 
@@ -210,7 +210,7 @@ def test_valid_dataset_uses_point_prompt_without_aug(tmp_path):
     assert item["image"].shape == (SIZE, SIZE, 3)
     assert item["target"].shape == (MASK_SIZE, MASK_SIZE)
     assert item["prompt"]["type"] == "point"
-    assert item["has_mask"] is True
+    assert item["mask_valid"] is True
     assert item["is_auto_bg"] is False
 
 
@@ -232,7 +232,7 @@ def test_base_dataset_returns_train_item_without_aug(tmp_path):
     )
     item = dataset[0]
 
-    assert set(item) == {"image", "prompt", "target", "has_mask", "is_auto_bg"}
+    assert set(item) == {"image", "prompt", "target", "mask_valid", "is_auto_bg"}
     assert item["image"].shape == (8, 8, 3)
     assert item["prompt"]["type"] == "box"
     assert item["prompt"]["points"] is None
@@ -240,7 +240,7 @@ def test_base_dataset_returns_train_item_without_aug(tmp_path):
     assert item["prompt"]["box"].tolist() == [1.0, 1.0, 3.0, 3.0]
     assert item["prompt"]["mask"] is None
     assert item["target"].sum() == 4
-    assert item["has_mask"] is True
+    assert item["mask_valid"] is True
     assert item["is_auto_bg"] is False
 
 
@@ -329,7 +329,7 @@ def test_base_dataset_marks_object_sample_for_mask_and_full_label_loss(tmp_path)
 
     item = dataset[0]
 
-    assert item["has_mask"] is True
+    assert item["mask_valid"] is True
     assert item["is_auto_bg"] is False
     assert item["label_target"].tolist() == [1.0, 0.0, 1.0]
     assert item["label_weight"].tolist() == [1.0, 1.0, 1.0]
@@ -355,7 +355,7 @@ def test_base_dataset_marks_background_sample_for_label_only(tmp_path):
 
     item = dataset[0]
 
-    assert item["has_mask"] is False
+    assert item["mask_valid"] is False
     assert item["is_auto_bg"] is False
     assert item["label_target"].tolist() == [0.0, 0.0, 0.0]
     assert item["label_weight"].tolist() == [1.0, 0.0, 0.0]
@@ -382,7 +382,7 @@ def test_base_dataset_auto_background_point_uses_label_only(tmp_path):
     item = dataset[0]
 
     assert item["target"].sum() == 0
-    assert item["has_mask"] is False
+    assert item["mask_valid"] is False
     assert item["is_auto_bg"] is True
     assert item["label_target"].tolist() == [0.0, 0.0, 0.0]
     assert item["label_weight"].tolist() == [1.0, 0.0, 0.0]
@@ -426,7 +426,7 @@ def test_base_dataset_returns_background_point_item(tmp_path):
     assert item["prompt"]["type"] == "point"
     assert item["prompt"]["point_labels"].tolist() == [1]
     assert item["target"].sum() == 0
-    assert item["has_mask"] is False
+    assert item["mask_valid"] is False
     assert item["is_auto_bg"] is True
     assert obj.mask(item["image"].shape)[y, x] == 0
 
@@ -454,7 +454,7 @@ def test_base_dataset_returns_mask_prompt_item(tmp_path, monkeypatch):
     assert item["prompt"]["point_labels"] is None
     assert item["prompt"]["box"] is None
     assert np.array_equal(item["prompt"]["mask"], item["target"].astype(np.float32))
-    assert item["has_mask"] is True
+    assert item["mask_valid"] is True
     assert item["is_auto_bg"] is False
 
 
@@ -776,7 +776,7 @@ def test_base_dataset_background_point_uses_augmented_union(tmp_path, monkeypatc
 
     assert item["prompt"]["points"].tolist() == [[0.0, 0.0]]
     assert item["target"].sum() == 0
-    assert item["has_mask"] is False
+    assert item["mask_valid"] is False
     assert item["is_auto_bg"] is True
 
 

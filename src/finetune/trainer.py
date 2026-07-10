@@ -9,7 +9,7 @@ from torch import nn
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
 
-from .loss import auto_bg_label_weight, label_loss, noisy_mask_loss
+from .loss import finetune_loss
 
 
 class FinetuneTrainer:
@@ -127,9 +127,7 @@ class FinetuneTrainer:
                 self.validate()
 
             stats = self._with_valid_stats(stats)
-            progress.set_postfix(
-                {key: f"{value:.4g}" for key, value in stats.items()}
-            )
+            progress.set_postfix({key: f"{value:.4g}" for key, value in stats.items()})
         return stats
 
     def save_checkpoint(self) -> None:
@@ -150,27 +148,7 @@ class FinetuneTrainer:
         batch: dict[str, Any],
         out: dict[str, torch.Tensor],
     ) -> tuple[torch.Tensor, dict[str, float]]:
-        mask = noisy_mask_loss(
-            out["mask_logit"].float(),
-            batch["target"].float(),
-            batch["has_mask"],
-        )
-        label_weight = auto_bg_label_weight(
-            batch["label_weight"].float(),
-            out["object_logit"].float(),
-            batch["is_auto_bg"],
-        )
-        label = label_loss(
-            out["label_logit"].float(),
-            batch["label_target"].float(),
-            label_weight,
-        )
-        loss = mask + label
-        return loss, {
-            "loss": float(loss.detach().cpu()),
-            "mask_loss": float(mask.detach().cpu()),
-            "label_loss": float(label.detach().cpu()),
-        }
+        return finetune_loss(batch, out)
 
     def _with_valid_stats(self, stats: dict[str, float]) -> dict[str, float]:
         out = dict(stats)

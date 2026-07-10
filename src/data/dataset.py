@@ -36,8 +36,9 @@ class BaseDataset(Dataset):
         paths: list[str],
         prompts: list[str] | tuple[str, ...] = PROMPTS,
         conds: list[int] | tuple[int, ...] | None = None,
-        labels: list[dict[str, list[float]]] | tuple[dict[str, list[float]], ...]
-        | None = None,
+        labels: (
+            list[dict[str, list[float]]] | tuple[dict[str, list[float]], ...] | None
+        ) = None,
         bg_prob: float = 0.2,
         box_jitter: float = 0.1,
         image_aug: bool = False,
@@ -214,7 +215,7 @@ class BaseDataset(Dataset):
             "image": image,
             "prompt": prompt,
             "target": self._resize_target_mask(out["target"]),
-            "has_mask": out["has_mask"],
+            "mask_valid": out["has_mask"],
             "is_auto_bg": out["is_auto_bg"],
         }
 
@@ -229,7 +230,7 @@ class BaseDataset(Dataset):
             "image": image,
             "prompt": prompt,
             "target": self._resize_target_mask(target),
-            "has_mask": True,
+            "mask_valid": True,
             "is_auto_bg": False,
         }
 
@@ -244,7 +245,7 @@ class BaseDataset(Dataset):
             "image": image,
             "prompt": prompt,
             "target": self._resize_target_mask(target),
-            "has_mask": True,
+            "mask_valid": True,
             "is_auto_bg": False,
         }
 
@@ -290,9 +291,9 @@ class BaseDataset(Dataset):
                 target = np.zeros_like(target)
                 weight = np.zeros_like(weight)
                 weight[0] = 1.0
-                item["has_mask"] = False
+                item["mask_valid"] = False
             else:
-                item["has_mask"] = True
+                item["mask_valid"] = True
             item["label_target"] = target
             item["label_weight"] = weight
 
@@ -302,8 +303,9 @@ class TrainDataset(BaseDataset):
         self,
         paths: list[str],
         conds: list[int] | tuple[int, ...] | None = None,
-        labels: list[dict[str, list[float]]] | tuple[dict[str, list[float]], ...]
-        | None = None,
+        labels: (
+            list[dict[str, list[float]]] | tuple[dict[str, list[float]], ...] | None
+        ) = None,
         bg_prob: float = 0.2,
         box_jitter: float = 0.1,
     ) -> None:
@@ -323,8 +325,9 @@ class ValidDataset(BaseDataset):
         self,
         paths: list[str],
         conds: list[int] | tuple[int, ...] | None = None,
-        labels: list[dict[str, list[float]]] | tuple[dict[str, list[float]], ...]
-        | None = None,
+        labels: (
+            list[dict[str, list[float]]] | tuple[dict[str, list[float]], ...] | None
+        ) = None,
         bg_prob: float = 0.2,
     ) -> None:
         super().__init__(

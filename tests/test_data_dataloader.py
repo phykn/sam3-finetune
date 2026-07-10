@@ -22,7 +22,7 @@ def test_collate_stacks_tensors_and_keeps_prompt_list():
         {
             "image": np.zeros((4, 4, 3), dtype=np.uint8),
             "target": np.array([[0.0, 0.25], [0.5, 1.0]], dtype=np.float32),
-            "has_mask": True,
+            "mask_valid": True,
             "is_auto_bg": False,
             "cond": 2,
             "label_target": np.array([1.0, 0.0], dtype=np.float32),
@@ -38,7 +38,7 @@ def test_collate_stacks_tensors_and_keeps_prompt_list():
         {
             "image": np.full((4, 4, 3), 255, dtype=np.uint8),
             "target": np.zeros((2, 2), dtype=np.uint8),
-            "has_mask": False,
+            "mask_valid": False,
             "is_auto_bg": True,
             "cond": 5,
             "label_target": np.array([0.0, 1.0], dtype=np.float32),
@@ -58,7 +58,7 @@ def test_collate_stacks_tensors_and_keeps_prompt_list():
     assert out["image"].shape == (2, 3, 4, 4)
     assert out["target"].shape == (2, 1, 2, 2)
     assert out["target"][0, 0].tolist() == [[0.0, 0.25], [0.5, 1.0]]
-    assert out["has_mask"].tolist() == [1.0, 0.0]
+    assert out["mask_valid"].tolist() == [1.0, 0.0]
     assert out["is_auto_bg"].tolist() == [0.0, 1.0]
     assert out["prompt"][0]["type"] == "point"
     assert out["prompt"][1]["box"].tolist() == [0.0, 0.0, 2.0, 2.0]

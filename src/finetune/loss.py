@@ -1,105 +1,110 @@
 import torch
 import torch.nn.functional as F
 
-
-def _num_boxes(value: int | torch.Tensor, device: torch.device) -> torch.Tensor:
-    if isinstance(value, torch.Tensor):
-        return value.to(device=device).clamp_min(1)
-    return torch.tensor(float(max(value, 1)), device=device)
+from .ddp import sum_value, world_size
 
 
-def sigmoid_focal_loss(
-    inputs: torch.Tensor,
-    targets: torch.Tensor,
-    num_boxes: int | torch.Tensor,
-    alpha: float = 0.25,
-    gamma: float = 2.0,
-    reduce: bool = True,
-) -> torch.Tensor:
-    prob = inputs.sigmoid()
-    ce = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
-    pt = prob * targets + (1 - prob) * (1 - targets)
-    loss = ce * ((1 - pt) ** gamma)
-    if alpha >= 0:
-        alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
-        loss = alpha_t * loss
-    if not reduce:
-        return loss
-    return loss.mean(1).sum() / _num_boxes(num_boxes, inputs.device)
+def mask_bce(logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    loss = F.binary_cross_entropy_with_logits(logits, target, reduction="none")
+    return loss.flatten(1).mean(1)
 
 
-def dice_loss(
-    inputs: torch.Tensor,
-    targets: torch.Tensor,
-    num_boxes: int | torch.Tensor,
-    reduce: bool = True,
-) -> torch.Tensor:
-    inputs = inputs.sigmoid().flatten(1)
-    targets = targets.flatten(1)
-    numerator = 2 * (inputs * targets).sum(1)
-    denominator = inputs.sum(1) + targets.sum(1)
-    loss = 1 - (numerator + 1) / (denominator + 1)
-    if not reduce:
-        return loss
-    return loss.sum() / _num_boxes(num_boxes, inputs.device)
+def mask_dice(logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    probability = logits.sigmoid().flatten(1)
+    target = target.flatten(1)
+    overlap = 2 * (probability * target).sum(1)
+    total = probability.sum(1) + target.sum(1)
+    return 1 - (overlap + 1) / (total + 1)
 
 
-def iou_loss(
-    inputs: torch.Tensor,
-    targets: torch.Tensor,
-    pred_ious: torch.Tensor,
-    num_boxes: int | torch.Tensor,
-    use_l1: bool = False,
-) -> torch.Tensor:
-    pred_mask = inputs.flatten(2) > 0
-    gt_mask = targets.flatten(2) > 0
-    area_i = torch.sum(pred_mask & gt_mask, dim=-1).float()
-    area_u = torch.sum(pred_mask | gt_mask, dim=-1).float()
-    actual_ious = area_i / torch.clamp(area_u, min=1.0)
-    if use_l1:
-        loss = F.l1_loss(pred_ious, actual_ious, reduction="none")
-    else:
-        loss = F.mse_loss(pred_ious, actual_ious, reduction="none")
-    return loss.sum() / _num_boxes(num_boxes, inputs.device)
+@torch.no_grad()
+def target_iou(logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    predicted = logits.flatten(2) > 0
+    expected = target.flatten(2) > 0.5
+    intersection = (predicted & expected).sum(-1).float()
+    union = (predicted | expected).sum(-1).float()
+    return intersection / union.clamp_min(1)
 
 
-def auto_bg_label_weight(
+def class_weights(
     weights: torch.Tensor,
-    object_logits: torch.Tensor,
+    logits: torch.Tensor,
     is_auto_bg: torch.Tensor,
 ) -> torch.Tensor:
-    out = weights.clone()
-    if out.shape[-1] == 0:
-        return out
-
-    is_auto_bg = is_auto_bg.to(device=out.device, dtype=torch.bool).flatten()
-    object_prob = object_logits.detach().sigmoid().flatten().to(device=out.device)
-    if object_prob.numel() == 1 and out.shape[0] > 1:
-        object_prob = object_prob.repeat(out.shape[0])
-    out[is_auto_bg, 0] = out[is_auto_bg, 0] * (1.0 - object_prob[is_auto_bg])
+    out = weights.detach().clone()
+    auto = is_auto_bg.to(device=out.device, dtype=torch.bool).flatten()
+    particle = logits[:, 0].detach().sigmoid()
+    out[auto, 0] *= 1 - particle[auto]
     return out
 
 
-def noisy_mask_loss(
-    inputs: torch.Tensor,
-    targets: torch.Tensor,
-    weight: torch.Tensor | None = None,
-) -> torch.Tensor:
-    prob = inputs.sigmoid()
-    brier = (prob - targets).flatten(1).pow(2).mean(1)
-    dice = dice_loss(inputs, targets, num_boxes=1, reduce=False)
-    loss = brier + dice
-    if weight is None:
-        return loss.mean()
+def mean_loss(
+    local_sum: torch.Tensor,
+    local_weight: torch.Tensor,
+) -> tuple[torch.Tensor, float]:
+    weight = torch.as_tensor(
+        local_weight,
+        device=local_sum.device,
+        dtype=local_sum.dtype,
+    )
+    global_weight = sum_value(weight)
+    if global_weight.item() <= 0:
+        return local_sum * 0, 0.0
+    backward = local_sum * (world_size() / global_weight)
+    logged = sum_value(local_sum) / global_weight
+    return backward, float(logged.cpu())
 
-    weight = weight.to(device=loss.device, dtype=loss.dtype).flatten()
-    return (loss * weight).sum() / weight.sum().clamp_min(1.0)
 
+def finetune_loss(
+    batch: dict[str, torch.Tensor],
+    out: dict[str, torch.Tensor],
+) -> tuple[torch.Tensor, dict[str, float]]:
+    mask_logits = out["mask_logits"].float()
+    iou_scores = out["iou_scores"].float()
+    class_logits = out["class_logits"].float()
+    target = batch["target"].float()
+    mask_valid = batch["mask_valid"].to(mask_logits).flatten()
 
-def label_loss(
-    inputs: torch.Tensor,
-    targets: torch.Tensor,
-    weights: torch.Tensor,
-) -> torch.Tensor:
-    loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
-    return (loss * weights).sum() / weights.sum().clamp_min(1.0)
+    if mask_logits.shape != target.shape:
+        raise ValueError("mask target shape must match mask logits")
+    if iou_scores.shape != mask_logits.shape[:2]:
+        raise ValueError("IoU scores must align with masks")
+    if class_logits.shape[:2] != mask_logits.shape[:2]:
+        raise ValueError("class logits must align with masks")
+
+    bce_sum = (mask_bce(mask_logits, target) * mask_valid).sum()
+    dice_sum = (mask_dice(mask_logits, target) * mask_valid).sum()
+    actual_iou = target_iou(mask_logits, target)
+    iou_per_sample = F.mse_loss(iou_scores, actual_iou, reduction="none").mean(1)
+    iou_sum = (iou_per_sample * mask_valid).sum()
+
+    class_logits = class_logits[:, 0]
+    class_target = batch["label_target"].float()
+    if class_logits.shape != class_target.shape:
+        raise ValueError("class target shape must match class logits")
+    weights = class_weights(
+        batch["label_weight"].float(),
+        class_logits,
+        batch["is_auto_bg"],
+    )
+    class_sum = (
+        F.binary_cross_entropy_with_logits(
+            class_logits,
+            class_target,
+            reduction="none",
+        )
+        * weights
+    ).sum()
+
+    bce, bce_value = mean_loss(bce_sum, mask_valid.sum())
+    dice, dice_value = mean_loss(dice_sum, mask_valid.sum())
+    iou, iou_value = mean_loss(iou_sum, mask_valid.sum())
+    classes, class_value = mean_loss(class_sum, weights.sum())
+    total = bce + dice + iou + classes
+    return total, {
+        "loss": bce_value + dice_value + iou_value + class_value,
+        "mask_bce": bce_value,
+        "mask_dice": dice_value,
+        "iou_loss": iou_value,
+        "class_loss": class_value,
+    }

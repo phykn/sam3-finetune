@@ -17,8 +17,8 @@ def collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
     out = {
         "image": torch.stack([to_tensor(item["image"]) for item in batch]),
         "target": torch.stack([mask_to_tensor(item["target"]) for item in batch]),
-        "has_mask": torch.tensor(
-            [float(item["has_mask"]) for item in batch],
+        "mask_valid": torch.tensor(
+            [float(item["mask_valid"]) for item in batch],
             dtype=torch.float32,
         ),
         "is_auto_bg": torch.tensor(
@@ -65,8 +65,9 @@ def make_infinite_train_loader(
     paths: list[str],
     batch_size: int,
     conds: list[int] | tuple[int, ...] | None = None,
-    labels: list[dict[str, list[float]]] | tuple[dict[str, list[float]], ...]
-    | None = None,
+    labels: (
+        list[dict[str, list[float]]] | tuple[dict[str, list[float]], ...] | None
+    ) = None,
     num_workers: int = 4,
 ) -> InfiniteLoader:
     dataset = TrainDataset(paths, conds=conds, labels=labels)

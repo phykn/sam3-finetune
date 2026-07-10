@@ -12,15 +12,15 @@ class TinyFinetuneModel(nn.Module):
         self.frozen = nn.Parameter(torch.tensor(1.0), requires_grad=False)
         self.scale = nn.Parameter(torch.tensor(0.0))
         self.object_bias = nn.Parameter(torch.tensor(0.0))
-        self.label_head = nn.Linear(1, 2)
+        self.class_head = nn.Linear(1, 2)
 
     def forward(self, batch):
         image = batch["image"]
         pooled = image.flatten(1).mean(dim=1, keepdim=True)
         return {
-            "mask_logit": image[:, :1] * self.scale + self.object_bias,
-            "object_logit": pooled * self.scale + self.object_bias,
-            "label_logit": self.label_head(pooled) + self.scale,
+            "mask_logits": image[:, :1] * self.scale + self.object_bias,
+            "iou_scores": pooled * self.scale + self.object_bias,
+            "class_logits": (self.class_head(pooled) + self.scale).unsqueeze(1),
         }
 
 
@@ -28,7 +28,7 @@ def make_batch() -> dict:
     return {
         "image": torch.ones(2, 1, 4, 4),
         "target": torch.zeros(2, 1, 4, 4),
-        "has_mask": torch.tensor([1.0, 0.0]),
+        "mask_valid": torch.tensor([1.0, 0.0]),
         "is_auto_bg": torch.tensor([0.0, 1.0]),
         "label_target": torch.tensor([[1.0, 0.0], [0.0, 0.0]]),
         "label_weight": torch.tensor([[1.0, 1.0], [1.0, 0.0]]),
@@ -70,7 +70,14 @@ def test_train_step_updates_trainable_params_and_saves_checkpoint(tmp_path):
     assert changed
     assert torch.equal(model.frozen.detach(), frozen_before)
     assert trainer.step == 1
-    assert set(stats) == {"loss", "mask_loss", "label_loss", "grad_norm"}
+    assert set(stats) == {
+        "loss",
+        "mask_bce",
+        "mask_dice",
+        "iou_loss",
+        "class_loss",
+        "grad_norm",
+    }
     assert checkpoint["step"] == 1
     assert "optimizer" in checkpoint
     assert "frozen" not in checkpoint["model"]
@@ -146,7 +153,13 @@ def test_valid_step_does_not_update_model(tmp_path):
 
     after = [param.detach() for param in model.parameters()]
     assert all(torch.equal(old, new) for old, new in zip(before, after))
-    assert set(stats) == {"loss", "mask_loss", "label_loss"}
+    assert set(stats) == {
+        "loss",
+        "mask_bce",
+        "mask_dice",
+        "iou_loss",
+        "class_loss",
+    }
 
 
 def test_finetune_package_exports_trainer():

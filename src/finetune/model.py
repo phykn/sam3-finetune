@@ -65,12 +65,11 @@ class FinetuneModel(nn.Module):
                 )
             )
 
-        masks, ious, objects, labels = zip(*decoded)
+        masks, ious, classes = zip(*decoded)
         return {
-            "mask_logit": torch.cat(masks, dim=0),
-            "iou": torch.cat(ious, dim=0),
-            "object_logit": torch.cat(objects, dim=0),
-            "label_logit": torch.cat(labels, dim=0),
+            "mask_logits": torch.cat(masks, dim=0),
+            "iou_scores": torch.cat(ious, dim=0),
+            "class_logits": torch.cat(classes, dim=0),
         }
 
     def adapter_parameters(self) -> list[nn.Parameter]:
@@ -210,7 +209,7 @@ class FinetuneModel(nn.Module):
         cond: torch.Tensor,
         prompt_type: str,
         device: torch.device,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         point_prompt, mask_prompt = build_prompt(
             prompt,
             self.size,
@@ -222,7 +221,7 @@ class FinetuneModel(nn.Module):
             boxes=None,
             masks=mask_prompt,
         )
-        mask, iou, _token, obj, class_logits = self.decode_masks(
+        mask, iou, _token, _obj, class_logits = self.decode_masks(
             image_embed,
             high_res,
             encoded_prompt,
@@ -232,7 +231,7 @@ class FinetuneModel(nn.Module):
             cond=cond,
             prompt_type=prompt_type,
         )
-        return mask, iou, obj, class_logits[:, 0]
+        return mask, iou, class_logits
 
     def _wrap_decoder_linear(
         self,

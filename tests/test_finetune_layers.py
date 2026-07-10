@@ -3,14 +3,6 @@ from torch import nn
 
 from src.finetune.adapter import FeatureAdapter, LoraLinear
 from src.finetune.router import Router
-from src.finetune.loss import (
-    auto_bg_label_weight,
-    dice_loss,
-    iou_loss,
-    label_loss,
-    noisy_mask_loss,
-    sigmoid_focal_loss,
-)
 from src.finetune.model import FinetuneModel
 from src.ml.components.sam.transformer import Attention
 
@@ -247,79 +239,3 @@ def test_finetune_model_uses_image_model_api_with_mix():
             "mix": (1, 2),
         }
     ]
-
-
-def test_losses_match_expected_shapes_and_weights():
-    logits = torch.tensor([[[[0.0, 2.0], [-2.0, 0.0]]]])
-    target = torch.tensor([[[[0.0, 1.0], [0.0, 1.0]]]])
-    iou_pred = torch.tensor([[0.5]])
-    label_logits = torch.tensor([[0.0, 2.0, -2.0]])
-    label_target = torch.tensor([[0.0, 1.0, 0.0]])
-    label_weight = torch.tensor([[1.0, 0.0, 1.0]])
-
-    focal = sigmoid_focal_loss(logits.flatten(1), target.flatten(1), num_boxes=1)
-    dice = dice_loss(logits.flatten(1), target.flatten(1), num_boxes=1)
-    iou = iou_loss(logits, target, iou_pred, num_boxes=1)
-    labels = label_loss(label_logits, label_target, label_weight)
-
-    assert focal.ndim == 0
-    assert dice.ndim == 0
-    assert iou.ndim == 0
-    assert labels.ndim == 0
-    assert labels > 0
-
-
-def test_noisy_mask_loss_uses_only_valid_samples():
-    logits = torch.tensor(
-        [
-            [[[0.0, 0.0], [0.0, 0.0]]],
-            [[[10.0, 10.0], [10.0, 10.0]]],
-        ]
-    )
-    target = torch.tensor(
-        [
-            [[[0.0, 0.5], [1.0, 0.0]]],
-            [[[0.0, 0.0], [0.0, 0.0]]],
-        ]
-    )
-    valid = torch.tensor([True, False])
-
-    prob = logits[:1].sigmoid()
-    expected = (prob - target[:1]).flatten(1).pow(2).mean()
-    expected = expected + dice_loss(logits[:1], target[:1], num_boxes=1)
-
-    loss = noisy_mask_loss(logits, target, valid)
-
-    assert torch.allclose(loss, expected)
-
-
-def test_noisy_mask_loss_returns_zero_for_all_invalid_samples():
-    logits = torch.randn(2, 1, 3, 3, requires_grad=True)
-    target = torch.rand(2, 1, 3, 3)
-    valid = torch.tensor([False, False])
-
-    loss = noisy_mask_loss(logits, target, valid)
-    loss.backward()
-
-    assert loss.item() == 0.0
-    assert torch.isfinite(loss)
-    assert torch.equal(logits.grad, torch.zeros_like(logits))
-
-
-def test_auto_bg_label_weight_softens_only_first_label():
-    weights = torch.tensor(
-        [
-            [1.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [1.0, 1.0, 1.0],
-        ]
-    )
-    object_logits = torch.tensor([[-2.0], [2.0], [2.0]])
-    is_auto_bg = torch.tensor([True, True, False])
-
-    out = auto_bg_label_weight(weights, object_logits, is_auto_bg)
-    expected_bg = 1.0 - object_logits[:2].sigmoid().flatten()
-
-    assert torch.allclose(out[:2, 0], expected_bg)
-    assert out[:2, 1:].sum() == 0
-    assert out[2].tolist() == [1.0, 1.0, 1.0]
