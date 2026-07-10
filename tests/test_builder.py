@@ -14,7 +14,7 @@ def test_build_image_model_returns_image_model():
 
 
 def test_image_model_decode_accepts_finetune_options():
-    class FakeSamMask(nn.Module):
+    class FakeImageMaskDecoder(nn.Module):
         def __init__(self):
             super().__init__()
             self.calls = []
@@ -40,7 +40,7 @@ def test_image_model_decode_accepts_finetune_options():
 
     model = Sam3ImageModel.__new__(Sam3ImageModel)
     nn.Module.__init__(model)
-    model.sam_mask = FakeSamMask()
+    model.sam_mask = FakeImageMaskDecoder()
 
     out = model.decode_masks(
         torch.zeros(1, 256, 2, 2),
@@ -206,7 +206,7 @@ class FakeVideo(nn.Module):
         super().__init__()
         self.calls = []
 
-    def from_ckpt(self, ckpt, strict=False):
+    def load_weights(self, ckpt, strict=False):
         self.calls.append(("from_ckpt", ckpt, strict))
         return self
 
@@ -283,17 +283,17 @@ class FakeVideoTrackBlock(nn.Module):
         }
 
 
-class FakeGroundImage(nn.Module):
+class FakeGroundingImage(nn.Module):
     def forward(self, features):
         return {"image": features}
 
 
-class FakeGroundPrompt(nn.Module):
+class FakeGroundingPromptEncoder(nn.Module):
     def forward(self, image, **kwargs):
         return {"prompt": kwargs, "image": image}
 
 
-class FakeGroundDec(nn.Module):
+class FakeGroundingDecoder(nn.Module):
     def forward(self, image, cond, prompt):
         return {"pred_logits": image, "pred_boxes": cond, "pred_masks": prompt}
 
@@ -312,9 +312,9 @@ def test_grounding_model_connects_blocks():
     nn.Module.__init__(model)
     model.vision = FakeVision()
     model.cond = FakeCond()
-    model.ground_image = FakeGroundImage()
-    model.ground_prompt = FakeGroundPrompt()
-    model.ground_dec = FakeGroundDec()
+    model.ground_image = FakeGroundingImage()
+    model.ground_prompt = FakeGroundingPromptEncoder()
+    model.ground_dec = FakeGroundingDecoder()
 
     out = model(
         images="image",
@@ -359,7 +359,7 @@ def test_video_model_connects_blocks():
 
 
 def test_video_model_assembles_video_blocks(monkeypatch):
-    from src.ml import model as model_module
+    import src.ml.model.video as model_module
 
     calls = []
 
@@ -391,7 +391,7 @@ def test_video_model_assembles_video_blocks(monkeypatch):
 
 
 def test_grounding_model_skips_visual_token_when_path_is_none(monkeypatch):
-    from src.ml import model as model_module
+    import src.ml.model.grounding as model_module
 
     calls = []
 
@@ -399,7 +399,7 @@ def test_grounding_model_skips_visual_token_when_path_is_none(monkeypatch):
         pass
 
     class LoadCond(nn.Module):
-        def from_ckpt(self, ckpt):
+        def load_weights(self, ckpt):
             self.ckpt = ckpt
             return self
 
@@ -410,11 +410,11 @@ def test_grounding_model_skips_visual_token_when_path_is_none(monkeypatch):
         calls.append(path)
         return {"language_features": torch.ones(1), "language_mask": torch.zeros(1)}
 
-    monkeypatch.setattr(model_module, "VisionCore", Empty)
-    monkeypatch.setattr(model_module, "GroundImage", Empty)
-    monkeypatch.setattr(model_module, "GroundPrompt", Empty)
-    monkeypatch.setattr(model_module, "GroundDec", Empty)
-    monkeypatch.setattr(model_module, "VisualCond", LoadCond)
+    monkeypatch.setattr(model_module, "VisionEncoder", Empty)
+    monkeypatch.setattr(model_module, "GroundingImage", Empty)
+    monkeypatch.setattr(model_module, "GroundingPromptEncoder", Empty)
+    monkeypatch.setattr(model_module, "GroundingDecoder", Empty)
+    monkeypatch.setattr(model_module, "VisualTokens", LoadCond)
     monkeypatch.setattr(model_module, "load_visual", load_visual)
 
     model = Sam3GroundingModel()
@@ -426,7 +426,7 @@ def test_grounding_model_skips_visual_token_when_path_is_none(monkeypatch):
 def test_grounding_model_accepts_visual_token_path(monkeypatch):
     from pathlib import Path
 
-    from src.ml import model as model_module
+    import src.ml.model.grounding as model_module
 
     calls = []
 
@@ -434,7 +434,7 @@ def test_grounding_model_accepts_visual_token_path(monkeypatch):
         pass
 
     class LoadCond(nn.Module):
-        def from_ckpt(self, ckpt):
+        def load_weights(self, ckpt):
             self.ckpt = ckpt
             return self
 
@@ -442,11 +442,11 @@ def test_grounding_model_accepts_visual_token_path(monkeypatch):
         calls.append(path)
         return {"language_features": torch.ones(1), "language_mask": torch.zeros(1)}
 
-    monkeypatch.setattr(model_module, "VisionCore", Empty)
-    monkeypatch.setattr(model_module, "GroundImage", Empty)
-    monkeypatch.setattr(model_module, "GroundPrompt", Empty)
-    monkeypatch.setattr(model_module, "GroundDec", Empty)
-    monkeypatch.setattr(model_module, "VisualCond", LoadCond)
+    monkeypatch.setattr(model_module, "VisionEncoder", Empty)
+    monkeypatch.setattr(model_module, "GroundingImage", Empty)
+    monkeypatch.setattr(model_module, "GroundingPromptEncoder", Empty)
+    monkeypatch.setattr(model_module, "GroundingDecoder", Empty)
+    monkeypatch.setattr(model_module, "VisualTokens", LoadCond)
     monkeypatch.setattr(model_module, "load_visual", load_visual)
 
     Sam3GroundingModel(visual_path=Path("weight/custom_visual.pt"))
@@ -454,8 +454,8 @@ def test_grounding_model_accepts_visual_token_path(monkeypatch):
     assert calls == [Path("weight/custom_visual.pt")]
 
 
-def test_image_model_loads_path_with_from_ckpt(monkeypatch):
-    from src.ml import model as model_module
+def test_image_model_loads_path_with_strict_blocks(monkeypatch):
+    import src.ml.model.image as model_module
 
     calls = []
 
@@ -464,7 +464,7 @@ def test_image_model_loads_path_with_from_ckpt(monkeypatch):
             super().__init__()
             self.name = name
 
-        def from_ckpt(self, ckpt, strict=False):
+        def load_weights(self, ckpt, strict=False):
             calls.append((self.name, ckpt, strict))
             return self
 
@@ -475,10 +475,10 @@ def test_image_model_loads_path_with_from_ckpt(monkeypatch):
             return "ckpt"
 
     monkeypatch.setattr(model_module, "Checkpoint", FakeCheckpoint)
-    monkeypatch.setattr(model_module, "VisionCore", lambda: Block("vision"))
-    monkeypatch.setattr(model_module, "SamImage", lambda: Block("sam_image"))
-    monkeypatch.setattr(model_module, "SamPrompt", lambda: Block("sam_prompt"))
-    monkeypatch.setattr(model_module, "SamMask", lambda: Block("sam_mask"))
+    monkeypatch.setattr(model_module, "VisionEncoder", lambda: Block("vision"))
+    monkeypatch.setattr(model_module, "ImageFeatures", lambda: Block("sam_image"))
+    monkeypatch.setattr(model_module, "ImagePromptEncoder", lambda: Block("sam_prompt"))
+    monkeypatch.setattr(model_module, "ImageMaskDecoder", lambda: Block("sam_mask"))
 
     Sam3ImageModel("model.pt")
 
@@ -491,8 +491,8 @@ def test_image_model_loads_path_with_from_ckpt(monkeypatch):
     ]
 
 
-def test_grounding_model_loads_path_with_from_ckpt(monkeypatch):
-    from src.ml import model as model_module
+def test_grounding_model_loads_path_with_strict_blocks(monkeypatch):
+    import src.ml.model.grounding as model_module
 
     calls = []
 
@@ -501,7 +501,7 @@ def test_grounding_model_loads_path_with_from_ckpt(monkeypatch):
             super().__init__()
             self.name = name
 
-        def from_ckpt(self, ckpt, strict=False):
+        def load_weights(self, ckpt, strict=False):
             calls.append((self.name, ckpt, strict))
             return self
 
@@ -509,7 +509,7 @@ def test_grounding_model_loads_path_with_from_ckpt(monkeypatch):
         pass
 
     class LoadCond(nn.Module):
-        def from_ckpt(self, ckpt):
+        def load_weights(self, ckpt):
             return self
 
     class FakeCheckpoint:
@@ -520,11 +520,13 @@ def test_grounding_model_loads_path_with_from_ckpt(monkeypatch):
 
     monkeypatch.setattr(model_module, "Checkpoint", FakeCheckpoint)
     monkeypatch.setattr(model_module, "load_visual", lambda path: {})
-    monkeypatch.setattr(model_module, "VisualCond", LoadCond)
-    monkeypatch.setattr(model_module, "VisionCore", lambda: Block("vision"))
-    monkeypatch.setattr(model_module, "GroundImage", Empty)
-    monkeypatch.setattr(model_module, "GroundPrompt", lambda: Block("ground_prompt"))
-    monkeypatch.setattr(model_module, "GroundDec", lambda: Block("ground_dec"))
+    monkeypatch.setattr(model_module, "VisualTokens", LoadCond)
+    monkeypatch.setattr(model_module, "VisionEncoder", lambda: Block("vision"))
+    monkeypatch.setattr(model_module, "GroundingImage", Empty)
+    monkeypatch.setattr(
+        model_module, "GroundingPromptEncoder", lambda: Block("ground_prompt")
+    )
+    monkeypatch.setattr(model_module, "GroundingDecoder", lambda: Block("ground_dec"))
 
     Sam3GroundingModel("model.pt")
 
@@ -536,8 +538,8 @@ def test_grounding_model_loads_path_with_from_ckpt(monkeypatch):
     ]
 
 
-def test_video_model_loads_path_with_from_ckpt(monkeypatch):
-    from src.ml import model as model_module
+def test_video_model_loads_path_with_strict_block(monkeypatch):
+    import src.ml.model.video as model_module
 
     calls = []
 
@@ -550,9 +552,8 @@ def test_video_model_loads_path_with_from_ckpt(monkeypatch):
         return FakeRuntime()
 
     class FakeCheckpoint:
-        def block_state(self, prefix):
-            calls.append(("block_state", prefix))
-            return {"w": "state"}
+        def load_block(self, name, module):
+            calls.append(("load_block", name, module))
 
         @classmethod
         def load(cls, path):
@@ -565,13 +566,12 @@ def test_video_model_loads_path_with_from_ckpt(monkeypatch):
     monkeypatch.setattr(model_module, "VideoTrack", FakeVideoTrackBlock)
     monkeypatch.setattr(model_module, "create_tracking_model", create_tracking_model)
 
-    Sam3VideoModel("model.pt")
+    model = Sam3VideoModel("model.pt")
 
     assert calls[0][0] == "create_tracking_model"
     assert calls[1:] == [
         ("load", "model.pt"),
-        ("block_state", "video"),
-        ("load_state_dict", {"w": "state"}, False),
+        ("load_block", "video", model.runtime),
     ]
 
 

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torchvision
 
-from ....ops.box import convert_to_xyxy
+from ....ops.box import cxcywh_to_xyxy
 from ...runtime.checkpointing import activation_ckpt_wrapper
 from ..nn.layers import clone_modules
 from .prompt import Prompt
@@ -64,9 +64,9 @@ class SequenceGeometryEncoder(nn.Module):
         if add_cls:
             self.cls_embed = torch.nn.Embedding(1, self.d_model)
 
-        assert points_direct_project or points_pos_enc or points_pool, (
-            "Error: need at least one way to encode points"
-        )
+        assert (
+            points_direct_project or points_pos_enc or points_pool
+        ), "Error: need at least one way to encode points"
         assert (
             encode_boxes_as_points
             or boxes_direct_project
@@ -108,16 +108,16 @@ class SequenceGeometryEncoder(nn.Module):
 
         self.encode = None
         if num_layers > 0:
-            assert add_cls, (
-                "It's currently highly recommended to add a CLS when using a transformer"
-            )
+            assert (
+                add_cls
+            ), "It's currently highly recommended to add a CLS when using a transformer"
             self.encode = clone_modules(layer, num_layers)
             self.encode_norm = nn.LayerNorm(self.d_model)
 
         if mask_encoder is not None:
-            assert isinstance(mask_encoder, MaskEncoder), (
-                f"Expected mask_encoder of type MaskEncoder. Got {type(mask_encoder)}."
-            )
+            assert isinstance(
+                mask_encoder, MaskEncoder
+            ), f"Expected mask_encoder of type MaskEncoder. Got {type(mask_encoder)}."
             if add_mask_label:
                 self.mask_label_embed = torch.nn.Embedding(2, self.d_model)
         self.add_mask_label = add_mask_label
@@ -174,7 +174,7 @@ class SequenceGeometryEncoder(nn.Module):
             height, width = img_feats.shape[-2:]
 
             # boxes are [Num_boxes, bs, 4], normalized in [0, 1]
-            boxes_xyxy = convert_to_xyxy(boxes)
+            boxes_xyxy = cxcywh_to_xyxy(boxes)
             scale = torch.tensor([width, height, width, height], dtype=boxes_xyxy.dtype)
             scale = scale.pin_memory().to(device=boxes_xyxy.device, non_blocking=True)
             scale = scale.view(1, 1, 4)
@@ -213,15 +213,13 @@ class SequenceGeometryEncoder(nn.Module):
         img_feats: torch.Tensor = None,
     ):
         num_masks, batch_size = masks.shape[:2]
-        assert num_masks == 1, (
-            "We assume one mask per prompt for now. Code should still be functional if this assertion is removed."
-        )
+        assert (
+            num_masks == 1
+        ), "We assume one mask per prompt for now. Code should still be functional if this assertion is removed."
         assert list(attn_mask.shape) == [
             batch_size,
             num_masks,
-        ], (
-            f"Expected attn_mask to be of shape {batch_size}x{num_masks}. Got {list(attn_mask.shape)}."
-        )
+        ], f"Expected attn_mask to be of shape {batch_size}x{num_masks}. Got {list(attn_mask.shape)}."
         masks, pos = self.mask_encoder(
             masks=masks.flatten(0, 1).float(),
             pix_feat=img_feats,
@@ -265,7 +263,7 @@ class SequenceGeometryEncoder(nn.Module):
         assert boxes_labels is not None
         assert boxes.shape[-1] == 4
 
-        box_corners = convert_to_xyxy(boxes).split(split_size=2, dim=-1)
+        box_corners = cxcywh_to_xyxy(boxes).split(split_size=2, dim=-1)
         for corner, label_offset in zip(box_corners, (2, 4)):
             corner_labels = boxes_labels + label_offset
             points, _ = concat_padded_sequences(

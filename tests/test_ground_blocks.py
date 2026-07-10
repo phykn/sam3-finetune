@@ -1,8 +1,8 @@
 from types import SimpleNamespace
 
 import torch
-from src.ml.blocks.ground_dec import GroundDec
-from src.ops.tensor import invert_sigmoid
+from src.ml.blocks.grounding.decoder import GroundingDecoder
+from src.ops.tensor import inverse_sigmoid
 
 
 class FixedScorer:
@@ -30,7 +30,15 @@ def test_ground_decoder_applies_presence_to_scores():
     prompt_mask = torch.zeros(1, 1, dtype=torch.bool)
     presence = torch.zeros(1, 1, 1)
 
-    GroundDec.score_and_box(dec, out, hs, refs, prompt, prompt_mask, presence)
+    GroundingDecoder.predict_detections(
+        dec,
+        out,
+        hs,
+        refs,
+        prompt,
+        prompt_mask,
+        presence,
+    )
 
-    expected = invert_sigmoid(torch.sigmoid(torch.tensor(2.0)) * 0.5)
+    expected = inverse_sigmoid(torch.sigmoid(torch.tensor(2.0)) * 0.5)
     torch.testing.assert_close(out["pred_logits"], expected.expand(1, 2, 1))

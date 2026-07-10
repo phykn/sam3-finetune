@@ -1,11 +1,11 @@
 from torch import nn
 
 
-class VisualCond(nn.Module):
+class VisualTokens(nn.Module):
     def __init__(self) -> None:
         super().__init__()
 
-    def from_ckpt(self, ckpt):
+    def load_weights(self, ckpt):
         self.register_buffer("language_features", ckpt["language_features"])
         self.register_buffer("language_mask", ckpt["language_mask"])
         self.register_buffer("language_embeds", ckpt.get("language_embeds"))

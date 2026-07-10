@@ -16,7 +16,6 @@ from torch import Tensor
 from ...runtime.fused import apply_addmm_activation
 from ...structures import NestedTensor
 from ..nn.layers import LayerScale
-from ..nn.modules import AttentionType
 from ..sam.rope import (
     apply_rotary_enc,
     apply_rotary_enc_real,
@@ -249,7 +248,6 @@ class Attention(nn.Module):
         use_rel_pos: bool = False,
         rel_pos_zero_init: bool = True,
         input_size: Optional[Tuple[int, int]] = None,
-        attn_type: AttentionType = AttentionType.Vanilla,
         cls_token: bool = False,
         use_rope: bool = False,
         rope_theta: float = 10000.0,
@@ -257,16 +255,13 @@ class Attention(nn.Module):
         rope_interp: bool = False,
         rope_tiled: bool = False,
         use_ve_rope: bool = False,
-        use_fa3: bool = False,
         use_rope_real: bool = False,
     ):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim**-0.5
         self.cls_token = cls_token
 
-        self.attn_type = attn_type
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
         self.proj = nn.Linear(dim, dim)
 
@@ -279,7 +274,6 @@ class Attention(nn.Module):
         self.rope_interp = rope_interp
         self.rope_tiled = rope_tiled
         self.use_ve_rope = use_ve_rope
-        self.use_fa3 = use_fa3
         self.use_rope_real = use_rope_real
 
         self._setup_rel_pos(rel_pos_zero_init)
@@ -431,15 +425,7 @@ class Attention(nn.Module):
             q = q.reshape(B, self.num_heads, H * W, -1)
             k = k.reshape(B, self.num_heads, H * W, -1)
 
-        if self.attn_type == AttentionType.Vanilla:
-            if self.use_fa3:
-                raise RuntimeError(
-                    "FA3 attention is not included in the minimal src runtime."
-                )
-            else:
-                x = F.scaled_dot_product_attention(q, k, v)
-        else:
-            raise NotImplementedError
+        x = F.scaled_dot_product_attention(q, k, v)
 
         if ndim == 4:
             x = (
@@ -477,8 +463,6 @@ class Block(nn.Module):
         cls_token: bool = False,
         dropout: float = 0.0,
         init_values: Optional[float] = None,
-        attn_type: AttentionType = AttentionType.Vanilla,
-        use_fa3: bool = False,
         use_rope_real: bool = False,
     ):
         super().__init__()
@@ -490,14 +474,12 @@ class Block(nn.Module):
             use_rel_pos=use_rel_pos,
             rel_pos_zero_init=rel_pos_zero_init,
             input_size=input_size if window_size == 0 else (window_size, window_size),
-            attn_type=attn_type,
             use_rope=use_rope,
             rope_pt_size=rope_pt_size,
             rope_tiled=rope_tiled,
             rope_interp=rope_interp,
             use_ve_rope=use_ve_rope,
             cls_token=cls_token,
-            use_fa3=use_fa3,
             use_rope_real=use_rope_real,
         )
         self.ls1 = (
@@ -567,12 +549,10 @@ class ViT(nn.Module):
         dropout: float = 0.0,
         return_interm_layers: bool = False,
         init_values: Optional[float] = None,
-        attn_type: AttentionType = AttentionType.Vanilla,
         ln_pre: bool = False,
         ln_post: bool = False,
         bias_patch_embed: bool = True,
         compile_mode: Optional[str] = None,
-        use_fa3: bool = False,
         use_rope_real: bool = False,
     ):
         super().__init__()
@@ -590,9 +570,9 @@ class ViT(nn.Module):
         self.retain_cls_token = retain_cls_token
         if self.retain_cls_token:
             assert pretrain_use_cls_token
-            assert len(window_block_indexes) == 0, (
-                "windowing not supported with cls token"
-            )
+            assert (
+                len(window_block_indexes) == 0
+            ), "windowing not supported with cls token"
 
             assert sum(self.rel_pos_blocks) == 0, "rel pos not supported with cls token"
 
@@ -653,8 +633,6 @@ class ViT(nn.Module):
                 cls_token=self.retain_cls_token,
                 dropout=dropout,
                 init_values=init_values,
-                attn_type=attn_type,
-                use_fa3=use_fa3,
                 use_rope_real=use_rope_real,
             )
 

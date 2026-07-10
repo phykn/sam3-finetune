@@ -1,6 +1,3 @@
-from ..backbone.create import create_vision_backbone
-from ..backbone.neck import Sam3TriViTDetNeck
-from ..backbone.vit import ViT
 from .create import (
     BACKBONE_STRIDE,
     create_maskmem_backbone,
@@ -8,7 +5,6 @@ from .create import (
     IMAGE_SIZE,
     MULTIMASK_OUTPUTS,
 )
-from .frame import VideoFrame
 from .tracker.model import Sam3VideoTrackingMultiplexDemo
 from .tracker.multiplex.state import MultiplexController
 
@@ -68,9 +64,8 @@ def make_tracking_kwargs() -> dict:
 
 
 def create_tracking_model(
-    trunk: ViT | None = None,
-    vision_backbone: Sam3TriViTDetNeck | None = None,
-    backbone=None,
+    *,
+    backbone,
     maskmem_backbone=None,
     transformer=None,
     image_pe=None,
@@ -79,25 +74,12 @@ def create_tracking_model(
     output_invalid_embed=None,
     multiplex_count: int = 16,
     max_num_objects: int = 16,
-    use_fa3: bool = False,
     use_rope_real: bool = False,
 ) -> Sam3VideoTrackingMultiplexDemo:
     if maskmem_backbone is None:
         maskmem_backbone = create_maskmem_backbone(multiplex_count=multiplex_count)
     if transformer is None:
-        transformer = create_transformer(
-            use_fa3=use_fa3,
-            use_rope_real=use_rope_real,
-        )
-
-    if backbone is None:
-        if vision_backbone is None:
-            vision_backbone = create_vision_backbone(
-                trunk=trunk,
-                use_fa3=use_fa3,
-                use_rope_real=use_rope_real,
-            )
-        backbone = VideoFrame(vision_backbone=vision_backbone, scalp=0)
+        transformer = create_transformer(use_rope_real=use_rope_real)
 
     multiplex_controller = MultiplexController(
         multiplex_count=multiplex_count,

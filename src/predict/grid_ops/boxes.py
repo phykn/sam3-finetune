@@ -2,7 +2,7 @@ from math import ceil, floor
 
 import numpy as np
 
-from ...ops.box import filter_boxes
+from ...ops.box import nms_indices
 
 
 def find_box(mask: np.ndarray) -> tuple[int, int, int, int] | None:
@@ -65,7 +65,7 @@ def filter_candidates(
         return []
     boxes = np.array([item["bbox"] for item in items], dtype=np.float32)
     scores = np.array([rank_candidate(item) for item in items], dtype=np.float32)
-    keep = filter_boxes(boxes, scores, nms)
+    keep = nms_indices(boxes, scores, nms)
     return [items[index] for index in keep]
 
 

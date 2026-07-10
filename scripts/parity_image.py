@@ -53,7 +53,7 @@ def run_src(image, device):
             embed["image_embed"],
             tuple(embed["high_res_features"]),
             encoded,
-            model.image_pe(device),
+            model.get_image_position_encoding(device),
             True,
             True,
         )

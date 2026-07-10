@@ -8,14 +8,14 @@ LAYERS = {
     "src.data": 0,
     "src.io": 0,
     "src.ops": 0,
-    "src.ml.runtime": 1,
-    "src.ml.structures": 1,
-    "src.ml.components": 2,
-    "src.ml.blocks": 3,
-    "src.ml.model": 4,
-    "src.build": 5,
-    "src.predict": 6,
-    "scripts": 7,
+    "src.ml.runtime": 0,
+    "src.ml.structures": 0,
+    "src.ml.components": 1,
+    "src.ml.blocks": 2,
+    "src.ml.model": 3,
+    "src.build": 4,
+    "src.predict": 4,
+    "scripts": 5,
 }
 
 
@@ -80,13 +80,12 @@ def test_imports_follow_one_way_layers() -> None:
 
 
 def test_model_assembles_blocks_without_video_runtime() -> None:
-    bad = [
-        name
-        for name in import_names(ROOT / "ml" / "model.py")
-        if name.startswith(".video")
-        or name.startswith("src.ml.video")
-        or name == ".blocks.video_tracker"
-    ]
+    bad = []
+    for filename in ("image.py", "grounding.py"):
+        path = ROOT / "ml" / "model" / filename
+        for name in import_names(path):
+            if ".video" in name:
+                bad.append(f"{filename}: {name}")
     assert bad == []
 
 

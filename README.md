@@ -26,6 +26,19 @@ Prediction workflows:
 - `ground`: reference-guided grounding
 - `video`: mask propagation across frames
 
+## Architecture
+
+Runtime dependencies move in one direction:
+
+```text
+data/io/ops/runtime -> components -> blocks -> model -> build/predict -> scripts
+```
+
+- `components` contain reusable mathematical modules.
+- `blocks` assemble components for one model stage.
+- `model` connects blocks for image, grounding, or video workflows.
+- `predict` uses public model methods without importing model internals.
+
 ## Repository Layout
 
 ```text
@@ -33,7 +46,9 @@ config/       model config
 scripts/      runnable examples and parity checks
 src/data/     input preprocessing
 src/io/       checkpoint and video frame loading
-src/ml/       model components, blocks, and assembled models
+src/ml/components/  reusable neural-network components
+src/ml/blocks/      image, grounding, and video model blocks
+src/ml/model/       assembled image, grounding, and video models
 src/ops/      shared tensor and box operations
 src/predict/  prediction workflows
 tests/        unit tests
@@ -96,6 +111,8 @@ Parity checks against the reference implementation:
 
 ## Notes
 
-- Checkpoints are loaded from explicit local paths.
+- Official SAM3.1 checkpoints are loaded strictly from explicit local paths.
+- Checkpoint key translation is owned by `src/io/checkpoint.py`.
+- Checkpoints produced by the previous LoRA rewrite are not supported.
 - Hugging Face loading is intentionally not used in this rewrite path.
 - Cached visual tokens are used for no-text grounding.

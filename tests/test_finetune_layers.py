@@ -41,7 +41,7 @@ class FakeImageApiModel(nn.Module):
     def mask_input_size(self):
         return (288, 288)
 
-    def image_pe(self, device=None):
+    def get_image_position_encoding(self, device=None):
         pe = torch.zeros(1, 256, 2, 2)
         return pe if device is None else pe.to(device)
 
@@ -196,7 +196,7 @@ def test_finetune_model_uses_image_model_api_with_mix():
         encoded["image_embed"],
         tuple(encoded["high_res_features"]),
         prompt,
-        model.image_pe(),
+        model.get_image_position_encoding(),
         multimask=False,
         repeat_image=True,
         cond=1,

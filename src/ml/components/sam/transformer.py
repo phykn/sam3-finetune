@@ -142,16 +142,14 @@ class Attention(nn.Module):
         downsample_rate: int = 1,
         dropout: float = 0.0,
         kv_in_dim: int | None = None,
-        use_fa3: bool = False,
     ) -> None:
         super().__init__()
         kv_dim = kv_in_dim if kv_in_dim is not None else embedding_dim
         self.internal_dim = embedding_dim // downsample_rate
         self.num_heads = num_heads
-        self.use_fa3 = use_fa3
-        assert self.internal_dim % num_heads == 0, (
-            "num_heads must divide embedding_dim."
-        )
+        assert (
+            self.internal_dim % num_heads == 0
+        ), "num_heads must divide embedding_dim."
 
         self.q_proj = nn.Linear(embedding_dim, self.internal_dim)
         self.k_proj = nn.Linear(kv_dim, self.internal_dim)
@@ -178,10 +176,6 @@ class Attention(nn.Module):
         mix: Tensor | None = None,
     ) -> Tensor:
         dropout_p = self.dropout_p if self.training else 0.0
-        if self.use_fa3:
-            raise RuntimeError(
-                "FA3 attention is not included in the minimal src runtime."
-            )
         torch.backends.cuda.enable_flash_sdp(True)
         torch.backends.cuda.enable_math_sdp(True)
         torch.backends.cuda.enable_mem_efficient_sdp(True)
@@ -219,7 +213,6 @@ class RoPEAttention(Attention):
         downsample_rate: int = 1,
         dropout: float = 0.0,
         kv_in_dim: int | None = None,
-        use_fa3: bool = False,
         rope_theta: float = 10000.0,
         rope_k_repeat: bool = False,
         feat_sizes=(64, 64),
@@ -231,7 +224,6 @@ class RoPEAttention(Attention):
             downsample_rate=downsample_rate,
             dropout=dropout,
             kv_in_dim=kv_in_dim,
-            use_fa3=use_fa3,
         )
         self.use_rope_real = use_rope_real
         self.compute_cis = partial(

@@ -27,7 +27,7 @@ class FakeModel(torch.nn.Module):
     def mask_input_size(self):
         return self.prompt_encoder.mask_input_size
 
-    def image_pe(self, device=None):
+    def get_image_position_encoding(self, device=None):
         pe = self.prompt_encoder.get_dense_pe()
         return pe if device is None else pe.to(device)
 

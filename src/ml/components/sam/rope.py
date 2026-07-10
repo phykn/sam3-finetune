@@ -25,6 +25,8 @@ def compute_axial_cis(
     offset: int = 0,
     device=None,
 ):
+    if dim % 4:
+        raise ValueError(f"RoPE dim must be divisible by 4, got {dim}")
     freqs_x = 1.0 / (
         theta ** (torch.arange(0, dim, 4, device=device)[: (dim // 4)].float() / dim)
     )
@@ -65,6 +67,8 @@ def apply_rotary_enc(
     if xk_ is None:
         return xq_out.type_as(xq).to(xq.device), xk
     if repeat_freqs_k:
+        if xk_.shape[-2] % xq_.shape[-2]:
+            raise ValueError("key sequence length must be a multiple of query length")
         r = xk_.shape[-2] // xq_.shape[-2]
         freqs_cis = freqs_cis.repeat(*([1] * (freqs_cis.ndim - 2)), r, 1)
     xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
@@ -97,6 +101,8 @@ def apply_rotary_enc_real(
         xq_real, xq_imag, freqs_cis_real, freqs_cis_imag
     ).flatten(3)
     if repeat_freqs_k:
+        if xk_real.shape[-2] % xq_real.shape[-2]:
+            raise ValueError("key sequence length must be a multiple of query length")
         r = xk_real.shape[-2] // xq_real.shape[-2]
         freqs_cis_real = freqs_cis_real.repeat(*([1] * (freqs_cis_real.ndim - 2)), r, 1)
         freqs_cis_imag = freqs_cis_imag.repeat(*([1] * (freqs_cis_imag.ndim - 2)), r, 1)

@@ -11,7 +11,6 @@ class PositionEmbeddingSine(nn.Module):
         temperature: int = 10000,
         normalize: bool = True,
         scale: float | None = None,
-        precompute_resolution: int | None = None,
     ):
         super().__init__()
         assert num_pos_feats % 2 == 0, "Expecting even model width"
@@ -24,23 +23,7 @@ class PositionEmbeddingSine(nn.Module):
             scale = 2 * math.pi
         self.scale = scale
 
-        self.cache = {}
-        if precompute_resolution is not None:
-            # This avoids symbolic shape tracing failures in torch.compile.
-            precompute_sizes = [
-                (int(precompute_resolution // 3.5), int(precompute_resolution // 3.5)),
-                (precompute_resolution // 4, precompute_resolution // 4),
-                (int(precompute_resolution // 7), int(precompute_resolution // 7)),
-                (precompute_resolution // 8, precompute_resolution // 8),
-                (int(precompute_resolution // 14), int(precompute_resolution // 14)),
-                (precompute_resolution // 16, precompute_resolution // 16),
-                (int(precompute_resolution // 28), int(precompute_resolution // 28)),
-                (precompute_resolution // 32, precompute_resolution // 32),
-            ]
-            for size in precompute_sizes:
-                tensors = torch.zeros((1, 1) + size, device="cuda")
-                self.forward(tensors)
-                self.cache[size] = self.cache[size].clone().detach()
+        self.cache: dict[tuple[int, int, torch.device], torch.Tensor] = {}
 
     def _encode_xy(self, x, y):
         assert len(x) == len(y) and x.ndim == y.ndim == 1
@@ -79,8 +62,7 @@ class PositionEmbeddingSine(nn.Module):
 
     @torch.no_grad()
     def forward(self, x):
-        cache_key = None
-        cache_key = (x.shape[-2], x.shape[-1])
+        cache_key = (x.shape[-2], x.shape[-1], x.device)
         if cache_key in self.cache:
             return self.cache[cache_key][None].repeat(x.shape[0], 1, 1, 1)
         y_embed = (
@@ -112,7 +94,7 @@ class PositionEmbeddingSine(nn.Module):
         ).flatten(3)
         pos = torch.cat((pos_y, pos_x), dim=3).permute(0, 3, 1, 2)
         if cache_key is not None:
-            self.cache[cache_key] = pos[0]
+            self.cache[cache_key] = pos[0].detach()
         return pos
 
 

@@ -13,19 +13,19 @@ REMAP = (
 )
 
 ALIAS = (
-    ("video.interactive_sam_mask_decoder.conv_s0.", ("image.sam_image.proj_s0.",)),
-    ("video.interactive_sam_mask_decoder.conv_s1.", ("image.sam_image.proj_s1.",)),
+    ("video.interactive_sam_mask_decoder.conv_s0.", ("image.features.proj_s0.",)),
+    ("video.interactive_sam_mask_decoder.conv_s1.", ("image.features.proj_s1.",)),
     (
         "video.backbone.vision_backbone.",
         ("image.vision.vision_backbone.",),
     ),
-    ("video.interactive_sam_prompt_encoder.", ("image.sam_prompt.prompt_encoder.",)),
-    ("video.interactive_sam_mask_decoder.", ("image.sam_mask.mask_decoder.",)),
-    ("video.interactivity_no_mem_embed", ("image.sam_image.no_mem",)),
-    ("grounding.geometry_encoder.", ("ground_prompt.encoder.",)),
-    ("grounding.transformer.", ("ground_dec.transformer.",)),
-    ("grounding.dot_prod_scoring.", ("ground_dec.scorer.",)),
-    ("grounding.segmentation_head.", ("ground_dec.seg_head.",)),
+    ("video.interactive_sam_prompt_encoder.", ("image.prompt.prompt_encoder.",)),
+    ("video.interactive_sam_mask_decoder.", ("image.masks.mask_decoder.",)),
+    ("video.interactivity_no_mem_embed", ("image.features.no_mem",)),
+    ("grounding.geometry_encoder.", ("grounding.prompt.encoder.",)),
+    ("grounding.transformer.", ("grounding.decoder.transformer.",)),
+    ("grounding.dot_prod_scoring.", ("grounding.decoder.scorer.",)),
+    ("grounding.segmentation_head.", ("grounding.decoder.seg_head.",)),
 )
 
 
@@ -49,7 +49,11 @@ class Checkpoint:
 
     @classmethod
     def load(cls, path: str | Path) -> "Checkpoint":
-        return cls.from_state(load_pth(path))
+        checkpoint = cls.from_state(load_pth(path))
+        unsupported = [key for key in checkpoint.ignored if not key.startswith(LANG)]
+        if unsupported:
+            raise RuntimeError(f"unsupported checkpoint key: {unsupported[0]}")
+        return checkpoint
 
     @classmethod
     def from_state(cls, ckpt: Mapping) -> "Checkpoint":
@@ -63,6 +67,17 @@ class Checkpoint:
             for key, val in self.state.items()
             if key.startswith(prefix)
         }
+
+    def load_block(self, name: str, module: torch.nn.Module) -> None:
+        state = self.block_state(name)
+        if not state:
+            raise RuntimeError(f"SAM3.1 checkpoint block is empty: {name}")
+        try:
+            module.load_state_dict(state, strict=True)
+        except RuntimeError as error:
+            raise RuntimeError(
+                f"failed to load SAM3.1 block {name}: {error}"
+            ) from error
 
 
 def remap_model(ckpt: Mapping) -> tuple[dict[str, torch.Tensor], list[str]]:

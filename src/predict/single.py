@@ -42,9 +42,9 @@ class SinglePredictor:
             return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
         return nullcontext()
 
-    def get_image_pe(self) -> torch.Tensor:
+    def get_image_position_encoding(self) -> torch.Tensor:
         if self._image_pe is None or self._image_pe.device != self.device:
-            self._image_pe = self.model.image_pe(self.device)
+            self._image_pe = self.model.get_image_position_encoding(self.device)
         return self._image_pe
 
     def _merge_prompt(
@@ -134,7 +134,7 @@ class SinglePredictor:
                 embed["image_embed"],
                 embed["high_res"],
                 encoded_prompt,
-                self.get_image_pe(),
+                self.get_image_position_encoding(),
                 multimask,
                 True,
                 cond=cond,

@@ -1,11 +1,11 @@
 import torch
 from torch import nn
 
-from ..components.sam.mask_decoder import MaskDecoder
-from ..components.sam.transformer import TwoWayTransformer
+from ...components.sam.mask_decoder import MaskDecoder
+from ...components.sam.transformer import TwoWayTransformer
 
 
-class SamMask(nn.Module):
+class ImageMaskDecoder(nn.Module):
     def __init__(self) -> None:
         super().__init__()
         self.mask_decoder = MaskDecoder(
@@ -29,8 +29,8 @@ class SamMask(nn.Module):
             dynamic_multimask_stability_thresh=0.98,
         )
 
-    def from_ckpt(self, ckpt, strict=False):
-        self.load_state_dict(ckpt.block_state("image.sam_mask"), strict=strict)
+    def load_weights(self, ckpt):
+        ckpt.load_block("image.masks", self)
         return self
 
     def forward(

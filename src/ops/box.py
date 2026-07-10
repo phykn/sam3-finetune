@@ -3,8 +3,8 @@ import torch
 from torchvision.ops import nms
 
 
-def convert_to_xyxy(box: torch.Tensor) -> torch.Tensor:
-    center_x, center_y, width, height = box.unbind(-1)
+def cxcywh_to_xyxy(boxes: torch.Tensor) -> torch.Tensor:
+    center_x, center_y, width, height = boxes.unbind(-1)
     return torch.stack(
         [
             center_x - 0.5 * width,
@@ -16,7 +16,7 @@ def convert_to_xyxy(box: torch.Tensor) -> torch.Tensor:
     )
 
 
-def filter_boxes(
+def nms_indices(
     boxes: np.ndarray | torch.Tensor,
     scores: np.ndarray | torch.Tensor,
     iou_threshold: float,

@@ -1,20 +1,74 @@
 import torch
 from torch import nn
 
-from ..components.grounding.create import create_geometry_encoder
-from ..components.grounding.prompt import Prompt
+from ...components.grounding.geometry import SequenceGeometryEncoder
+from ...components.grounding.prompt import Prompt
+from ...components.nn.attention import MultiheadAttention
+from ...components.nn.position import PositionEmbeddingSine
+from ...components.transformer.encoder import TransformerEncoderLayer
+
+MODEL_DIM = 256
+FEEDFORWARD_DIM = 2048
+HEADS = 8
+DROPOUT = 0.1
 
 
-class GroundPrompt(nn.Module):
+def _make_attention(batch_first: bool) -> MultiheadAttention:
+    return MultiheadAttention(
+        num_heads=HEADS,
+        dropout=DROPOUT,
+        embed_dim=MODEL_DIM,
+        batch_first=batch_first,
+    )
+
+
+def _make_position_encoding() -> PositionEmbeddingSine:
+    return PositionEmbeddingSine(
+        num_pos_feats=MODEL_DIM,
+        normalize=True,
+        scale=None,
+        temperature=10000,
+    )
+
+
+def _make_geometry_encoder() -> SequenceGeometryEncoder:
+    layer = TransformerEncoderLayer(
+        activation="relu",
+        d_model=MODEL_DIM,
+        dim_feedforward=FEEDFORWARD_DIM,
+        dropout=DROPOUT,
+        pos_enc_at_attn=False,
+        pre_norm=True,
+        self_attention=_make_attention(batch_first=False),
+        pos_enc_at_cross_attn_queries=False,
+        pos_enc_at_cross_attn_keys=True,
+        cross_attention=_make_attention(batch_first=False),
+    )
+    return SequenceGeometryEncoder(
+        pos_enc=_make_position_encoding(),
+        encode_boxes_as_points=False,
+        points_direct_project=True,
+        points_pool=True,
+        points_pos_enc=True,
+        boxes_direct_project=True,
+        boxes_pool=True,
+        boxes_pos_enc=True,
+        d_model=MODEL_DIM,
+        num_layers=3,
+        layer=layer,
+        use_act_ckpt=True,
+        add_cls=True,
+        add_post_encode_proj=True,
+    )
+
+
+class GroundingPromptEncoder(nn.Module):
     def __init__(self) -> None:
         super().__init__()
-        self.encoder = create_geometry_encoder()
+        self.encoder = _make_geometry_encoder()
 
-    def from_ckpt(self, ckpt, strict=False):
-        self.encoder.load_state_dict(
-            ckpt.block_state("grounding.geometry_encoder"),
-            strict=strict,
-        )
+    def load_weights(self, ckpt):
+        ckpt.load_block("grounding.prompt", self)
         return self
 
     def forward(
@@ -47,11 +101,13 @@ class GroundPrompt(nn.Module):
 
         out = self.encoder(
             geo_prompt=prompt,
-            img_feats=[self.seq(level) for level in image["backbone_fpn"]],
+            img_feats=[self.flatten_spatial(level) for level in image["backbone_fpn"]],
             img_sizes=list(image["feat_sizes"]),
-            img_pos_embeds=[self.seq(pos) for pos in image["vision_pos_enc"]],
+            img_pos_embeds=[
+                self.flatten_spatial(pos) for pos in image["vision_pos_enc"]
+            ],
         )
-        features, prompt_mask = self.out(out)
+        features, prompt_mask = self.unpack_output(out)
         return {"features": features, "mask": prompt_mask, "prompt": prompt}
 
     @staticmethod
@@ -85,7 +141,7 @@ class GroundPrompt(nn.Module):
         )
 
     @staticmethod
-    def seq(value) -> torch.Tensor:
+    def flatten_spatial(value) -> torch.Tensor:
         tensor = getattr(value, "tensors", value)
         if tensor.dim() == 4:
             return tensor.flatten(2).permute(2, 0, 1)
@@ -96,7 +152,7 @@ class GroundPrompt(nn.Module):
         )
 
     @staticmethod
-    def out(out) -> tuple[torch.Tensor, torch.Tensor]:
+    def unpack_output(out) -> tuple[torch.Tensor, torch.Tensor]:
         if isinstance(out, dict):
             features = out.get("features", out.get("prompt_features"))
             mask = out.get("mask", out.get("prompt_mask"))

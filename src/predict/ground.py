@@ -9,7 +9,7 @@ from torch import nn
 
 from ..data import ground, image as image_data
 from ..ml.model import Sam3GroundingModel
-from ..ops.box import convert_to_xyxy, filter_boxes
+from ..ops.box import cxcywh_to_xyxy, nms_indices
 from .ground_ops import sim
 
 
@@ -74,7 +74,7 @@ class GroundPredictor:
         if boxes.dim() == 3:
             boxes = boxes[0]
         if "pred_boxes_xyxy" not in raw:
-            boxes = convert_to_xyxy(boxes)
+            boxes = cxcywh_to_xyxy(boxes)
 
         height, width = orig_hw
         scale = boxes.new_tensor([width, height, width, height])
@@ -150,7 +150,7 @@ class GroundPredictor:
         if filter_candidates:
             keep = np.flatnonzero(scores >= self.score_thresh)
             if len(keep) > 0:
-                keep = keep[filter_boxes(boxes[keep], scores[keep], self.nms)]
+                keep = keep[nms_indices(boxes[keep], scores[keep], self.nms)]
         else:
             keep = np.arange(len(scores))
 

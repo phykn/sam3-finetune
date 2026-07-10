@@ -1,11 +1,11 @@
 from ..nn.position import PositionEmbeddingSine
 from ..sam.transformer import TwoWayTransformer
-from ..transformer.decoder import (
-    DecoupledTransformerDecoderLayerv2,
-    SimpleRoPEAttention,
-    TransformerEncoderDecoupledCrossAttention,
+from ..transformer.video import (
+    RotaryAttention,
+    VideoDecoderLayer,
+    VideoTransformerEncoder,
 )
-from ..transformer.wrapper import TransformerWrapper
+from ..transformer.model import Transformer
 from .memory import CXBlock, SimpleFuser, SimpleMaskDownSampler, SimpleMaskEncoder
 
 D_MODEL = 256
@@ -20,7 +20,6 @@ def create_maskmem_backbone(multiplex_count: int = 16):
         normalize=True,
         scale=None,
         temperature=10000,
-        precompute_resolution=IMAGE_SIZE,
     )
     mask_downsampler = SimpleMaskDownSampler(
         kernel_size=3,
@@ -49,27 +48,25 @@ def create_maskmem_backbone(multiplex_count: int = 16):
     )
 
 
-def create_transformer(use_fa3: bool = False, use_rope_real: bool = False):
-    self_attn = SimpleRoPEAttention(
+def create_transformer(use_rope_real: bool = False):
+    self_attn = RotaryAttention(
         d_model=D_MODEL,
         num_heads=8,
         dropout_p=0.1,
         rope_theta=10000.0,
         feat_sizes=[72, 72],
-        use_fa3=use_fa3,
         use_rope_real=use_rope_real,
     )
-    cross_attn = SimpleRoPEAttention(
+    cross_attn = RotaryAttention(
         d_model=D_MODEL,
         num_heads=8,
         dropout_p=0.1,
         rope_theta=10000.0,
         feat_sizes=[72, 72],
         rope_k_repeat=True,
-        use_fa3=use_fa3,
         use_rope_real=use_rope_real,
     )
-    layer = DecoupledTransformerDecoderLayerv2(
+    layer = VideoDecoderLayer(
         activation="gelu",
         d_model=D_MODEL,
         num_heads=8,
@@ -82,7 +79,7 @@ def create_transformer(use_fa3: bool = False, use_rope_real: bool = False):
         self_attention_rope=self_attn,
         cross_attention_rope=cross_attn,
     )
-    encoder = TransformerEncoderDecoupledCrossAttention(
+    encoder = VideoTransformerEncoder(
         d_model=D_MODEL,
         frozen=False,
         pos_enc_at_input=True,
@@ -92,7 +89,7 @@ def create_transformer(use_fa3: bool = False, use_rope_real: bool = False):
         use_act_checkpoint=False,
         batch_first=True,
     )
-    return TransformerWrapper(encoder=encoder, decoder=None, d_model=D_MODEL)
+    return Transformer(encoder=encoder, decoder=None, d_model=D_MODEL)
 
 
 def make_two_way_transformer(embed_dim):

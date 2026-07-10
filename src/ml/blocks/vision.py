@@ -1,16 +1,68 @@
 import torch
 from torch import nn
 
-from ..components.backbone.create import create_vision_backbone
+from ..components.backbone.neck import Sam3TriViTDetNeck
+from ..components.backbone.vit import ViT
+from ..components.nn.position import PositionEmbeddingSine
 
 
-class VisionCore(nn.Module):
+def _make_vit(use_rope_real: bool = False) -> ViT:
+    return ViT(
+        img_size=1008,
+        pretrain_img_size=336,
+        patch_size=14,
+        embed_dim=1024,
+        depth=32,
+        num_heads=16,
+        mlp_ratio=4.625,
+        norm_layer="LayerNorm",
+        drop_path_rate=0.1,
+        qkv_bias=True,
+        use_abs_pos=True,
+        tile_abs_pos=True,
+        global_att_blocks=(7, 15, 23, 31),
+        rel_pos_blocks=(),
+        use_rope=True,
+        use_interp_rope=True,
+        window_size=24,
+        pretrain_use_cls_token=True,
+        retain_cls_token=False,
+        ln_pre=True,
+        ln_post=False,
+        return_interm_layers=False,
+        bias_patch_embed=False,
+        compile_mode=None,
+        use_rope_real=use_rope_real,
+    )
+
+
+def make_vision_backbone(
+    trunk: ViT | None = None,
+    use_rope_real: bool = False,
+) -> Sam3TriViTDetNeck:
+    if trunk is None:
+        trunk = _make_vit(use_rope_real=use_rope_real)
+    position_encoding = PositionEmbeddingSine(
+        num_pos_feats=256,
+        normalize=True,
+        scale=None,
+        temperature=10000,
+    )
+    return Sam3TriViTDetNeck(
+        trunk=trunk,
+        position_encoding=position_encoding,
+        d_model=256,
+        scale_factors=[4.0, 2.0, 1.0],
+    )
+
+
+class VisionEncoder(nn.Module):
     def __init__(self) -> None:
         super().__init__()
-        self.vision_backbone = create_vision_backbone()
+        self.vision_backbone = make_vision_backbone()
 
-    def from_ckpt(self, ckpt, strict: bool = False):
-        self.load_state_dict(ckpt.block_state("image.vision"), strict=strict)
+    def load_weights(self, ckpt):
+        ckpt.load_block("image.vision", self)
         return self
 
     def forward(

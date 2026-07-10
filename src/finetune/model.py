@@ -48,7 +48,7 @@ class FinetuneModel(nn.Module):
         high_res = tuple(encoded["high_res_features"])
 
         decoded = []
-        image_pe = self.image_pe(image.device)
+        image_pe = self.get_image_position_encoding(image.device)
         for index, prompt in enumerate(prompts):
             decoded.append(
                 self._decode_prompt(
@@ -80,8 +80,8 @@ class FinetuneModel(nn.Module):
     def mask_input_size(self):
         return self.model.mask_input_size
 
-    def image_pe(self, device=None):
-        return self.model.image_pe(device)
+    def get_image_position_encoding(self, device=None):
+        return self.model.get_image_position_encoding(device)
 
     def encode_image(self, images: torch.Tensor) -> dict[str, object]:
         with torch.no_grad():

@@ -6,23 +6,6 @@ import torch.nn.functional as F
 from torch import nn, Tensor
 from torch.overrides import handle_torch_function, has_torch_function
 
-from ...runtime.attention import get_sdpa_settings
-
-try:
-    import xformers
-except ImportError:
-    xformers = None
-
-
-OLD_GPU, USE_FLASH_ATTN, MATH_KERNEL_ON = get_sdpa_settings()
-
-
-class AttentionType:
-    Vanilla = "Vanilla"
-    Xformer = "Xformer"
-    Sparse = "Sparse"
-    Deformable = "Deformable"
-
 
 def multi_head_attention_forward(
     query: Tensor,
@@ -50,10 +33,7 @@ def multi_head_attention_forward(
     static_v: Optional[Tensor] = None,
     average_attn_weights: bool = True,
     is_causal: bool = False,
-    attn_type: AttentionType = AttentionType.Vanilla,
-    attn_sparsity: float = 0.0,
     attn_bias: Optional[Tensor] = None,
-    use_fa3: bool = False,
 ) -> Tuple[Tensor, Optional[Tensor]]:
     tens_ops = (
         query,
@@ -95,7 +75,6 @@ def multi_head_attention_forward(
             static_k=static_k,
             static_v=static_v,
             average_attn_weights=average_attn_weights,
-            use_fa3=use_fa3,
         )
 
     is_batched = True
@@ -118,42 +97,42 @@ def multi_head_attention_forward(
             raise AssertionError(
                 "only bool and floating types of key_padding_mask are supported"
             )
-    assert embed_dim == embed_dim_to_check, (
-        f"was expecting embedding dimension of {embed_dim_to_check}, but got {embed_dim}"
-    )
+    assert (
+        embed_dim == embed_dim_to_check
+    ), f"was expecting embedding dimension of {embed_dim_to_check}, but got {embed_dim}"
     if isinstance(embed_dim, torch.Tensor):
         head_dim = embed_dim.div(num_heads, rounding_mode="trunc")
     else:
         head_dim = embed_dim // num_heads
-    assert head_dim * num_heads == embed_dim, (
-        f"embed_dim {embed_dim} not divisible by num_heads {num_heads}"
-    )
+    assert (
+        head_dim * num_heads == embed_dim
+    ), f"embed_dim {embed_dim} not divisible by num_heads {num_heads}"
     if use_separate_proj_weight:
-        assert key.shape[:2] == value.shape[:2], (
-            f"key's sequence and batch dims {key.shape[:2]} do not match value's {value.shape[:2]}"
-        )
+        assert (
+            key.shape[:2] == value.shape[:2]
+        ), f"key's sequence and batch dims {key.shape[:2]} do not match value's {value.shape[:2]}"
     else:
-        assert key.shape == value.shape, (
-            f"key shape {key.shape} does not match value shape {value.shape}"
-        )
+        assert (
+            key.shape == value.shape
+        ), f"key shape {key.shape} does not match value shape {value.shape}"
 
     if not use_separate_proj_weight:
-        assert in_proj_weight is not None, (
-            "use_separate_proj_weight is False but in_proj_weight is None"
-        )
+        assert (
+            in_proj_weight is not None
+        ), "use_separate_proj_weight is False but in_proj_weight is None"
         q, k, v = F._in_projection_packed(
             query, key, value, in_proj_weight, in_proj_bias
         )
     else:
-        assert q_proj_weight is not None, (
-            "use_separate_proj_weight is True but q_proj_weight is None"
-        )
-        assert k_proj_weight is not None, (
-            "use_separate_proj_weight is True but k_proj_weight is None"
-        )
-        assert v_proj_weight is not None, (
-            "use_separate_proj_weight is True but v_proj_weight is None"
-        )
+        assert (
+            q_proj_weight is not None
+        ), "use_separate_proj_weight is True but q_proj_weight is None"
+        assert (
+            k_proj_weight is not None
+        ), "use_separate_proj_weight is True but k_proj_weight is None"
+        assert (
+            v_proj_weight is not None
+        ), "use_separate_proj_weight is True but v_proj_weight is None"
         if in_proj_bias is None:
             b_q = b_k = b_v = None
         else:
@@ -177,9 +156,9 @@ def multi_head_attention_forward(
             )
             attn_mask = attn_mask.to(torch.bool)
         else:
-            assert attn_mask.is_floating_point() or attn_mask.dtype == torch.bool, (
-                f"Only float, byte, and bool types are supported for attn_mask, not {attn_mask.dtype}"
-            )
+            assert (
+                attn_mask.is_floating_point() or attn_mask.dtype == torch.bool
+            ), f"Only float, byte, and bool types are supported for attn_mask, not {attn_mask.dtype}"
         if attn_mask.dim() == 2:
             correct_2d_size = (tgt_len, src_len)
             if attn_mask.shape != correct_2d_size:
@@ -215,22 +194,22 @@ def multi_head_attention_forward(
     if static_k is None:
         k = k.contiguous().view(k.shape[0], bsz * num_heads, head_dim).transpose(0, 1)
     else:
-        assert static_k.size(0) == bsz * num_heads, (
-            f"expecting static_k.size(0) of {bsz * num_heads}, but got {static_k.size(0)}"
-        )
-        assert static_k.size(2) == head_dim, (
-            f"expecting static_k.size(2) of {head_dim}, but got {static_k.size(2)}"
-        )
+        assert (
+            static_k.size(0) == bsz * num_heads
+        ), f"expecting static_k.size(0) of {bsz * num_heads}, but got {static_k.size(0)}"
+        assert (
+            static_k.size(2) == head_dim
+        ), f"expecting static_k.size(2) of {head_dim}, but got {static_k.size(2)}"
         k = static_k
     if static_v is None:
         v = v.contiguous().view(v.shape[0], bsz * num_heads, head_dim).transpose(0, 1)
     else:
-        assert static_v.size(0) == bsz * num_heads, (
-            f"expecting static_v.size(0) of {bsz * num_heads}, but got {static_v.size(0)}"
-        )
-        assert static_v.size(2) == head_dim, (
-            f"expecting static_v.size(2) of {head_dim}, but got {static_v.size(2)}"
-        )
+        assert (
+            static_v.size(0) == bsz * num_heads
+        ), f"expecting static_v.size(0) of {bsz * num_heads}, but got {static_v.size(0)}"
+        assert (
+            static_v.size(2) == head_dim
+        ), f"expecting static_v.size(2) of {head_dim}, but got {static_v.size(2)}"
         v = static_v
 
     if add_zero_attn:
@@ -252,9 +231,7 @@ def multi_head_attention_forward(
         assert key_padding_mask.shape == (
             bsz,
             src_len,
-        ), (
-            f"expecting key_padding_mask shape of {(bsz, src_len)}, but got {key_padding_mask.shape}"
-        )
+        ), f"expecting key_padding_mask shape of {(bsz, src_len)}, but got {key_padding_mask.shape}"
         key_padding_mask = (
             key_padding_mask.view(bsz, 1, 1, src_len)
             .expand(-1, num_heads, -1, -1)
@@ -287,9 +264,7 @@ def multi_head_attention_forward(
             num_heads,
             tgt_len,
             src_len,
-        ), (
-            f"expecting attn_bias shape of {(bsz, num_heads, tgt_len, src_len)}, but got {attn_bias.shape}"
-        )
+        ), f"expecting attn_bias shape of {(bsz, num_heads, tgt_len, src_len)}, but got {attn_bias.shape}"
         if attn_mask is None:
             attn_mask = attn_bias
         else:
@@ -299,49 +274,20 @@ def multi_head_attention_forward(
     k = k.view(bsz, num_heads, src_len, head_dim)
     v = v.view(bsz, num_heads, src_len, head_dim)
 
-    if attn_type == AttentionType.Vanilla:
-        if attn_mask is None and not is_causal and use_fa3:
-            raise RuntimeError(
-                "FA3 attention is not included in the minimal src runtime."
-            )
-        else:
-            torch.backends.cuda.enable_flash_sdp(True)
-            torch.backends.cuda.enable_math_sdp(True)
-            torch.backends.cuda.enable_mem_efficient_sdp(True)
-
-            attn_output = F.scaled_dot_product_attention(
-                q, k, v, attn_mask, dropout_p, is_causal
-            )
-
-        attn_output = (
-            attn_output.permute(2, 0, 1, 3).contiguous().view(bsz * tgt_len, embed_dim)
-        )
-    elif attn_type == AttentionType.Xformer:
-        attn_output_weights = None
-        assert not need_weights, "need_weights is not supported in efficient mode"
-        attn_output = xformers.ops.memory_efficient_attention(
-            q.transpose(1, 2),
-            k.transpose(1, 2),
-            v.transpose(1, 2),
-            attn_bias=attn_mask,
-            p=dropout_p,
-        )
-        attn_output = attn_output.permute(1, 0, 2, 3).reshape(bsz * tgt_len, embed_dim)
-    elif attn_type == AttentionType.Sparse:
-        attn_output_weights = None
-        assert not need_weights, "need_weights is not supported in efficient mode"
-        q = q.reshape(bsz * num_heads, tgt_len, head_dim).contiguous()
-        k = k.reshape(bsz * num_heads, src_len, head_dim).contiguous()
-        v = v.reshape(bsz * num_heads, src_len, head_dim).contiguous()
-        row_offsets, column_indices = xformers.ops.find_locations_new(
-            q, k, attn_sparsity, True
-        )
-        attn_output = xformers.ops.sparse_memory_efficient_attention(
-            q, k, v, row_offsets, column_indices, attn_bias=attn_mask
-        ).reshape(bsz, num_heads, tgt_len, head_dim)
-        attn_output = attn_output.permute(2, 0, 1, 3).reshape(bsz * tgt_len, embed_dim)
-    else:
-        raise ValueError(f"Unsupported attention type {attn_type}")
+    torch.backends.cuda.enable_flash_sdp(True)
+    torch.backends.cuda.enable_math_sdp(True)
+    torch.backends.cuda.enable_mem_efficient_sdp(True)
+    attn_output = F.scaled_dot_product_attention(
+        q,
+        k,
+        v,
+        attn_mask,
+        dropout_p,
+        is_causal,
+    )
+    attn_output = (
+        attn_output.permute(2, 0, 1, 3).contiguous().view(bsz * tgt_len, embed_dim)
+    )
 
     attn_output = F.linear(attn_output, out_proj_weight, out_proj_bias)
     attn_output = attn_output.view(tgt_len, bsz, attn_output.size(1))
@@ -382,10 +328,7 @@ class MultiheadAttention(nn.Module):
         batch_first=False,
         device=None,
         dtype=None,
-        attn_type: AttentionType = AttentionType.Vanilla,
-        sparsity: float = 0.0,
         use_act_checkpoint: bool = False,
-        use_fa3: bool = False,
     ) -> None:
         factory_kwargs = {"device": device, "dtype": dtype}
         super(MultiheadAttention, self).__init__()
@@ -399,13 +342,9 @@ class MultiheadAttention(nn.Module):
         self.batch_first = batch_first
         self.head_dim = embed_dim // num_heads
         self.use_act_checkpoint = use_act_checkpoint
-        assert self.head_dim * num_heads == self.embed_dim, (
-            "embed_dim must be divisible by num_heads"
-        )
-
-        assert attn_type == AttentionType.Sparse or sparsity == 0.0, (
-            "sparsity is only supported for sparse attention"
-        )
+        assert (
+            self.head_dim * num_heads == self.embed_dim
+        ), "embed_dim must be divisible by num_heads"
 
         if not self._qkv_same_embed_dim:
             self.q_proj_weight = nn.Parameter(
@@ -443,10 +382,6 @@ class MultiheadAttention(nn.Module):
             self.bias_k = self.bias_v = None
 
         self.add_zero_attn = add_zero_attn
-
-        self.attn_type = attn_type
-        self.sparsity = sparsity
-        self.use_fa3 = use_fa3
 
         self._reset_parameters()
 
@@ -530,10 +465,7 @@ class MultiheadAttention(nn.Module):
                     k_proj_weight=self.k_proj_weight,
                     v_proj_weight=self.v_proj_weight,
                     average_attn_weights=average_attn_weights,
-                    attn_type=self.attn_type,
-                    attn_sparsity=self.sparsity,
                     attn_bias=attn_bias,
-                    use_fa3=self.use_fa3,
                 )
             else:
                 attn_output, attn_output_weights = multi_head_attention_forward(
@@ -559,10 +491,7 @@ class MultiheadAttention(nn.Module):
                     k_proj_weight=self.k_proj_weight,
                     v_proj_weight=self.v_proj_weight,
                     average_attn_weights=average_attn_weights,
-                    attn_type=self.attn_type,
-                    attn_sparsity=self.sparsity,
                     attn_bias=attn_bias,
-                    use_fa3=self.use_fa3,
                 )
         else:
             if self.use_act_checkpoint:
@@ -587,8 +516,6 @@ class MultiheadAttention(nn.Module):
                     need_weights=need_weights,
                     attn_mask=attn_mask,
                     average_attn_weights=average_attn_weights,
-                    attn_type=self.attn_type,
-                    attn_sparsity=self.sparsity,
                     attn_bias=attn_bias,
                 )
             else:
@@ -611,14 +538,9 @@ class MultiheadAttention(nn.Module):
                     need_weights=need_weights,
                     attn_mask=attn_mask,
                     average_attn_weights=average_attn_weights,
-                    attn_type=self.attn_type,
-                    attn_sparsity=self.sparsity,
                     attn_bias=attn_bias,
                 )
         if self.batch_first and is_batched:
             return attn_output.transpose(1, 0), attn_output_weights
         else:
             return attn_output, attn_output_weights
-
-
-MultiheadAttentionWrapper = MultiheadAttention

@@ -1,9 +1,9 @@
 from torch import nn
 
-from ..components.sam.prompt_encoder import PromptEncoder
+from ...components.sam.prompt_encoder import PromptEncoder
 
 
-class SamPrompt(nn.Module):
+class ImagePromptEncoder(nn.Module):
     def __init__(self) -> None:
         super().__init__()
         self.prompt_encoder = PromptEncoder(
@@ -13,8 +13,8 @@ class SamPrompt(nn.Module):
             mask_in_chans=16,
         )
 
-    def from_ckpt(self, ckpt, strict=False):
-        self.load_state_dict(ckpt.block_state("image.sam_prompt"), strict=strict)
+    def load_weights(self, ckpt):
+        ckpt.load_block("image.prompt", self)
         return self
 
     def forward(self, points=None, boxes=None, masks=None):

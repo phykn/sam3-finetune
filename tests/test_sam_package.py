@@ -1,6 +1,6 @@
 from pathlib import Path
 
-import src.ml.components.nn.modules as model_misc
+import src.ml.components.nn.attention as model_misc
 import src.ml.components.video.memory as memory
 from src.ml.components.grounding.box_out import write_box_outputs
 from src.ml.components.grounding.scoring import DotProductScorer
@@ -18,8 +18,8 @@ from src.ml.components.sam.transformer import (
     RoPEAttention,
     TwoWayTransformer,
 )
-from src.ml.components.transformer.wrapper import TransformerWrapper
-from src.ops.tensor import invert_sigmoid
+from src.ml.components.transformer.model import Transformer
+from src.ops.tensor import inverse_sigmoid
 
 
 def test_sam_layers_are_in_nn_layers():
@@ -95,7 +95,7 @@ def test_nn_modules_are_split_by_responsibility():
     assert (root / "src" / "ml" / "components" / "grounding" / "scoring.py").is_file()
     assert (root / "src" / "ml" / "components" / "transformer" / "decoder.py").is_file()
     assert (root / "src" / "ml" / "components" / "transformer" / "encoder.py").is_file()
-    assert (root / "src" / "ml" / "components" / "transformer" / "wrapper.py").is_file()
+    assert (root / "src" / "ml" / "components" / "transformer" / "model.py").is_file()
     assert (root / "src" / "ml" / "components" / "nn" / "activation.py").is_file()
     assert not (root / "src" / "ml" / "transformer").exists()
     assert not (root / "src" / "ml" / "nn").exists()
@@ -105,18 +105,18 @@ def test_nn_modules_are_split_by_responsibility():
     assert MLPBlock.__module__ == "src.ml.components.nn.layers"
     assert write_box_outputs.__module__ == "src.ml.components.grounding.box_out"
     assert DotProductScorer.__module__ == "src.ml.components.grounding.scoring"
-    assert TransformerWrapper.__module__ == "src.ml.components.transformer.wrapper"
+    assert Transformer.__module__ == "src.ml.components.transformer.model"
     assert resolve_activation.__module__ == "src.ml.components.nn.activation"
     assert clone_modules.__module__ == "src.ml.components.nn.layers"
-    assert invert_sigmoid.__module__ == "src.ops.tensor"
+    assert inverse_sigmoid.__module__ == "src.ops.tensor"
     for name in (
         "LayerScale",
         "LayerNorm2d",
         "MLPBlock",
-        "TransformerWrapper",
+        "Transformer",
         "resolve_activation",
         "clone_modules",
-        "invert_sigmoid",
+        "inverse_sigmoid",
     ):
         assert not hasattr(model_misc, name)
 

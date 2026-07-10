@@ -1,7 +1,7 @@
 import torch.nn as nn
 
 
-class TransformerWrapper(nn.Module):
+class Transformer(nn.Module):
     def __init__(
         self,
         encoder,
