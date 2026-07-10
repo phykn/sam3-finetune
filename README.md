@@ -51,6 +51,7 @@ src/ml/blocks/      image, grounding, and video model blocks
 src/ml/model/       assembled image, grounding, and video models
 src/ops/      shared tensor and box operations
 src/predict/  prediction workflows
+src/finetune/ finetune model, losses, checkpoints, DDP, and trainer
 tests/        unit tests
 ```
 
@@ -119,6 +120,44 @@ Parity checks against the reference implementation:
 .\.venv\Scripts\python.exe scripts\parity_video.py
 .\.venv\Scripts\python.exe scripts\parity_video_dynamic.py
 ```
+
+## Finetune
+
+`config/finetune.yaml` contains the model, training/validation data, and trainer
+settings. Set the local SAM3.1 checkpoint and sample paths before running it.
+
+Single-process training:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\finetune.py --config config\finetune.yaml
+```
+
+Single-server multi-GPU training on Linux:
+
+```bash
+torchrun --standalone --nproc-per-node=4 scripts/finetune.py \
+  --config config/finetune.yaml
+```
+
+Resume restores the trainable parameters, optimizer, and global step. Data order
+and augmentation randomness start from a new loader sequence:
+
+```bash
+torchrun --standalone --nproc-per-node=4 scripts/finetune.py \
+  --config config/finetune.yaml \
+  --resume run/example/checkpoints/last.pt
+```
+
+Class-head outputs are independent sigmoid attributes for each mask. Index 0 is
+always particle/object presence; later indices can represent SEM attributes such
+as particle size. `SinglePredictor` and `GridPredictor` return `class_logits` and
+`class_scores` when used with `FinetuneModel`. Finetune example JSON stores the
+probability vector in `object.metrics.class_scores`.
+
+Checkpoints use the new `sam3.finetune.v1` format under
+`run/<run-id>/checkpoints/`. Older LoRA checkpoints are not supported. CPU/Gloo
+multi-process behavior is tested locally; NCCL multi-GPU execution must be checked
+on the target Linux server.
 
 ## Test
 

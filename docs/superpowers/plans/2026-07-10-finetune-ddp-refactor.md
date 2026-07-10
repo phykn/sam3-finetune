@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3, PyTorch, torch.distributed/DDP, NumPy, Pillow, PyYAML, pytest, TensorBoard, Black, Ruff.
 
+**Execution Status:** Completed on `codex/finetune-ddp-refactor`; final verification recorded in the branch history.
+
 ## Global Constraints
 
 - Use the workspace `.venv` and run commands from `D:\code\sam3`.

@@ -44,3 +44,13 @@ def test_core_packages_are_grouped_by_responsibility():
     )
 
     assert all((root / path).is_file() for path in paths)
+
+
+def test_finetune_refactor_has_flat_runtime_files():
+    root = Path(__file__).resolve().parents[1]
+
+    assert not (root / "src" / "finetune" / "layers").exists()
+    assert (root / "src" / "finetune" / "checkpoint.py").is_file()
+    assert (root / "src" / "finetune" / "ddp.py").is_file()
+    assert (root / "scripts" / "finetune.py").is_file()
+    assert not (root / "config" / "finetune_model.yaml").exists()

@@ -1,7 +1,7 @@
 # Finetune, Resume, and DDP Refactor Design
 
 Date: 2026-07-10
-Status: Approved in conversation; written-spec review pending
+Status: Approved and implemented on `codex/finetune-ddp-refactor`
 
 ## 1. Purpose
 

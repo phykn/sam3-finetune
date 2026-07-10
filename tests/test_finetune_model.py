@@ -2,6 +2,7 @@ import pytest
 import torch
 from torch import nn
 
+from src.finetune.loss import finetune_loss
 from src.finetune.model import FinetuneModel
 
 
@@ -22,6 +23,23 @@ class FakeImageModel(nn.Module):
         value = torch.zeros(1, 256, 2, 2)
         return value if device is None else value.to(device)
 
+    def encode_image(self, image):
+        batch = image.shape[0]
+        return {
+            "image_embed": torch.ones(batch, 256, 2, 2, device=image.device),
+            "high_res_features": (
+                torch.ones(batch, 32, 8, 8, device=image.device),
+                torch.ones(batch, 64, 4, 4, device=image.device),
+            ),
+        }
+
+    def encode_prompt(self, points=None, boxes=None, masks=None):
+        batch = points[0].shape[0]
+        return (
+            torch.zeros(batch, 1, 256, device=points[0].device),
+            torch.zeros(batch, 256, 2, 2, device=points[0].device),
+        )
+
     def decode_masks(
         self,
         image_embed,
@@ -32,14 +50,14 @@ class FakeImageModel(nn.Module):
         repeat_image=False,
         mix=None,
     ):
-        batch = prompt[0].shape[0]
         count = 3 if multimask else 1
-        return (
-            torch.ones(batch, count, 8, 8),
-            torch.ones(batch, count),
-            torch.ones(batch, count, 256),
-            torch.ones(batch, 1),
-        )
+        pooled = image_embed.mean(dim=(2, 3))
+        token = self.sam_mask.mask_decoder.transformer.q_proj(pooled, mix)
+        token = token + high_res_features[0].mean(dim=(1, 2, 3))[:, None]
+        token = token + high_res_features[1].mean(dim=(1, 2, 3))[:, None]
+        tokens = token[:, None].expand(-1, count, -1)
+        masks = tokens[:, :, :1, None].expand(-1, -1, 8, 8)
+        return masks, tokens.mean(-1), tokens, tokens[:, :1, 0]
 
 
 def make_model(num_classes=3):
@@ -138,3 +156,45 @@ def test_decode_rejects_condition_outside_router_range():
             cond=2,
             prompt_type="point",
         )
+
+
+def test_batch_forward_loss_backward_reaches_every_trainable_parameter():
+    model, _base = make_model(num_classes=2)
+    batch = {
+        "image": torch.zeros(2, 3, 8, 8),
+        "cond": torch.tensor([0, 1]),
+        "prompt": [
+            {
+                "type": "point",
+                "points": [[2.0, 2.0]],
+                "point_labels": [1],
+                "box": None,
+                "mask": None,
+            },
+            {
+                "type": "point",
+                "points": [[6.0, 6.0]],
+                "point_labels": [1],
+                "box": None,
+                "mask": None,
+            },
+        ],
+        "target": torch.tensor(
+            [
+                [[[1.0] * 8] * 8],
+                [[[0.0] * 8] * 8],
+            ]
+        ),
+        "mask_valid": torch.tensor([1.0, 0.0]),
+        "is_auto_bg": torch.tensor([0.0, 0.0]),
+        "label_target": torch.tensor([[1.0, 0.0], [0.0, 0.0]]),
+        "label_weight": torch.tensor([[1.0, 1.0], [1.0, 0.0]]),
+    }
+
+    loss, _stats = finetune_loss(batch, model(batch))
+    loss.backward()
+
+    gradients = [param.grad for param in model.parameters() if param.requires_grad]
+    assert gradients
+    assert all(gradient is not None for gradient in gradients)
+    assert all(torch.isfinite(gradient).all() for gradient in gradients)

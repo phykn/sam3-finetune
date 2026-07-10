@@ -372,6 +372,7 @@ def test_runtime_scripts_use_predict_api_only() -> None:
         "grid.py",
         "finetune_single.py",
         "finetune_grid.py",
+        "finetune.py",
         "ground.py",
         "video.py",
     )

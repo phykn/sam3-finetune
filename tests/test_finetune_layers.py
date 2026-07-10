@@ -133,6 +133,20 @@ def test_lora_linear_matches_weighted_expert_sum():
     assert torch.allclose(layer(x, mix), expected)
 
 
+def test_zero_lora_mix_preserves_autocast_dtype_and_output():
+    layer = LoraLinear(nn.Linear(8, 8), rank=2, num_experts=2).eval()
+    x = torch.randn(1, 3, 8)
+    mix = torch.tensor([[0.5, 0.5]])
+
+    with torch.no_grad(), torch.autocast("cpu", dtype=torch.bfloat16):
+        plain = layer(x, None)
+    with torch.no_grad(), torch.autocast("cpu", dtype=torch.bfloat16):
+        adapted = layer(x, mix)
+
+    assert adapted.dtype == plain.dtype
+    assert torch.equal(adapted, plain)
+
+
 def test_attention_passes_mix_directly_to_lora_layers():
     attention = Attention(embedding_dim=4, num_heads=2)
     attention.q_proj = LoraLinear(attention.q_proj, rank=2, num_experts=2)
@@ -171,6 +185,18 @@ def test_feature_adapter_matches_weighted_expert_sum():
         expected = expected + up(down(x)) * mix[:, expert, None, None, None]
 
     assert torch.allclose(adapter(x, mix), expected)
+
+
+def test_zero_feature_adapter_preserves_bfloat16_dtype_and_output():
+    adapter = FeatureAdapter(channels=2, rank=1, num_experts=2).eval()
+    x = torch.randn(1, 2, 2, 2, dtype=torch.bfloat16)
+    mix = torch.tensor([[0.5, 0.5]])
+
+    with torch.no_grad(), torch.autocast("cpu", dtype=torch.bfloat16):
+        adapted = adapter(x, mix)
+
+    assert adapted.dtype == x.dtype
+    assert torch.equal(adapted, x)
 
 
 def test_finetune_model_freezes_base_and_wraps_decoder_linear():

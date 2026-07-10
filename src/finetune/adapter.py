@@ -30,7 +30,7 @@ class FeatureAdapter(nn.Module):
     def forward(self, x: torch.Tensor, mix: torch.Tensor) -> torch.Tensor:
         delta = torch.zeros_like(x)
         for index, (down, up) in enumerate(zip(self.down, self.up)):
-            weight = mix[:, index, None, None, None]
+            weight = mix[:, index, None, None, None].to(x)
             delta = delta + up(down(x)) * weight
         return x + delta * self.scale
 
@@ -72,7 +72,7 @@ class LoraLinear(nn.Module):
         delta = torch.zeros_like(out)
         shape = [mix.shape[0]] + [1] * (out.ndim - 1)
         for index, (down, up) in enumerate(zip(self.down, self.up)):
-            weight = mix[:, index].view(shape)
+            weight = mix[:, index].to(out).view(shape)
             delta = delta + up(down(x)) * weight
         return out + delta * self.scale
 
