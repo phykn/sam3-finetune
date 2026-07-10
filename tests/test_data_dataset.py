@@ -696,6 +696,35 @@ def test_base_dataset_shape_aug_zooms_out_when_scale_is_greater_than_one(
     assert item["target"].shape == image.shape[:2]
 
 
+def test_zoom_out_padding_is_not_sampled_as_background(tmp_path, monkeypatch):
+    obj = Object(
+        object_id=1,
+        class_id=2,
+        box=(0, 0, 8, 8),
+        roi=np.ones((8, 8), dtype=np.uint8),
+    )
+    image = np.full((8, 8, 3), 120, dtype=np.uint8)
+    path = write_sample(tmp_path / "sample.json", [obj], image=image)
+
+    monkeypatch.setattr(dataset_mod, "random_rotate", lambda image, mask: (image, mask))
+    monkeypatch.setattr(dataset_mod, "random_flip", lambda image, mask: (image, mask))
+    dataset = BaseDataset(
+        [str(path)],
+        prompts=["point"],
+        bg_prob=1.0,
+        shape_aug=True,
+        scale=(2.0, 2.0),
+        size=8,
+        mask_size=8,
+    )
+
+    item = dataset[0]
+
+    assert item["is_auto_bg"] is False
+    assert item["mask_valid"] is True
+    assert item["target"].sum() > 0
+
+
 def test_base_dataset_shape_aug_rotates_and_flips_when_scale_is_one(
     tmp_path,
     monkeypatch,
@@ -759,6 +788,7 @@ def test_base_dataset_background_point_uses_augmented_union(tmp_path, monkeypatc
         out[1, 1, 0] = 1
         out[..., 1] = 1
         out[0, 0, 1] = 0
+        out[..., 2] = 1
         return image, out
 
     monkeypatch.setattr(dataset_mod, "random_flip", fake_flip)

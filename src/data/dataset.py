@@ -159,11 +159,13 @@ class BaseDataset(Dataset):
         image = np.asarray(image, dtype=np.uint8)
         target = np.asarray(target, dtype=np.uint8)
         union = np.asarray(union, dtype=np.uint8)
+        valid = np.ones_like(target, dtype=np.uint8)
         base_image = image
         base_target = target
         base_union = union
+        base_valid = valid
         if self.shape_aug:
-            pair = np.stack([target, union], axis=-1)
+            pair = np.stack([target, union, valid], axis=-1)
             scale = float(np.random.uniform(self.scale[0], self.scale[1]))
             if scale < 1.0:
                 image, pair = random_crop(image, pair, scale=scale)
@@ -175,19 +177,21 @@ class BaseDataset(Dataset):
             pair = np.asarray(pair, dtype=np.uint8)
             target = pair[..., 0]
             union = pair[..., 1]
+            valid = pair[..., 2]
             if target.sum() == 0:
                 image = base_image
                 target = base_target
                 union = base_union
-        return self._resize_input(image, target, union)
+                valid = base_valid
+        return self._resize_input(image, target, union, valid)
 
     def _resize_input(
         self,
         image: np.ndarray,
         target: np.ndarray,
         union: np.ndarray,
+        valid: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        valid = np.ones_like(target, dtype=np.uint8)
         pair = np.stack([target, union, valid], axis=-1)
         image, pair = resize(image, pair, size=(self.size, self.size))
         pair = np.asarray(pair, dtype=np.uint8)
