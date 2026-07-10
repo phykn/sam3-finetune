@@ -22,6 +22,14 @@ def _batches(points: np.ndarray, batch_size: int) -> Iterator[np.ndarray]:
         yield points[start : start + batch_size]
 
 
+def _class_rows(out: dict[str, object], count: int) -> list[np.ndarray | None]:
+    values = out.get("class_scores")
+    if values is None:
+        return [None] * count
+    values = np.asarray(values).reshape(count, -1)
+    return [row.copy() for row in values]
+
+
 def _match(value: int | tuple[int, ...], count: int) -> tuple[int, ...]:
     if isinstance(value, int):
         return (value,) * count
@@ -163,7 +171,14 @@ class GridPredictor:
             masks = format_masks(out["masks"])
             logits = format_logits(out["logits"])
             scores = np.asarray(out["scores"]).reshape(-1)
-            for point, mask, logit, score in zip(batch, masks, logits, scores):
+            classes = _class_rows(out, len(scores))
+            for point, mask, logit, score, class_scores in zip(
+                batch,
+                masks,
+                logits,
+                scores,
+                classes,
+            ):
                 item = make_candidate(
                     mask,
                     logit,
@@ -176,6 +191,8 @@ class GridPredictor:
                 )
                 if item is None or not self._keep(item):
                     continue
+                if class_scores is not None:
+                    item["class_scores"] = class_scores
                 item["refine_logit"] = logit.astype(np.float16, copy=True)
                 items.append(item)
         return items, embed
@@ -207,12 +224,21 @@ class GridPredictor:
                 masks = format_masks(out["masks"])
                 logits = format_logits(out["logits"])
                 scores = np.asarray(out["scores"]).reshape(-1)
-                for (source_index, item), point, mask, logit, score in zip(
+                classes = _class_rows(out, len(scores))
+                for (
+                    (source_index, item),
+                    point,
+                    mask,
+                    logit,
+                    score,
+                    class_scores,
+                ) in zip(
                     chunk,
                     points[:, 0, :],
                     masks,
                     logits,
                     scores,
+                    classes,
                 ):
                     new_item = make_candidate(
                         mask,
@@ -225,6 +251,8 @@ class GridPredictor:
                         item["image_size"],
                     )
                     if new_item is not None and self._keep(new_item):
+                        if class_scores is not None:
+                            new_item["class_scores"] = class_scores
                         refined.append((source_index, new_item))
         refined.sort(key=lambda x: x[0])
         return [item for _index, item in refined]

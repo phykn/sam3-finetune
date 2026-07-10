@@ -120,7 +120,7 @@ class SinglePredictor:
         mask: np.ndarray | torch.Tensor | None,
         multimask: bool,
         cond: int | torch.Tensor | None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         sam_prompt = self._make_prompt(embed, point_coords, point_labels, box, mask)
         prompt_type = self._prompt_type(point_coords, box, mask)
         cond = self.cond if cond is None else cond
@@ -130,7 +130,7 @@ class SinglePredictor:
                 boxes=None,
                 masks=sam_prompt[1],
             )
-            masks, scores, *_ = self.model.decode_masks(
+            decoded = self.model.decode_masks(
                 embed["image_embed"],
                 embed["high_res"],
                 encoded_prompt,
@@ -140,7 +140,9 @@ class SinglePredictor:
                 cond=cond,
                 prompt_type=prompt_type,
             )
-        return masks, scores
+        masks, scores = decoded[:2]
+        classes = decoded[4] if len(decoded) > 4 else None
+        return masks, scores, classes
 
     def encode(self, image: Image.Image | np.ndarray) -> dict[str, object]:
         tensor, orig_hw = image_data.make_tensor(image, self.image_size, self.device)
@@ -163,7 +165,7 @@ class SinglePredictor:
         multimask: bool = True,
         cond: int | torch.Tensor | None = None,
     ) -> dict[str, object]:
-        masks, scores = self._decode(
+        masks, scores, classes = self._decode(
             embed,
             point_coords,
             point_labels,
@@ -172,7 +174,10 @@ class SinglePredictor:
             multimask,
             cond,
         )
-        return mask_format.make_low(masks, scores, 0.0)
+        out = mask_format.make_low(masks, scores, 0.0)
+        if classes is not None:
+            out.update(mask_format.make_classes(classes))
+        return out
 
     @torch.inference_mode()
     def predict_embed(
@@ -185,7 +190,7 @@ class SinglePredictor:
         multimask: bool = True,
         cond: int | torch.Tensor | None = None,
     ) -> dict[str, object]:
-        masks, scores = self._decode(
+        masks, scores, classes = self._decode(
             embed,
             point_coords,
             point_labels,
@@ -194,7 +199,10 @@ class SinglePredictor:
             multimask,
             cond,
         )
-        return mask_format.make_full(masks, scores, embed["orig_hw"], 0.0)
+        out = mask_format.make_full(masks, scores, embed["orig_hw"], 0.0)
+        if classes is not None:
+            out.update(mask_format.make_classes(classes))
+        return out
 
     @torch.inference_mode()
     def refine_low(

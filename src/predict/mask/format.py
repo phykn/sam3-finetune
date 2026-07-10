@@ -47,3 +47,11 @@ def make_low(
         "scores": scores.squeeze(0).float().detach().cpu().numpy(),
         "logits": logits.squeeze(0).detach().cpu().numpy(),
     }
+
+
+def make_classes(logits: torch.Tensor) -> dict[str, object]:
+    logits = logits.squeeze(0).float().detach().cpu()
+    return {
+        "class_logits": logits.numpy(),
+        "class_scores": logits.sigmoid().numpy(),
+    }

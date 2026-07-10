@@ -32,3 +32,14 @@ def test_low_result_keeps_decoder_mask_size():
     assert result["masks"].shape == (1, 2, 2)
     assert result["masks"].dtype == bool
     assert result["scores"].tolist() == [0.75]
+
+
+def test_class_result_converts_logits_to_probabilities():
+    result = mask_format.make_classes(torch.tensor([[[2.0, -2.0]]]))
+
+    assert result["class_logits"].shape == (1, 2)
+    assert result["class_scores"].shape == (1, 2)
+    torch.testing.assert_close(
+        torch.from_numpy(result["class_scores"]),
+        torch.from_numpy(result["class_logits"]).sigmoid(),
+    )

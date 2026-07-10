@@ -78,6 +78,14 @@ class FakeModel(torch.nn.Module):
         )
 
 
+class FakeModelWithClasses(FakeModel):
+    def decode_masks(self, *args, **kwargs):
+        out = super().decode_masks(*args, **kwargs)
+        batch = out[0].shape[0]
+        classes = torch.tensor([[[2.0, -2.0]]]).expand(batch, -1, -1)
+        return (*out, classes)
+
+
 def test_single_predictor_predicts_from_box():
     model = FakeModel()
     predictor = SinglePredictor(model, device="cpu")
@@ -96,6 +104,38 @@ def test_single_predictor_predicts_from_box():
     assert labels.tolist() == [[2, 3]]
     assert model.decodes[0]["repeat_image"] is True
     assert model.decodes[0]["multimask"] is False
+
+
+def test_finetune_prediction_adds_per_mask_class_scores():
+    predictor = SinglePredictor(FakeModelWithClasses(), device="cpu")
+
+    out = predictor.predict(
+        Image.new("RGB", (20, 10), color=(0, 0, 0)),
+        point_coords=np.array([[10.0, 5.0]], dtype=np.float32),
+        point_labels=np.array([1], dtype=np.int32),
+        multimask=False,
+    )
+
+    assert out["class_logits"].shape == (1, 2)
+    np.testing.assert_allclose(
+        out["class_scores"],
+        1 / (1 + np.exp(-out["class_logits"])),
+        rtol=1e-6,
+    )
+
+
+def test_plain_prediction_does_not_add_class_keys():
+    predictor = SinglePredictor(FakeModel(), device="cpu")
+
+    out = predictor.predict(
+        Image.new("RGB", (20, 10), color=(0, 0, 0)),
+        point_coords=np.array([[10.0, 5.0]], dtype=np.float32),
+        point_labels=np.array([1], dtype=np.int32),
+        multimask=False,
+    )
+
+    assert "class_logits" not in out
+    assert "class_scores" not in out
 
 
 def test_single_predictor_uses_dummy_point_for_mask_only_prompt():

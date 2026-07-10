@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 from PIL import Image
 
@@ -196,7 +197,19 @@ def test_finetune_grid_script_writes_json(monkeypatch, tmp_path) -> None:
 
         def predict(self, _image):
             calls.append("predict")
-            return []
+            return [
+                {
+                    "score": 0.75,
+                    "point": (2.0, 2.0),
+                    "class_scores": np.array([0.8, 0.2], dtype=np.float32),
+                }
+            ]
+
+        @staticmethod
+        def expand_mask(_item, image_size):
+            mask = np.zeros((image_size[1], image_size[0]), dtype=bool)
+            mask[1:3, 2:4] = True
+            return mask
 
     class FakeSheet:
         def save(self, path):
@@ -215,6 +228,7 @@ def test_finetune_grid_script_writes_json(monkeypatch, tmp_path) -> None:
     assert (tmp_path / "frog_grid.png").exists()
     data = json.loads((tmp_path / "frog_grid.json").read_text(encoding="utf-8"))
     assert set(data) == {"schema_version", "image", "objects"}
+    assert data["objects"][0]["metrics"]["class_scores"] == pytest.approx([0.8, 0.2])
 
 
 def test_single_script_writes_json_and_draws_from_json(monkeypatch, tmp_path) -> None:
@@ -263,6 +277,7 @@ def test_finetune_single_script_writes_json_and_draws_from_json(
             return {
                 "masks": np.array([mask]),
                 "scores": np.array([0.75], dtype=np.float32),
+                "class_scores": np.array([[0.8, 0.2]], dtype=np.float32),
             }
 
     monkeypatch.setattr(single, "make_predictor", lambda _device: FakePredictor())
@@ -276,6 +291,7 @@ def test_finetune_single_script_writes_json_and_draws_from_json(
     assert (tmp_path / "frog_single.json").exists()
     assert (tmp_path / "frog_single.png").exists()
     assert data.objects[0].metrics["score"] == 0.75
+    assert data.objects[0].metrics["class_scores"] == pytest.approx([0.8, 0.2])
     assert data.objects[0].mask(data.image.shape).sum() == 4
 
 

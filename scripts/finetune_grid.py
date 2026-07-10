@@ -104,6 +104,12 @@ def pack_items(image_size, predictor, items):
         mask = predictor.expand_mask(item, image_size)
         box, roi = pack.box_roi(mask)
         point = [float(item["point"][0]), float(item["point"][1]), 1]
+        metrics = {"score": float(item["score"])}
+        if "class_scores" in item:
+            metrics["class_scores"] = np.asarray(
+                item["class_scores"],
+                dtype=float,
+            ).tolist()
         out.append(
             Object(
                 object_id=index,
@@ -111,7 +117,7 @@ def pack_items(image_size, predictor, items):
                 box=box,
                 roi=roi,
                 points=[point],
-                metrics={"score": float(item["score"])},
+                metrics=metrics,
             )
         )
     return out

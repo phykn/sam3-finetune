@@ -57,6 +57,17 @@ class FakeSingle:
         )
 
 
+class FakeClassSingle(FakeSingle):
+    def predict_embed_low(self, *args, **kwargs):
+        out = super().predict_embed_low(*args, **kwargs)
+        score = 0.8 if kwargs.get("mask") is not None else 0.2
+        out["class_scores"] = np.tile(
+            np.array([score, 1 - score], dtype=np.float32),
+            (len(out["scores"]), 1),
+        )
+        return out
+
+
 def test_make_crops_splits_tile_grid():
     assert make_crops((8, 6), 1, 0.25) == [(0, 0, 8, 6)]
     assert make_crops((8, 6), 2, 0.0) == [
@@ -123,10 +134,24 @@ def test_grid_predictor_runs_tiles_and_batches_points():
     assert all(shape[1:] == (1, 2) for shape, _labels, _multimask in single.batches)
     assert sum(mask is not None for mask in single.masks) == len(single.refine_logits)
     assert len(single.refine_logits) < len(out)
-    assert any(
-        logit.ndim == 3 and logit.shape[0] > 1 for logit in single.refine_logits
-    )
+    assert any(logit.ndim == 3 and logit.shape[0] > 1 for logit in single.refine_logits)
     assert all(logit.dtype.kind == "f" for logit in single.refine_logits)
+
+
+def test_grid_predictor_keeps_refined_class_scores():
+    predictor = GridPredictor(
+        FakeClassSingle(),
+        tiles=(1,),
+        points_per_side=1,
+        batch_size=1,
+        nms=1.0,
+        min_area=1,
+    )
+
+    out = predictor.predict(Image.new("RGB", (64, 64)))
+
+    assert len(out) == 1
+    np.testing.assert_allclose(out[0]["class_scores"], [0.8, 0.2])
 
 
 def test_expand_mask_expands_roi_segmentation():
