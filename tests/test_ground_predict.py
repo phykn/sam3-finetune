@@ -72,7 +72,8 @@ def test_predict_encodes_target_once_and_decodes_prompts_independently():
     assert model.decode_batches == [1, 1, 1, 1, 1]
     assert [item["class_id"] for item in objects] == [0, 1, 2, 3, 4]
     assert all("raw" not in item for item in objects)
-    assert all(isinstance(item["mask"], np.ndarray) for item in objects)
+    assert all(isinstance(item["roi"], np.ndarray) for item in objects)
+    assert all("mask" not in item for item in objects)
 
 
 def test_predict_merges_same_class_features_across_references():

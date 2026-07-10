@@ -82,7 +82,8 @@ def finish(items, nms_thr, top_k):
     for object_id, item in enumerate(selected, start=1):
         item = dict(item)
         item.pop("nms_box")
-        item["box"] = pack.box_roi(item["mask"])[0]
+        item["box"], roi = pack.box_roi(item.pop("mask"))
+        item["roi"] = roi.astype(bool)
         item["object_id"] = object_id
         out.append(item)
     return out

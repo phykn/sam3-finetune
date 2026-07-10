@@ -8,7 +8,6 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.data import pack  # noqa: E402
 from src.data.sample import Image as DataImage  # noqa: E402
 from src.data.sample import Object, Sample, load, save  # noqa: E402
 from src.predict.ground import GroundPredictor  # noqa: E402
@@ -115,22 +114,20 @@ def refine(image, objects, device):
     logits = np.stack([item["logit"] for item in objects])
     refined = predictor.refine_embed(embed, logits)
     for item, result in zip(objects, refined, strict=True):
-        mask = pack.full(image.size[::-1], result["box"], result["roi"])
-        item["mask"] = mask
         item["box"] = result["box"]
+        item["roi"] = result["roi"]
         item["metrics"]["refined_score"] = float(result["metrics"]["score"])
 
 
 def make_result(image, objects):
     packed = []
     for item in objects:
-        box, roi = pack.box_roi(item["mask"])
         packed.append(
             Object(
                 object_id=item["object_id"],
                 class_id=item["class_id"],
-                box=box,
-                roi=roi,
+                box=item["box"],
+                roi=item["roi"],
                 metrics=dict(item["metrics"]),
             )
         )

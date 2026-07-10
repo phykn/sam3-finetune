@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 import torch
 
+from src.data import pack
 from src.predict.ground_ops import output
 
 
@@ -97,6 +98,10 @@ def test_finish_removes_only_same_class_overlap():
     ]
     assert all(item["box"] == (2, 1, 4, 3) for item in out)
     assert all("nms_box" not in item for item in out)
+    assert all("mask" not in item for item in out)
+    assert all(item["roi"].dtype == np.bool_ for item in out)
+    for item in out:
+        np.testing.assert_array_equal(pack.full((4, 5), item["box"], item["roi"]), mask)
 
 
 def test_finish_applies_top_k_per_class():

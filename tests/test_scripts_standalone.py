@@ -77,7 +77,7 @@ def test_ground_script_refines_logits_in_one_batch(monkeypatch) -> None:
             "object_id": index + 1,
             "class_id": index,
             "box": (0, 0, 2, 2),
-            "mask": np.ones((4, 5), dtype=bool),
+            "roi": np.ones((2, 2), dtype=bool),
             "logit": np.ones((2, 2), dtype=np.float32),
             "metrics": {"score": 0.5, "similarity": 0.6},
         }
@@ -92,7 +92,8 @@ def test_ground_script_refines_logits_in_one_batch(monkeypatch) -> None:
     _embed, logit = fake.refine_embed_calls[0]
     assert logit.shape == (3, 2, 2)
     assert fake.refine_calls == 0
-    assert all(item["mask"].shape == (4, 5) for item in objects)
+    assert all(item["roi"].shape == (2, 2) for item in objects)
+    assert all("mask" not in item for item in objects)
     assert [item["metrics"]["refined_score"] for item in objects] == pytest.approx(
         [0.25, 1.25, 2.25]
     )
@@ -283,7 +284,7 @@ def test_ground_script_round_trips_json_for_drawing(tmp_path) -> None:
             "object_id": 1,
             "class_id": 3,
             "box": (2, 1, 4, 3),
-            "mask": mask,
+            "roi": mask[1:3, 2:4],
             "logit": np.ones((2, 2), dtype=np.float32),
             "metrics": {
                 "score": 0.8,
