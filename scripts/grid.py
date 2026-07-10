@@ -8,7 +8,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src.predict.grid import GridPredictor  # noqa: E402
-from src.data import pack  # noqa: E402
 from src.data.sample import Image as DataImage  # noqa: E402
 from src.data.sample import Object, Sample, load, save  # noqa: E402
 
@@ -41,27 +40,26 @@ def main():
         points_per_side=POINTS,
         batch_size=BATCH_SIZE,
     )
-    masks = predictor.predict(image)
+    objects = predictor.predict(image)
 
     OUT.mkdir(parents=True, exist_ok=True)
     output = OUT / "frog_grid.png"
     result = OUT / "frog_grid.json"
-    save_result(make_result(image, predictor, predictor.before, masks), result)
+    save_result(make_result(image, objects), result)
     make_sheet(load_result(result)).save(output)
 
     print(f"device: {device}")
     print(f"image: {IMAGE}")
     print(f"json: {result}")
     print(f"output: {output}")
-    print(f"masks: {len(masks)}")
+    print(f"masks: {len(objects)}")
     print(f"tiles: {list(TILES)}")
-    print(f"before_refine: {len(predictor.before)}")
 
 
-def make_result(image, predictor, before, after):
+def make_result(image, objects):
     return Sample(
         image=DataImage(array=np.asarray(image, dtype=np.uint8)),
-        objects=pack_items(image.size, predictor, after),
+        objects=pack_items(objects),
     )
 
 
@@ -73,20 +71,17 @@ def load_result(path):
     return load(path)
 
 
-def pack_items(image_size, predictor, items):
+def pack_items(items):
     out = []
-    for index, item in enumerate(items, start=1):
-        mask = predictor.expand_mask(item, image_size)
-        box, roi = pack.box_roi(mask)
-        point = [float(item["point"][0]), float(item["point"][1]), 1]
+    for item in items:
         out.append(
             Object(
-                object_id=index,
-                class_id=None,
-                box=box,
-                roi=roi,
-                points=[point],
-                metrics={"score": float(item["score"])},
+                object_id=item["object_id"],
+                class_id=item["class_id"],
+                box=item["box"],
+                roi=item["roi"],
+                points=item["points"],
+                metrics=dict(item["metrics"]),
             )
         )
     return out

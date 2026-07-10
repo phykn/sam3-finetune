@@ -127,8 +127,6 @@ def test_grid_script_uses_small_gpu_batch(monkeypatch, tmp_path) -> None:
     calls = []
 
     class FakePredictor:
-        before = []
-
         @classmethod
         def from_path(cls, *args, **kwargs):
             calls.append((args, kwargs))
@@ -168,23 +166,18 @@ def test_finetune_grid_script_writes_json(monkeypatch, tmp_path) -> None:
     calls = []
 
     class FakePredictor:
-        before = []
-
         def predict(self, _image):
             calls.append("predict")
             return [
                 {
-                    "score": 0.75,
-                    "point": (2.0, 2.0),
-                    "class_scores": np.array([0.8, 0.2], dtype=np.float32),
+                    "object_id": 1,
+                    "class_id": None,
+                    "box": (2, 1, 4, 3),
+                    "roi": np.ones((2, 2), dtype=bool),
+                    "points": [[2.0, 2.0, 1]],
+                    "metrics": {"score": 0.75, "class_scores": [0.8, 0.2]},
                 }
             ]
-
-        @staticmethod
-        def expand_mask(_item, image_size):
-            mask = np.zeros((image_size[1], image_size[0]), dtype=bool)
-            mask[1:3, 2:4] = True
-            return mask
 
     class FakeSheet:
         def save(self, path):

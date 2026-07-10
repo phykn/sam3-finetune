@@ -6,12 +6,12 @@ import numpy as np
 import torch
 from PIL import Image
 
-from .grid_ops.boxes import filter_image, is_edge_cut
+from .grid_ops.boxes import filter_crop, filter_image, is_edge_cut
 from .grid_ops.candidates import (
-    expand_mask,
     format_logits,
     format_masks,
     make_candidate,
+    make_objects,
 )
 from .grid_ops.points import filter_points, make_points
 from .grid_ops.tiles import make_crops
@@ -23,12 +23,15 @@ def _batches(points: np.ndarray, batch_size: int) -> Iterator[np.ndarray]:
         yield points[start : start + batch_size]
 
 
-def _class_rows(out: dict[str, object], count: int) -> list[np.ndarray | None]:
-    values = out.get("class_scores")
-    if values is None:
-        return [None] * count
-    values = np.asarray(values).reshape(count, -1)
-    return [row.copy() for row in values]
+def _class_rows(out: dict[str, object], count: int) -> list[dict[str, np.ndarray]]:
+    rows = [{} for _ in range(count)]
+    for key in ("class_logits", "class_scores"):
+        if key not in out:
+            continue
+        values = np.asarray(out[key]).reshape(count, -1)
+        for row, value in zip(rows, values, strict=True):
+            row[key] = value.copy()
+    return rows
 
 
 def _match(value: int | tuple[int, ...], count: int) -> tuple[int, ...]:
@@ -105,8 +108,6 @@ class GridPredictor:
         self.min_area = _positive_int(min_area, "min_area", zero=True)
         self.nms_thr = nms_thr
         self.stability_thr = stability_thr
-        self.before: list[dict[str, object]] = []
-        self.after: list[dict[str, object]] = []
 
     @classmethod
     def from_path(
@@ -139,10 +140,6 @@ class GridPredictor:
             and item["stability_score"] >= self.stability_thr
             and not is_edge_cut(item)
         )
-
-    @staticmethod
-    def expand_mask(item: dict[str, object], image_size: tuple[int, int]) -> np.ndarray:
-        return expand_mask(item, image_size)
 
     @staticmethod
     def _points(
@@ -183,16 +180,15 @@ class GridPredictor:
                     ),
                 )
 
-    def _predict_crop(
+    def _generate(
         self,
-        image: Image.Image,
+        embed: dict[str, object],
         crop: tuple[int, int, int, int],
         tile: int,
         crop_index: int,
         points: np.ndarray,
-    ) -> tuple[list[dict[str, object]], dict[str, object]]:
-        crop_image = image.crop(crop)
-        embed = self.single.encode(crop_image)
+        image_size: tuple[int, int],
+    ) -> list[dict[str, object]]:
         items = []
 
         for batch in _batches(points, self.batch_size):
@@ -206,12 +202,13 @@ class GridPredictor:
             logits = format_logits(out["logits"])
             scores = np.asarray(out["scores"]).reshape(-1)
             classes = _class_rows(out, len(scores))
-            for point, mask, logit, score, class_scores in zip(
+            for point, mask, logit, score, class_values in zip(
                 batch,
                 masks,
                 logits,
                 scores,
                 classes,
+                strict=True,
             ):
                 item = make_candidate(
                     mask,
@@ -221,95 +218,92 @@ class GridPredictor:
                     crop,
                     tile,
                     crop_index,
-                    image.size,
+                    image_size,
                 )
                 if item is None or not self._keep(item):
                     continue
-                if class_scores is not None:
-                    item["class_scores"] = class_scores
+                item.update(class_values)
                 item["refine_logit"] = logit.astype(np.float16, copy=True)
                 items.append(item)
-        return items, embed
+        return items
 
-    def _refine(
+    def _refine_crop(
         self,
         items: list[dict[str, object]],
-        embeds: dict[tuple[int, int], dict[str, object]],
+        embed: dict[str, object],
     ) -> list[dict[str, object]]:
-        groups = {}
-        for index, item in enumerate(items):
-            key = (item["tile"], item["crop_index"])
-            groups.setdefault(key, []).append((index, item))
-
         refined = []
-        for key, group in groups.items():
-            embed = embeds[key]
-            for start in range(0, len(group), self.batch_size):
-                chunk = group[start : start + self.batch_size]
-                chunk_items = [item for _index, item in chunk]
-                points = _local_points(chunk_items)
-                logits_in = np.stack([item["refine_logit"] for item in chunk_items])
-                out = self.single._predict_low(
-                    embed,
-                    point_coords=points,
-                    point_labels=np.ones((len(chunk), 1), dtype=np.int32),
-                    mask=logits_in,
-                    multimask=False,
-                )
-                masks = format_masks(out["masks"])
-                logits = format_logits(out["logits"])
-                scores = np.asarray(out["scores"]).reshape(-1)
-                classes = _class_rows(out, len(scores))
-                for (
-                    (source_index, item),
-                    point,
+        for start in range(0, len(items), self.batch_size):
+            chunk = items[start : start + self.batch_size]
+            points = _local_points(chunk)
+            logits_in = np.stack([item["refine_logit"] for item in chunk])
+            out = self.single._predict_low(
+                embed,
+                point_coords=points,
+                point_labels=np.ones((len(chunk), 1), dtype=np.int32),
+                mask=logits_in,
+                multimask=False,
+            )
+            masks = format_masks(out["masks"])
+            logits = format_logits(out["logits"])
+            scores = np.asarray(out["scores"]).reshape(-1)
+            classes = _class_rows(out, len(scores))
+            for item, point, mask, logit, score, class_values in zip(
+                chunk,
+                points[:, 0, :],
+                masks,
+                logits,
+                scores,
+                classes,
+                strict=True,
+            ):
+                new_item = make_candidate(
                     mask,
                     logit,
                     score,
-                    class_scores,
-                ) in zip(
-                    chunk,
-                    points[:, 0, :],
-                    masks,
-                    logits,
-                    scores,
-                    classes,
-                ):
-                    new_item = make_candidate(
-                        mask,
-                        logit,
-                        score,
-                        point,
-                        item["crop"],
-                        item["tile"],
-                        item["crop_index"],
-                        item["image_size"],
-                    )
-                    if new_item is not None and self._keep(new_item):
-                        if class_scores is not None:
-                            new_item["class_scores"] = class_scores
-                        refined.append((source_index, new_item))
-        refined.sort(key=lambda x: x[0])
-        return [item for _index, item in refined]
+                    point,
+                    item["crop"],
+                    item["tile"],
+                    item["crop_index"],
+                    item["image_size"],
+                )
+                if new_item is not None and self._keep(new_item):
+                    new_item.update(class_values)
+                    refined.append(new_item)
+        return refined
+
+    def _predict_crop(
+        self,
+        image: Image.Image,
+        crop: tuple[int, int, int, int],
+        tile: int,
+        crop_index: int,
+        points: np.ndarray,
+    ) -> list[dict[str, object]]:
+        embed = self.single.encode(image.crop(crop))
+        items = self._generate(
+            embed,
+            crop,
+            tile,
+            crop_index,
+            points,
+            image.size,
+        )
+        items = filter_crop(items, self.nms_thr)
+        return filter_crop(self._refine_crop(items, embed), self.nms_thr)
 
     @torch.inference_mode()
     def predict(self, image: Image.Image) -> list[dict[str, object]]:
         image = image.convert("RGB")
         items = []
-        embeds = {}
         for tile, crop_index, crop, points in self.iter_points(image.size):
-            key = (tile, crop_index)
-            crop_items, embed = self._predict_crop(
-                image,
-                crop,
-                tile,
-                crop_index,
-                points,
+            items.extend(
+                self._predict_crop(
+                    image,
+                    crop,
+                    tile,
+                    crop_index,
+                    points,
+                )
             )
-            embeds[key] = embed
-            items.extend(crop_items)
-
-        self.before = filter_image(items, self.nms_thr)
-        refined = self._refine(self.before, embeds)
-        self.after = filter_image(refined, self.nms_thr)
-        return self.after
+        return make_objects(filter_image(items, self.nms_thr))

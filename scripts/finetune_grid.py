@@ -30,12 +30,12 @@ def main():
     image = Image.open(IMAGE).convert("RGB")
 
     predictor = make_predictor(device)
-    masks = predictor.predict(image)
+    objects = predictor.predict(image)
 
     OUT.mkdir(parents=True, exist_ok=True)
     output = OUT / "frog_grid.png"
     result = OUT / "frog_grid.json"
-    save_result(make_result(image, predictor, masks), result)
+    save_result(make_result(image, objects), result)
     make_sheet(load_result(result)).save(output)
 
     print(f"device: {device}")
@@ -43,9 +43,8 @@ def main():
     print(f"cond: {COND}")
     print(f"json: {result}")
     print(f"output: {output}")
-    print(f"masks: {len(masks)}")
+    print(f"masks: {len(objects)}")
     print(f"tiles: {list(TILES)}")
-    print(f"before_refine: {len(predictor.before)}")
 
 
 def make_predictor(device):
@@ -73,13 +72,13 @@ def make_predictor(device):
     )
 
 
-def make_result(image, predictor, items):
+def make_result(image, items):
     from src.data.sample import Image as DataImage
     from src.data.sample import Sample
 
     return Sample(
         image=DataImage(array=np.asarray(image, dtype=np.uint8)),
-        objects=pack_items(image.size, predictor, items),
+        objects=pack_items(items),
     )
 
 
@@ -95,29 +94,19 @@ def load_result(path):
     return load(path)
 
 
-def pack_items(image_size, predictor, items):
-    from src.data import pack
+def pack_items(items):
     from src.data.sample import Object
 
     out = []
-    for index, item in enumerate(items, start=1):
-        mask = predictor.expand_mask(item, image_size)
-        box, roi = pack.box_roi(mask)
-        point = [float(item["point"][0]), float(item["point"][1]), 1]
-        metrics = {"score": float(item["score"])}
-        if "class_scores" in item:
-            metrics["class_scores"] = np.asarray(
-                item["class_scores"],
-                dtype=float,
-            ).tolist()
+    for item in items:
         out.append(
             Object(
-                object_id=index,
-                class_id=None,
-                box=box,
-                roi=roi,
-                points=[point],
-                metrics=metrics,
+                object_id=item["object_id"],
+                class_id=item["class_id"],
+                box=item["box"],
+                roi=item["roi"],
+                points=item["points"],
+                metrics=dict(item["metrics"]),
             )
         )
     return out

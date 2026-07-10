@@ -17,12 +17,13 @@ def make_candidate(
     local_box = find_box(mask)
     if local_box is None:
         return None
-    x0, y0, x1, y1 = local_box
     crop_x, crop_y, _crop_x1, _crop_y1 = crop
     bbox = scale_box(local_box, mask.shape, crop)
     return {
-        "segmentation": mask[y0:y1, x0:x1].copy(),
-        "logit": logit[y0:y1, x0:x1].copy(),
+        "logit": logit[
+            local_box[1] : local_box[3],
+            local_box[0] : local_box[2],
+        ].copy(),
         "bbox": bbox,
         "low_box": local_box,
         "low_shape": mask.shape,
@@ -37,23 +38,29 @@ def make_candidate(
     }
 
 
-def expand_mask(item: dict[str, object], size: tuple[int, int]) -> np.ndarray:
-    width, height = size
-    x0, y0, x1, y1 = item["bbox"]
-    seg = item["segmentation"]
-    target = (y1 - y0, x1 - x0)
-    if item.get("logit") is not None:
-        seg = resize_logit(item["logit"], (target[1], target[0])) > 0
-    elif seg.shape != target:
-        seg = resize_mask(seg, (target[1], target[0]))
-    mask = np.zeros((height, width), dtype=bool)
-    mask[y0:y1, x0:x1] = seg
-    return mask
-
-
-def resize_mask(mask: np.ndarray, size: tuple[int, int]) -> np.ndarray:
-    image = Image.fromarray(mask.astype(np.uint8) * 255, mode="L")
-    return np.asarray(image.resize(size, Image.Resampling.NEAREST)) > 127
+def make_objects(items: list[dict[str, object]]) -> list[dict[str, object]]:
+    out = []
+    for item in items:
+        x0, y0, x1, y1 = item["bbox"]
+        roi = resize_logit(item["logit"], (x1 - x0, y1 - y0)) > 0
+        metrics = {
+            "score": float(item["score"]),
+            "stability": float(item["stability_score"]),
+        }
+        for key in ("class_logits", "class_scores"):
+            if key in item:
+                metrics[key] = np.asarray(item[key], dtype=float).tolist()
+        out.append(
+            {
+                "object_id": len(out) + 1,
+                "class_id": None,
+                "box": item["bbox"],
+                "roi": roi,
+                "points": [[float(item["point"][0]), float(item["point"][1]), 1]],
+                "metrics": metrics,
+            }
+        )
+    return out
 
 
 def resize_logit(logit: np.ndarray, size: tuple[int, int]) -> np.ndarray:

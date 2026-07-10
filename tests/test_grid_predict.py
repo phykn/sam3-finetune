@@ -4,7 +4,7 @@ import torch
 from PIL import Image
 from src.predict.grid import GridPredictor
 from src.predict.grid_ops.boxes import filter_crop, filter_image, find_box, is_edge_cut
-from src.predict.grid_ops.candidates import expand_mask, make_candidate
+from src.predict.grid_ops.candidates import make_candidate, make_objects
 from src.predict.grid_ops.points import filter_points, make_points
 from src.predict.grid_ops.tiles import make_crops
 
@@ -15,12 +15,15 @@ class FakeSingle:
         self.batches = []
         self.masks = []
         self.refine_logits = []
+        self.events = []
 
     def encode(self, image):
         assert not torch.is_grad_enabled()
         self.crops.append(image.size)
+        crop_index = len(self.crops) - 1
+        self.events.append(("encode", crop_index))
         width, height = image.size
-        return {"orig_hw": (height, width)}
+        return {"orig_hw": (height, width), "crop_index": crop_index}
 
     def _predict_low(
         self,
@@ -35,6 +38,9 @@ class FakeSingle:
         self.masks.append(mask)
         if mask is not None:
             self.refine_logits.append(np.asarray(mask))
+            self.events.append(("refine", embed["crop_index"]))
+        else:
+            self.events.append(("predict", embed["crop_index"]))
         height, width = embed["orig_hw"]
         masks = np.zeros((len(point_coords), 1, height, width), dtype=bool)
         for index, point in enumerate(point_coords[:, 0, :]):
@@ -56,6 +62,7 @@ class FakeClassSingle(FakeSingle):
             np.array([[[score, 1 - score]]], dtype=np.float32),
             (len(out["scores"]), 1, 1),
         )
+        out["class_logits"] = np.log(out["class_scores"] / (1 - out["class_scores"]))
         return out
 
 
@@ -116,12 +123,18 @@ def test_grid_predictor_runs_tiles_and_batches_points():
 
     assert len(single.crops) == 5
     assert len(out) == 8
-    assert predictor.after == out
-    assert len(predictor.before) == len(out)
-    assert {item["tile"] for item in out} == {1, 2}
-    assert all("mask" not in item for item in out)
-    assert all("refine_logit" not in item for item in out)
-    assert all(item["segmentation"].shape[0] <= 2 for item in out)
+    assert not hasattr(predictor, "before")
+    assert not hasattr(predictor, "after")
+    assert not hasattr(predictor, "expand_mask")
+    assert all(
+        set(item) == {"object_id", "class_id", "box", "roi", "points", "metrics"}
+        for item in out
+    )
+    assert all(item["roi"].dtype == np.bool_ for item in out)
+    for crop_index in range(4):
+        assert single.events.index(("refine", crop_index)) < single.events.index(
+            ("encode", crop_index + 1)
+        )
     assert all(shape[1:] == (1, 2) for shape, _labels, _multimask in single.batches)
     assert sum(mask is not None for mask in single.masks) == len(single.refine_logits)
     assert len(single.refine_logits) < len(out)
@@ -142,38 +155,12 @@ def test_grid_predictor_keeps_refined_class_scores():
     out = predictor.predict(Image.new("RGB", (64, 64)))
 
     assert len(out) == 1
-    np.testing.assert_allclose(out[0]["class_scores"], [0.8, 0.2])
+    np.testing.assert_allclose(out[0]["metrics"]["class_scores"], [0.8, 0.2])
+    assert len(out[0]["metrics"]["class_logits"]) == 2
 
 
-def test_expand_mask_expands_roi_segmentation():
+def test_make_objects_resizes_logit_to_compact_roi():
     item = {
-        "segmentation": np.ones((2, 3), dtype=bool),
-        "bbox": (2, 1, 5, 3),
-    }
-
-    mask = expand_mask(item, (8, 6))
-
-    assert mask.shape == (6, 8)
-    assert mask.sum() == 6
-    assert mask[1:3, 2:5].all()
-
-
-def test_expand_mask_resizes_low_res_roi_at_the_end():
-    item = {
-        "segmentation": np.ones((2, 2), dtype=bool),
-        "bbox": (2, 1, 6, 5),
-    }
-
-    mask = expand_mask(item, (8, 6))
-
-    assert mask.shape == (6, 8)
-    assert mask.sum() == 16
-    assert mask[1:5, 2:6].all()
-
-
-def test_expand_mask_uses_bilinear_logit_when_available():
-    item = {
-        "segmentation": np.ones((2, 2), dtype=bool),
         "logit": np.array(
             [
                 [2.0, -2.0],
@@ -181,13 +168,24 @@ def test_expand_mask_uses_bilinear_logit_when_available():
             ],
             dtype=np.float32,
         ),
-        "bbox": (0, 0, 4, 4),
+        "bbox": (2, 1, 6, 5),
+        "point": (3.0, 2.0),
+        "score": 1.5,
+        "stability_score": 0.8,
+        "class_logits": np.array([2.0, -2.0], dtype=np.float32),
+        "class_scores": np.array([0.88, 0.12], dtype=np.float32),
     }
 
-    mask = expand_mask(item, (4, 4))
+    objects = make_objects([item])
 
-    assert mask.shape == (4, 4)
-    assert 1 < mask.sum() < 16
+    assert len(objects) == 1
+    assert objects[0]["box"] == (2, 1, 6, 5)
+    assert objects[0]["roi"].shape == (4, 4)
+    assert 1 < objects[0]["roi"].sum() < 16
+    assert objects[0]["points"] == [[3.0, 2.0, 1]]
+    assert objects[0]["metrics"]["score"] == 1.5
+    assert objects[0]["metrics"]["stability"] == 0.8
+    assert objects[0]["metrics"]["class_logits"] == [2.0, -2.0]
 
 
 def test_make_candidate_keeps_low_res_roi_and_scales_box_area():
@@ -208,7 +206,7 @@ def test_make_candidate_keeps_low_res_roi_and_scales_box_area():
 
     assert item["bbox"] == (12, 22, 16, 26)
     assert item["area"] == 16
-    assert item["segmentation"].shape == (2, 2)
+    assert "segmentation" not in item
     assert item["logit"].shape == (2, 2)
     assert item["low_box"] == (1, 1, 3, 3)
     assert item["low_shape"] == (4, 4)
