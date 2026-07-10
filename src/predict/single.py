@@ -186,7 +186,7 @@ class SinglePredictor:
         mask: np.ndarray | torch.Tensor | None = None,
         multimask: bool = True,
         cond: int | torch.Tensor | None = None,
-    ) -> dict[str, object]:
+    ) -> list[dict[str, object]]:
         masks, scores, classes = self._decode(
             embed,
             point_coords,
@@ -206,7 +206,7 @@ class SinglePredictor:
         point_coords: np.ndarray | torch.Tensor | None = None,
         point_labels: np.ndarray | torch.Tensor | None = None,
         cond: int | torch.Tensor | None = None,
-    ) -> dict[str, object]:
+    ) -> list[dict[str, object]]:
         return self.predict_embed(
             embed,
             point_coords=point_coords,
@@ -222,7 +222,7 @@ class SinglePredictor:
         image: Image.Image | np.ndarray,
         logit: np.ndarray | torch.Tensor,
         cond: int | torch.Tensor | None = None,
-    ) -> dict[str, object]:
+    ) -> list[dict[str, object]]:
         return self.predict(image, mask=logit, multimask=False, cond=cond)
 
     @torch.inference_mode()
@@ -235,7 +235,7 @@ class SinglePredictor:
         mask: np.ndarray | torch.Tensor | None = None,
         multimask: bool = True,
         cond: int | torch.Tensor | None = None,
-    ) -> dict[str, object]:
+    ) -> list[dict[str, object]]:
         embed = self.encode(image)
         return self.predict_embed(
             embed,
