@@ -9,6 +9,7 @@ from torch import nn
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
 
+from .checkpoint import save_checkpoint
 from .loss import finetune_loss
 
 
@@ -27,6 +28,8 @@ class FinetuneTrainer:
         save_every: int = 1,
         clip_grad_norm: float | None = 1.0,
         amp: bool = True,
+        step: int = 0,
+        config: dict[str, Any] | None = None,
     ) -> None:
         if steps <= 0:
             raise ValueError("steps must be positive.")
@@ -36,6 +39,8 @@ class FinetuneTrainer:
             raise ValueError("save_every must be positive.")
         if clip_grad_norm is not None and clip_grad_norm <= 0:
             raise ValueError("clip_grad_norm must be positive or None.")
+        if not 0 <= step <= steps:
+            raise ValueError("step must be between zero and steps.")
 
         self.model = model.to(device)
         self.train_loader = train_loader
@@ -49,7 +54,8 @@ class FinetuneTrainer:
         self.clip_grad_norm = clip_grad_norm
         self.device = torch.device(device)
         self.amp = amp
-        self.step = 0
+        self.step = step
+        self.config = {} if config is None else config
         self.valid_count = 0
         self.valid_stats: dict[str, float] = {}
 
@@ -58,11 +64,10 @@ class FinetuneTrainer:
             self.run_dir = Path(run_root) / timestamp
         else:
             self.run_dir = Path(run_dir)
-        self.log_dir = self.run_dir / "log" / "finetune"
-        self.weight_dir = self.run_dir / "weight" / "finetune"
-        self.last_weight_dir = self.weight_dir / "last"
+        self.log_dir = self.run_dir / "log"
+        self.checkpoint_dir = self.run_dir / "checkpoints"
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.last_weight_dir.mkdir(parents=True, exist_ok=True)
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self.writer = SummaryWriter(log_dir=str(self.log_dir))
 
     def train_step(self) -> dict[str, float]:
@@ -120,7 +125,12 @@ class FinetuneTrainer:
 
     def train(self) -> dict[str, float]:
         stats: dict[str, float] = {}
-        progress = tqdm(range(self.steps), total=self.steps, desc="finetune")
+        remaining = self.steps - self.step
+        progress = tqdm(
+            range(self.step, self.steps),
+            total=remaining,
+            desc="finetune",
+        )
         for _ in progress:
             stats = self.train_step()
             if self.step % self.save_every == 0:
@@ -131,17 +141,21 @@ class FinetuneTrainer:
         return stats
 
     def save_checkpoint(self) -> None:
-        checkpoint = {
-            "step": self.step,
-            "model": self._model_state(),
-            "optimizer": self.optimizer.state_dict(),
-        }
         if self.step % self.save_every == 0:
-            self._save_checkpoint_file(
-                checkpoint,
-                self.weight_dir / str(self.step) / "model.pt",
+            save_checkpoint(
+                self.checkpoint_dir / f"step-{self.step:06d}.pt",
+                self.model,
+                self.optimizer,
+                self.step,
+                self.config,
             )
-        self._save_checkpoint_file(checkpoint, self.last_weight_dir / "model.pt")
+        save_checkpoint(
+            self.checkpoint_dir / "last.pt",
+            self.model,
+            self.optimizer,
+            self.step,
+            self.config,
+        )
 
     def _loss(
         self,
@@ -179,20 +193,6 @@ class FinetuneTrainer:
         if isinstance(value, tuple):
             return tuple(self._to_device(item) for item in value)
         return value
-
-    def _model_state(self) -> dict[str, torch.Tensor]:
-        model = self.model
-        while hasattr(model, "module") and isinstance(model.module, nn.Module):
-            model = model.module
-        return {
-            name: param.detach().cpu()
-            for name, param in model.named_parameters()
-            if param.requires_grad
-        }
-
-    def _save_checkpoint_file(self, checkpoint: dict[str, Any], path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(checkpoint, path)
 
     def grad_norm(self) -> float:
         total = 0.0
