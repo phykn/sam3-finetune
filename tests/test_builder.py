@@ -100,30 +100,28 @@ def test_build_finetune_model_returns_finetune_model(monkeypatch):
     )
 
 
-def test_build_finetune_loader_uses_loader_config(monkeypatch):
+def test_build_finetune_loader_uses_split_and_rank(monkeypatch):
     import src.build as build_module
 
     calls = []
 
     def make_loader(
-        paths,
-        batch_size,
-        conds=None,
-        labels=None,
-        num_workers=4,
+        config,
+        train,
+        rank=0,
+        world_size=1,
     ):
         calls.append(
             {
-                "paths": paths,
-                "batch_size": batch_size,
-                "conds": conds,
-                "labels": labels,
-                "num_workers": num_workers,
+                "config": config,
+                "train": train,
+                "rank": rank,
+                "world_size": world_size,
             }
         )
         return "loader"
 
-    monkeypatch.setattr(build_module, "make_infinite_train_loader", make_loader)
+    monkeypatch.setattr(build_module, "make_finetune_loader", make_loader)
 
     loader = build_finetune_loader(
         {
@@ -135,20 +133,28 @@ def test_build_finetune_loader_uses_loader_config(monkeypatch):
                 {"target": [0, 0], "weight": [1, 0]},
             ],
             "num_workers": 0,
-        }
+        },
+        train=False,
+        rank=1,
+        world_size=2,
     )
 
     assert loader == "loader"
     assert calls == [
         {
-            "paths": ["data/a.json", "data/b.json"],
-            "batch_size": 2,
-            "conds": [0, 1],
-            "labels": [
-                {"target": [1, 0], "weight": [1, 1]},
-                {"target": [0, 0], "weight": [1, 0]},
-            ],
-            "num_workers": 0,
+            "config": {
+                "paths": ["data/a.json", "data/b.json"],
+                "batch_size": 2,
+                "conds": [0, 1],
+                "labels": [
+                    {"target": [1, 0], "weight": [1, 1]},
+                    {"target": [0, 0], "weight": [1, 0]},
+                ],
+                "num_workers": 0,
+            },
+            "train": False,
+            "rank": 1,
+            "world_size": 2,
         }
     ]
 

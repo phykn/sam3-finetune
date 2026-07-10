@@ -3,8 +3,9 @@ from typing import Any
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 
-from .dataset import TrainDataset
+from .dataset import TrainDataset, ValidDataset
 from .image import to_tensor
 
 
@@ -46,8 +47,10 @@ def collate(batch: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 class InfiniteLoader:
-    def __init__(self, loader: DataLoader) -> None:
+    def __init__(self, loader: DataLoader, sampler=None) -> None:
         self.loader = loader
+        self.sampler = sampler
+        self.epoch = 0
         self.iterator = iter(loader)
 
     def __iter__(self) -> "InfiniteLoader":
@@ -57,6 +60,9 @@ class InfiniteLoader:
         try:
             return next(self.iterator)
         except StopIteration:
+            self.epoch += 1
+            if self.sampler is not None:
+                self.sampler.set_epoch(self.epoch)
             self.iterator = iter(self.loader)
             return next(self.iterator)
 
@@ -70,15 +76,49 @@ def make_infinite_train_loader(
     ) = None,
     num_workers: int = 4,
 ) -> InfiniteLoader:
-    dataset = TrainDataset(paths, conds=conds, labels=labels)
+    return make_finetune_loader(
+        {
+            "paths": paths,
+            "batch_size": batch_size,
+            "conds": conds,
+            "labels": labels,
+            "num_workers": num_workers,
+        },
+        train=True,
+    )
+
+
+def make_finetune_loader(
+    config: dict[str, Any],
+    train: bool,
+    rank: int = 0,
+    world_size: int = 1,
+) -> InfiniteLoader:
+    dataset_type = TrainDataset if train else ValidDataset
+    dataset = dataset_type(
+        config["paths"],
+        conds=config.get("conds"),
+        labels=config.get("labels"),
+    )
+    sampler = None
+    if world_size > 1:
+        sampler = DistributedSampler(
+            dataset,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=train,
+            drop_last=train,
+        )
+    num_workers = config.get("num_workers", 4)
     loader = DataLoader(
         dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        drop_last=True,
+        batch_size=config["batch_size"],
+        shuffle=train and sampler is None,
+        sampler=sampler,
+        drop_last=train,
         num_workers=num_workers,
         pin_memory=True,
         persistent_workers=num_workers > 0,
         collate_fn=collate,
     )
-    return InfiniteLoader(loader)
+    return InfiniteLoader(loader, sampler=sampler)

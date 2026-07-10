@@ -1,5 +1,6 @@
 from itertools import cycle
 
+import pytest
 import torch
 from torch import nn
 
@@ -197,3 +198,46 @@ def test_resume_step_runs_only_remaining_global_steps(tmp_path):
     assert trainer.step == 3
     assert checkpoint["step"] == 3
     assert checkpoint["config"] == {"train": {"steps": 3}}
+
+
+def test_non_main_trainer_skips_logs_and_checkpoints(monkeypatch, tmp_path):
+    import src.finetune.trainer as trainer_module
+
+    monkeypatch.setattr(trainer_module.ddp, "is_main", lambda: False)
+    model = TinyFinetuneModel()
+    trainer = FinetuneTrainer(
+        model=model,
+        train_loader=cycle([make_batch()]),
+        valid_loader=cycle([make_batch()]),
+        optimizer=torch.optim.SGD(model.parameters(), lr=0.1),
+        steps=1,
+        valid_steps=1,
+        device="cpu",
+        run_dir=tmp_path / "worker",
+    )
+
+    trainer.train_step()
+    trainer.close()
+
+    assert not (tmp_path / "worker").exists()
+
+
+def test_trainer_stops_all_ranks_before_nonfinite_backward(monkeypatch, tmp_path):
+    import src.finetune.trainer as trainer_module
+
+    monkeypatch.setattr(trainer_module.ddp, "all_finite", lambda _loss: False)
+    model = TinyFinetuneModel()
+    trainer = FinetuneTrainer(
+        model=model,
+        train_loader=cycle([make_batch()]),
+        valid_loader=cycle([make_batch()]),
+        optimizer=torch.optim.SGD(model.parameters(), lr=0.1),
+        steps=1,
+        valid_steps=1,
+        device="cpu",
+        run_root=tmp_path,
+    )
+
+    with pytest.raises(FloatingPointError, match="non-finite"):
+        trainer.train_step()
+    trainer.close()

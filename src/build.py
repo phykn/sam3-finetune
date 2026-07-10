@@ -1,4 +1,4 @@
-from .data.dataloader import InfiniteLoader, make_infinite_train_loader
+from .data.dataloader import InfiniteLoader, make_finetune_loader
 from .finetune.model import FinetuneModel
 from .ml.model import Sam3GroundingModel, Sam3ImageModel, Sam3VideoModel
 
@@ -24,13 +24,17 @@ def build_finetune_model(config: dict) -> FinetuneModel:
     return model
 
 
-def build_finetune_loader(config: dict) -> InfiniteLoader:
-    return make_infinite_train_loader(
-        paths=config["paths"],
-        batch_size=config["batch_size"],
-        conds=config.get("conds"),
-        labels=config.get("labels"),
-        num_workers=config.get("num_workers", 4),
+def build_finetune_loader(
+    config: dict,
+    train: bool = True,
+    rank: int = 0,
+    world_size: int = 1,
+) -> InfiniteLoader:
+    return make_finetune_loader(
+        config,
+        train=train,
+        rank=rank,
+        world_size=world_size,
     )
 
 

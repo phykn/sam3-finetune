@@ -9,6 +9,7 @@ from torch import nn
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
 
+from . import ddp
 from .checkpoint import save_checkpoint
 from .loss import finetune_loss
 
@@ -58,6 +59,7 @@ class FinetuneTrainer:
         self.config = {} if config is None else config
         self.valid_count = 0
         self.valid_stats: dict[str, float] = {}
+        self.main = ddp.is_main()
 
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         if run_dir is None:
@@ -66,9 +68,11 @@ class FinetuneTrainer:
             self.run_dir = Path(run_dir)
         self.log_dir = self.run_dir / "log"
         self.checkpoint_dir = self.run_dir / "checkpoints"
-        self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        self.writer = SummaryWriter(log_dir=str(self.log_dir))
+        self.writer = None
+        if self.main:
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+            self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            self.writer = SummaryWriter(log_dir=str(self.log_dir))
 
     def train_step(self) -> dict[str, float]:
         self.model.train()
@@ -83,6 +87,8 @@ class FinetuneTrainer:
             out = self.model(batch)
             loss, stats = self._loss(batch, out)
 
+        if not ddp.all_finite(loss):
+            raise FloatingPointError(f"non-finite loss at step {self.step}")
         loss.backward()
         grad_norm = self.grad_norm()
         if self.clip_grad_norm is not None:
@@ -126,10 +132,9 @@ class FinetuneTrainer:
     def train(self) -> dict[str, float]:
         stats: dict[str, float] = {}
         remaining = self.steps - self.step
-        progress = tqdm(
-            range(self.step, self.steps),
-            total=remaining,
-            desc="finetune",
+        indices = range(self.step, self.steps)
+        progress = (
+            tqdm(indices, total=remaining, desc="finetune") if self.main else indices
         )
         for _ in progress:
             stats = self.train_step()
@@ -137,10 +142,15 @@ class FinetuneTrainer:
                 self.validate()
 
             stats = self._with_valid_stats(stats)
-            progress.set_postfix({key: f"{value:.4g}" for key, value in stats.items()})
+            if self.main:
+                progress.set_postfix(
+                    {key: f"{value:.4g}" for key, value in stats.items()}
+                )
         return stats
 
     def save_checkpoint(self) -> None:
+        if not self.main:
+            return
         if self.step % self.save_every == 0:
             save_checkpoint(
                 self.checkpoint_dir / f"step-{self.step:06d}.pt",
@@ -170,11 +180,14 @@ class FinetuneTrainer:
         return out
 
     def _log(self, prefix: str, stats: dict[str, float]) -> None:
+        if self.writer is None:
+            return
         for key, value in stats.items():
             self.writer.add_scalar(f"{prefix}/{key}", value, self.step)
 
     def close(self) -> None:
-        self.writer.close()
+        if self.writer is not None:
+            self.writer.close()
 
     def _next_batch(self, loader: Iterable, iterator: Any) -> tuple[Any, Any]:
         try:

@@ -1,6 +1,13 @@
 import numpy as np
 
-from src.data.dataloader import collate, make_infinite_train_loader
+from torch.utils.data.distributed import DistributedSampler
+
+from src.data.dataloader import (
+    collate,
+    make_finetune_loader,
+    make_infinite_train_loader,
+)
+from src.data.dataset import ValidDataset
 from src.data.sample import Image, Object, Sample, save
 
 
@@ -84,3 +91,23 @@ def test_infinite_train_loader_returns_next_batch(tmp_path):
     assert first["target"].shape == (1, 1, 288, 288)
     assert len(first["prompt"]) == 1
     assert second["image"].shape == (1, 3, 1008, 1008)
+
+
+def test_make_finetune_loader_builds_distributed_validation_loader(tmp_path):
+    path = write_sample(tmp_path / "sample.json")
+
+    loader = make_finetune_loader(
+        {
+            "paths": [str(path)],
+            "batch_size": 1,
+            "num_workers": 0,
+        },
+        train=False,
+        rank=0,
+        world_size=2,
+    )
+
+    assert isinstance(loader.loader.dataset, ValidDataset)
+    assert isinstance(loader.sampler, DistributedSampler)
+    assert loader.sampler.shuffle is False
+    assert loader.loader.drop_last is False
