@@ -63,13 +63,19 @@ def test_ground_script_refines_logits_in_one_batch(monkeypatch) -> None:
             raise AssertionError("refine should not be called per logit")
 
     monkeypatch.setattr(ground, "SinglePredictor", FakeSingle)
-    out = {
-        "frog": {
-            "logits": np.ones((3, 2, 2), dtype=np.float32),
+    objects = [
+        {
+            "object_id": index + 1,
+            "class_id": index,
+            "box": (0, 0, 2, 2),
+            "mask": np.ones((4, 5), dtype=bool),
+            "logit": np.ones((2, 2), dtype=np.float32),
+            "metrics": {"score": 0.5, "similarity": 0.6},
         }
-    }
+        for index in range(3)
+    ]
 
-    ground.refine(Image.new("RGB", (5, 4)), out, "cpu")
+    ground.refine(Image.new("RGB", (5, 4)), objects, "cpu")
 
     fake = FakeSingle.instances[0]
     assert fake.encode_calls == 1
@@ -78,72 +84,33 @@ def test_ground_script_refines_logits_in_one_batch(monkeypatch) -> None:
     assert mask.shape == (3, 2, 2)
     assert multimask is False
     assert fake.refine_calls == 0
-    assert out["frog"]["refined_masks"].shape == (3, 4, 5)
-    np.testing.assert_allclose(
-        out["frog"]["refined_scores"],
-        np.array([0.25, 1.25, 2.25], dtype=np.float32),
+    assert all(item["mask"].shape == (4, 5) for item in objects)
+    assert [item["metrics"]["refined_score"] for item in objects] == pytest.approx(
+        [0.25, 1.25, 2.25]
     )
 
 
-def test_ground_script_segments_reference_points_in_one_batch(monkeypatch) -> None:
+def test_ground_script_reads_reference_boxes_and_classes() -> None:
     import scripts.ground as ground
+    from src.data.sample import Image as DataImage
+    from src.data.sample import Object, Sample
 
-    concepts = [
-        {
-            "name": "flower",
-            "points": np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32),
-            "color": (255, 180, 0),
-        }
-    ]
+    sample = Sample(
+        image=DataImage(array=np.zeros((4, 5, 3), dtype=np.uint8)),
+        objects=[
+            Object(1, 3, (0, 0, 2, 2), np.ones((2, 2), dtype=np.uint8)),
+            Object(2, 3, (2, 1, 5, 4), np.ones((3, 3), dtype=np.uint8)),
+            Object(3, 7, (1, 1, 3, 3), np.ones((2, 2), dtype=np.uint8)),
+        ],
+    )
 
-    class FakeSingle:
-        instances = []
+    boxes, class_ids = ground.reference_arrays(sample)
 
-        def __init__(self):
-            self.encode_calls = 0
-            self.predict_embed_calls = []
-            self.predict_calls = 0
-            FakeSingle.instances.append(self)
-
-        @classmethod
-        def from_path(cls, _path, _config):
-            return cls()
-
-        def encode(self, image):
-            assert not torch.is_grad_enabled()
-            self.encode_calls += 1
-            return {"orig_hw": (image.height, image.width)}
-
-        def predict_embed(self, embed, point_coords=None, point_labels=None, **kwargs):
-            assert not torch.is_grad_enabled()
-            self.predict_embed_calls.append(
-                (embed, np.asarray(point_coords), np.asarray(point_labels), kwargs)
-            )
-            masks = np.zeros((2, 3, 4, 5), dtype=bool)
-            masks[0, 1, 1:3, 1:3] = True
-            masks[1, 2, 2:4, 2:4] = True
-            scores = np.array([[0.1, 0.9, 0.2], [0.3, 0.4, 0.8]], dtype=np.float32)
-            return {"masks": masks, "scores": scores}
-
-        def predict(self, *_args, **_kwargs):
-            self.predict_calls += 1
-            raise AssertionError("predict should not be called per point")
-
-    monkeypatch.setattr(ground, "CONCEPTS", concepts)
-    monkeypatch.setattr(ground, "SinglePredictor", FakeSingle)
-
-    refs = ground.segment_refs(Image.new("RGB", (5, 4)), "cpu")
-
-    fake = FakeSingle.instances[0]
-    assert fake.encode_calls == 1
-    assert len(fake.predict_embed_calls) == 1
-    _embed, point_coords, point_labels, kwargs = fake.predict_embed_calls[0]
-    assert point_coords.shape == (2, 1, 2)
-    assert point_labels.shape == (2, 1)
-    assert kwargs["multimask"] is True
-    assert fake.predict_calls == 0
-    assert refs[0]["masks"].shape == (2, 4, 5)
-    np.testing.assert_allclose(refs[0]["scores"], np.array([0.9, 0.8]))
+    np.testing.assert_array_equal(
+        boxes,
+        [[0, 0, 2, 2], [2, 1, 5, 4], [1, 1, 3, 3]],
+    )
+    assert class_ids.tolist() == [3, 3, 7]
 
 
 def test_grid_script_uses_small_gpu_batch(monkeypatch, tmp_path) -> None:
@@ -298,33 +265,25 @@ def test_finetune_single_script_writes_json_and_draws_from_json(
 def test_ground_script_round_trips_json_for_drawing(tmp_path) -> None:
     import scripts.ground as ground
 
-    ref = Image.new("RGB", (5, 4))
     target = Image.new("RGB", (5, 4))
     mask = np.zeros((4, 5), dtype=bool)
     mask[1:3, 2:4] = True
-    refs = [
+    objects = [
         {
-            "name": "frog",
-            "points": np.array([[2.0, 1.0]], dtype=np.float32),
-            "color": (255, 60, 60),
-            "masks": np.array([mask]),
-            "scores": np.array([0.9], dtype=np.float32),
+            "object_id": 1,
+            "class_id": 3,
+            "box": (2, 1, 4, 3),
+            "mask": mask,
+            "logit": np.ones((2, 2), dtype=np.float32),
+            "metrics": {
+                "score": 0.8,
+                "similarity": 0.7,
+                "refined_score": 0.85,
+            },
         }
     ]
-    out = {
-        "frog": {
-            "scores": np.array([0.8], dtype=np.float32),
-            "similarities": np.array([0.7], dtype=np.float32),
-            "boxes": np.array([[2.0, 1.0, 4.0, 3.0]], dtype=np.float32),
-            "masks": np.array([mask]),
-            "refined_masks": np.array([mask]),
-            "refined_scores": np.array([0.85], dtype=np.float32),
-        }
-    }
 
-    ground.save_result(
-        ground.make_result(ref, refs, target, out), tmp_path / "out.json"
-    )
+    ground.save_result(ground.make_result(target, objects), tmp_path / "out.json")
     data = ground.load_result(tmp_path / "out.json")
     sheet = ground.make_sheet(data)
     raw = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
@@ -332,9 +291,10 @@ def test_ground_script_round_trips_json_for_drawing(tmp_path) -> None:
     assert sheet.size == (10, 4)
     assert set(raw) == {"schema_version", "image", "objects"}
     assert '\n  "schema_version"' in (tmp_path / "out.json").read_text(encoding="utf-8")
-    assert data.objects[0].meta["name"] == "frog"
+    assert data.objects[0].class_id == 3
     assert data.objects[0].mask(data.image.shape).sum() == 4
     np.testing.assert_allclose(data.objects[0].metrics["score"], 0.8)
+    np.testing.assert_allclose(data.objects[0].metrics["similarity"], 0.7)
     np.testing.assert_allclose(data.objects[0].metrics["refined_score"], 0.85)
 
 
