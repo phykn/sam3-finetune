@@ -201,7 +201,7 @@ def test_finetune_model_freezes_base_and_wraps_decoder_linear():
         LoraLinear,
     )
     assert base.keep.weight.requires_grad is False
-    assert len(model.linear_layers) == 2
+    assert sum(isinstance(module, LoraLinear) for module in model.modules()) == 2
     assert all(param.requires_grad for param in model.adapter_parameters())
 
 

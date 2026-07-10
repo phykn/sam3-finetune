@@ -93,7 +93,7 @@ def test_build_finetune_model_returns_finetune_model(monkeypatch):
     assert isinstance(model, FinetuneModel)
     assert model.model.path == "image.pt"
     assert model.router.cond.num_embeddings == 3
-    assert model.label_head.out_features == 5
+    assert model.class_head.out_features == 5
     assert isinstance(
         model.model.sam_mask.mask_decoder.transformer.q_proj,
         LoraLinear,

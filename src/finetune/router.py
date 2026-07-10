@@ -38,6 +38,10 @@ class Router(nn.Module):
             image = image.mean(dim=(2, 3))
         prompt_id = self._prompt_id(prompt, image.device)
         cond = cond.to(device=image.device, dtype=torch.long)
+        if cond.numel() and (
+            cond.min().item() < 0 or cond.max().item() >= self.cond.num_embeddings
+        ):
+            raise ValueError("condition index is outside the configured range")
         x = torch.cat([image, self.cond(cond), self.prompt(prompt_id)], dim=1)
         return self.net(x).softmax(dim=1)
 

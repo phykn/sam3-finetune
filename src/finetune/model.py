@@ -3,9 +3,9 @@ from typing import Any
 import torch
 from torch import nn
 
-from ..data import prompt as prompt_data
 from ..ml.model import Sam3ImageModel
 from .adapter import FeatureAdapter, LoraLinear
+from .prompt import build_prompt
 from .router import Router
 
 LORA_NAMES = {"q_proj", "k_proj", "v_proj", "out_proj", "lin1", "lin2"}
@@ -22,6 +22,8 @@ class FinetuneModel(nn.Module):
         feature_rank: int = 16,
     ) -> None:
         super().__init__()
+        if num_labels <= 0:
+            raise ValueError("num_labels must be positive")
         self.model = model
         self.size = 1008
         self.router = Router(
@@ -32,8 +34,7 @@ class FinetuneModel(nn.Module):
         self.image_adapter = FeatureAdapter(256, feature_rank, num_experts)
         self.high_adapter0 = FeatureAdapter(32, feature_rank, num_experts)
         self.high_adapter1 = FeatureAdapter(64, feature_rank, num_experts)
-        self.label_head = nn.Linear(256, num_labels)
-        self.linear_layers = nn.ModuleList()
+        self.class_head = nn.Linear(256, num_labels)
         self._freeze_model()
         self._wrap_decoder_linear(lora_rank, num_experts)
 
@@ -107,7 +108,7 @@ class FinetuneModel(nn.Module):
             (high_res_features[0], high_res_features[1]),
             mix,
         )
-        return self.model.decode_masks(
+        masks, ious, tokens, objects = self.model.decode_masks(
             image_embed,
             high_res,
             prompt,
@@ -116,6 +117,15 @@ class FinetuneModel(nn.Module):
             repeat_image,
             mix=mix,
         )
+        class_logits = self.class_head(tokens)
+        if class_logits.shape[:2] != masks.shape[:2]:
+            raise ValueError("class tokens must align with masks")
+        return masks, ious, tokens, objects, class_logits
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        self.model.eval()
+        return self
 
     def _freeze_model(self) -> None:
         for param in self.model.parameters():
@@ -201,12 +211,18 @@ class FinetuneModel(nn.Module):
         prompt_type: str,
         device: torch.device,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        encoded_prompt = self.encode_prompt(
-            points=self._build_point_prompt(prompt, device),
-            boxes=None,
-            masks=self._build_mask_prompt(prompt, device),
+        point_prompt, mask_prompt = build_prompt(
+            prompt,
+            self.size,
+            self.model.mask_input_size,
+            device,
         )
-        mask, iou, token, obj = self.decode_masks(
+        encoded_prompt = self.encode_prompt(
+            points=point_prompt,
+            boxes=None,
+            masks=mask_prompt,
+        )
+        mask, iou, _token, obj, class_logits = self.decode_masks(
             image_embed,
             high_res,
             encoded_prompt,
@@ -216,7 +232,7 @@ class FinetuneModel(nn.Module):
             cond=cond,
             prompt_type=prompt_type,
         )
-        return mask, iou, obj, self.label_head(token[:, 0])
+        return mask, iou, obj, class_logits[:, 0]
 
     def _wrap_decoder_linear(
         self,
@@ -231,55 +247,3 @@ class FinetuneModel(nn.Module):
                     continue
                 wrapped = LoraLinear(child, rank=rank, num_experts=num_experts)
                 setattr(module, name, wrapped)
-                self.linear_layers.append(wrapped)
-
-    def _build_point_prompt(
-        self,
-        item: dict[str, Any],
-        device: torch.device,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        point_prompt = prompt_data.build_points(
-            item["points"],
-            item["point_labels"],
-            (self.size, self.size),
-            self.size,
-            device,
-        )
-        box_prompt = prompt_data.build_box(
-            item["box"],
-            (self.size, self.size),
-            self.size,
-            device,
-        )
-        point_prompt = self._merge_prompt(box_prompt, point_prompt)
-        if point_prompt is not None:
-            return point_prompt
-        return (
-            torch.zeros(1, 1, 2, device=device),
-            -torch.ones(1, 1, dtype=torch.int, device=device),
-        )
-
-    def _build_mask_prompt(
-        self,
-        item: dict[str, Any],
-        device: torch.device,
-    ) -> torch.Tensor | None:
-        return prompt_data.build_mask(
-            item["mask"],
-            self.model.mask_input_size,
-            device,
-        )
-
-    def _merge_prompt(
-        self,
-        first: tuple[torch.Tensor, torch.Tensor] | None,
-        second: tuple[torch.Tensor, torch.Tensor] | None,
-    ) -> tuple[torch.Tensor, torch.Tensor] | None:
-        if first is None:
-            return second
-        if second is None:
-            return first
-        return torch.cat([first[0], second[0]], dim=1), torch.cat(
-            [first[1], second[1]],
-            dim=1,
-        )
