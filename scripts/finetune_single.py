@@ -7,6 +7,8 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from src.data import pack  # noqa: E402
+
 WEIGHT = ROOT / "weight" / "sam3.1_multiplex.pt"
 IMAGE = ROOT / "asset" / "frog_tgt.jpg"
 OUT = ROOT / "outputs" / "finetune_single"
@@ -23,7 +25,7 @@ def main():
     image = Image.open(IMAGE).convert("RGB")
 
     predictor = make_predictor(device)
-    out = predictor.predict(
+    objects = predictor.predict(
         image,
         point_coords=POINT,
         point_labels=LABEL,
@@ -31,14 +33,12 @@ def main():
     )
 
     OUT.mkdir(parents=True, exist_ok=True)
-    mask = out["masks"][0]
-    score = float(out["scores"][0])
-    class_scores = out.get("class_scores")
-    if class_scores is not None:
-        class_scores = np.asarray(class_scores).reshape(-1, class_scores.shape[-1])[0]
+    item = objects[0]
+    mask = pack.full(image.size[::-1], item["box"], item["roi"])
+    score = float(item["metrics"]["score"])
     output = OUT / "frog_single.png"
     result = OUT / "frog_single.json"
-    save_result(make_result(image, mask, score, class_scores), result)
+    save_result(make_result(image, item), result)
     make_sheet(load_result(result)).save(output)
 
     print(f"device: {device}")
@@ -69,26 +69,25 @@ def make_predictor(device):
     return SinglePredictor(model, device=device, cond=COND)
 
 
-def make_result(image, mask, score, class_scores=None):
-    from src.data import pack
+def make_result(image, item):
     from src.data.sample import Image as DataImage
     from src.data.sample import Object, Sample
 
-    box, roi = pack.box_roi(mask)
     point = [float(POINT[0][0]), float(POINT[0][1]), int(LABEL[0])]
-    metrics = {"score": float(score)}
-    if class_scores is not None:
-        metrics["class_scores"] = np.asarray(class_scores, dtype=float).tolist()
     return Sample(
         image=DataImage(array=np.asarray(image, dtype=np.uint8)),
         objects=[
             Object(
                 object_id=1,
                 class_id=None,
-                box=box,
-                roi=roi,
+                box=item["box"],
+                roi=item["roi"],
                 points=[point],
-                metrics=metrics,
+                metrics=dict(item["metrics"]),
+                meta={
+                    "prompt_index": item["prompt_index"],
+                    "candidate_index": item["candidate_index"],
+                },
             )
         ],
     )

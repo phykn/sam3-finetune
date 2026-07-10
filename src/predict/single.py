@@ -28,13 +28,13 @@ class SinglePredictor:
     def from_path(
         cls,
         path: str | Path,
-        config: dict | None = None,
+        device: str | torch.device = "cuda",
+        cond: int = 0,
     ) -> "SinglePredictor":
-        config = {} if config is None else config
         return cls(
             Sam3ImageModel(path=path),
-            device=config.get("device", "cuda"),
-            cond=config.get("cond", 0),
+            device=device,
+            cond=cond,
         )
 
     def autocast(self) -> AbstractContextManager:
@@ -155,7 +155,7 @@ class SinglePredictor:
         }
 
     @torch.inference_mode()
-    def predict_embed_low(
+    def _predict_low(
         self,
         embed: dict[str, object],
         point_coords: np.ndarray | torch.Tensor | None = None,
@@ -174,10 +174,7 @@ class SinglePredictor:
             multimask,
             cond,
         )
-        out = mask_format.make_low(masks, scores, 0.0)
-        if classes is not None:
-            out.update(mask_format.make_classes(classes))
-        return out
+        return mask_format.make_low(masks, scores, 0.0, classes)
 
     @torch.inference_mode()
     def predict_embed(
@@ -199,13 +196,10 @@ class SinglePredictor:
             multimask,
             cond,
         )
-        out = mask_format.make_full(masks, scores, embed["orig_hw"], 0.0)
-        if classes is not None:
-            out.update(mask_format.make_classes(classes))
-        return out
+        return mask_format.make_objects(masks, scores, embed["orig_hw"], classes)
 
     @torch.inference_mode()
-    def refine_low(
+    def refine_embed(
         self,
         embed: dict[str, object],
         logit: np.ndarray | torch.Tensor,
@@ -213,7 +207,7 @@ class SinglePredictor:
         point_labels: np.ndarray | torch.Tensor | None = None,
         cond: int | torch.Tensor | None = None,
     ) -> dict[str, object]:
-        return self.predict_embed_low(
+        return self.predict_embed(
             embed,
             point_coords=point_coords,
             point_labels=point_labels,

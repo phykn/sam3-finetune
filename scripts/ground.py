@@ -110,18 +110,15 @@ def reference_arrays(sample):
 def refine(image, objects, device):
     if not objects:
         return
-    predictor = SinglePredictor.from_path(WEIGHT, {"device": device})
+    predictor = SinglePredictor.from_path(WEIGHT, device=device)
     embed = predictor.encode(image)
     logits = np.stack([item["logit"] for item in objects])
-    out = predictor.predict_embed(embed, mask=logits, multimask=False)
-    masks = np.asarray(out["masks"], dtype=bool)
-    if masks.ndim == 4 and masks.shape[1] == 1:
-        masks = masks[:, 0]
-    scores = np.asarray(out["scores"], dtype=np.float32).reshape(-1)
-    for item, mask, score in zip(objects, masks, scores):
+    refined = predictor.refine_embed(embed, logits)
+    for item, result in zip(objects, refined, strict=True):
+        mask = pack.full(image.size[::-1], result["box"], result["roi"])
         item["mask"] = mask
-        item["box"] = pack.box_roi(mask)[0]
-        item["metrics"]["refined_score"] = float(score)
+        item["box"] = result["box"]
+        item["metrics"]["refined_score"] = float(result["metrics"]["score"])
 
 
 def make_result(image, objects):

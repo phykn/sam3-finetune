@@ -1,6 +1,9 @@
 import numpy as np
+import pytest
 import torch
 from PIL import Image
+
+from src.data import pack
 from src.predict.single import SinglePredictor
 
 
@@ -90,15 +93,21 @@ def test_single_predictor_predicts_from_box():
     model = FakeModel()
     predictor = SinglePredictor(model, device="cpu")
 
-    out = predictor.predict(
+    objects = predictor.predict(
         Image.new("RGB", (20, 10), color=(0, 0, 0)),
         box=np.array([2, 1, 18, 9], dtype=np.float32),
         multimask=False,
     )
 
-    assert out["masks"].shape == (1, 10, 20)
-    assert out["logits"].shape == (1, 288, 288)
-    np.testing.assert_allclose(out["scores"], np.array([0.75], dtype=np.float32))
+    assert len(objects) == 1
+    item = objects[0]
+    assert item["prompt_index"] == 0
+    assert item["candidate_index"] == 0
+    assert item["logit"].shape == (288, 288)
+    assert item["metrics"]["score"] == pytest.approx(0.75)
+    mask = pack.full((10, 20), item["box"], item["roi"])
+    assert mask.shape == (10, 20)
+    assert mask.all()
     coords, labels = model.prompts[0][0]
     assert coords.shape == (1, 2, 2)
     assert labels.tolist() == [[2, 3]]
@@ -109,17 +118,19 @@ def test_single_predictor_predicts_from_box():
 def test_finetune_prediction_adds_per_mask_class_scores():
     predictor = SinglePredictor(FakeModelWithClasses(), device="cpu")
 
-    out = predictor.predict(
+    objects = predictor.predict(
         Image.new("RGB", (20, 10), color=(0, 0, 0)),
         point_coords=np.array([[10.0, 5.0]], dtype=np.float32),
         point_labels=np.array([1], dtype=np.int32),
         multimask=False,
     )
 
-    assert out["class_logits"].shape == (1, 2)
+    metrics = objects[0]["metrics"]
+    assert objects[0]["class_id"] is None
+    assert metrics["class_logits"] == [2.0, -2.0]
     np.testing.assert_allclose(
-        out["class_scores"],
-        1 / (1 + np.exp(-out["class_logits"])),
+        metrics["class_scores"],
+        1 / (1 + np.exp(-np.array(metrics["class_logits"]))),
         rtol=1e-6,
     )
 
@@ -127,15 +138,15 @@ def test_finetune_prediction_adds_per_mask_class_scores():
 def test_plain_prediction_does_not_add_class_keys():
     predictor = SinglePredictor(FakeModel(), device="cpu")
 
-    out = predictor.predict(
+    objects = predictor.predict(
         Image.new("RGB", (20, 10), color=(0, 0, 0)),
         point_coords=np.array([[10.0, 5.0]], dtype=np.float32),
         point_labels=np.array([1], dtype=np.int32),
         multimask=False,
     )
 
-    assert "class_logits" not in out
-    assert "class_scores" not in out
+    assert "class_logits" not in objects[0]["metrics"]
+    assert "class_scores" not in objects[0]["metrics"]
 
 
 def test_single_predictor_uses_dummy_point_for_mask_only_prompt():
@@ -157,29 +168,30 @@ def test_single_predictor_refines_from_logit():
     predictor = SinglePredictor(model, device="cpu")
     logit = np.ones((288, 288), dtype=np.float32)
 
-    out = predictor.refine(
+    objects = predictor.refine(
         Image.new("RGB", (20, 10), color=(0, 0, 0)),
         logit,
     )
 
-    assert out["masks"].shape == (1, 10, 20)
+    assert len(objects) == 1
+    assert pack.full((10, 20), objects[0]["box"], objects[0]["roi"]).all()
     assert model.prompts[0][2].dtype == torch.float32
     assert model.decodes[0]["multimask"] is False
 
 
-def test_single_predictor_refines_low_from_logit():
+def test_single_predictor_refines_embed_from_logit():
     model = FakeModel()
     predictor = SinglePredictor(model, device="cpu")
     embed = predictor.encode(Image.new("RGB", (20, 10), color=(0, 0, 0)))
 
-    out = predictor.refine_low(
+    objects = predictor.refine_embed(
         embed,
         np.ones((288, 288), dtype=np.float32),
         point_coords=np.array([[[10.0, 5.0]]], dtype=np.float32),
         point_labels=np.array([[1]], dtype=np.int32),
     )
 
-    assert out["masks"].shape == (1, 288, 288)
+    assert len(objects) == 1
     assert model.prompts[0][2].dtype == torch.float32
     assert model.decodes[0]["multimask"] is False
 
@@ -189,15 +201,15 @@ def test_single_predictor_can_keep_low_res_masks():
     predictor = SinglePredictor(model, device="cpu")
     embed = predictor.encode(Image.new("RGB", (20, 10), color=(0, 0, 0)))
 
-    out = predictor.predict_embed_low(
+    out = predictor._predict_low(
         embed,
         point_coords=np.array([[[10.0, 5.0]]], dtype=np.float32),
         point_labels=np.array([[1]], dtype=np.int32),
         multimask=False,
     )
 
-    assert out["masks"].shape == (1, 288, 288)
-    assert out["logits"].shape == (1, 288, 288)
+    assert out["masks"].shape == (1, 1, 288, 288)
+    assert out["logits"].shape == (1, 1, 288, 288)
     assert model.decodes[0]["multimask"] is False
 
 
@@ -206,17 +218,17 @@ def test_single_predictor_passes_condition_and_prompt_type():
     predictor = SinglePredictor(model, device="cpu", cond=2)
     embed = predictor.encode(Image.new("RGB", (20, 10), color=(0, 0, 0)))
 
-    predictor.predict_embed_low(
+    predictor._predict_low(
         embed,
         point_coords=np.array([[[10.0, 5.0]]], dtype=np.float32),
         point_labels=np.array([[1]], dtype=np.int32),
     )
-    predictor.predict_embed_low(
+    predictor._predict_low(
         embed,
         box=np.array([2, 1, 18, 9], dtype=np.float32),
         cond=1,
     )
-    predictor.refine_low(
+    predictor.refine_embed(
         embed,
         np.ones((288, 288), dtype=np.float32),
         point_coords=np.array([[[10.0, 5.0]]], dtype=np.float32),
@@ -253,3 +265,21 @@ def test_single_predictor_keeps_fixed_image_options():
             pass
         else:
             raise AssertionError(f"Expected TypeError for {kwargs}")
+
+
+def test_single_predictor_removes_public_low_methods():
+    predictor = SinglePredictor(FakeModel(), device="cpu")
+
+    assert not hasattr(predictor, "predict_embed_low")
+    assert not hasattr(predictor, "refine_low")
+
+
+def test_single_predictor_from_path_uses_explicit_options(monkeypatch):
+    monkeypatch.setattr("src.predict.single.Sam3ImageModel", lambda path: FakeModel())
+
+    predictor = SinglePredictor.from_path("unused.pt", device="cpu", cond=3)
+
+    assert predictor.device == torch.device("cpu")
+    assert predictor.cond == 3
+    with pytest.raises(TypeError):
+        SinglePredictor.from_path("unused.pt", {"device": "cpu"})

@@ -42,12 +42,12 @@ def test_ground_script_refines_logits_in_one_batch(monkeypatch) -> None:
 
         def __init__(self):
             self.encode_calls = 0
-            self.predict_embed_calls = []
+            self.refine_embed_calls = []
             self.refine_calls = 0
             FakeSingle.instances.append(self)
 
         @classmethod
-        def from_path(cls, _path, _config):
+        def from_path(cls, _path, device="cuda"):
             return cls()
 
         def encode(self, image):
@@ -55,14 +55,17 @@ def test_ground_script_refines_logits_in_one_batch(monkeypatch) -> None:
             self.encode_calls += 1
             return {"orig_hw": (image.height, image.width)}
 
-        def predict_embed(self, embed, mask=None, multimask=True):
+        def refine_embed(self, embed, logit):
             assert not torch.is_grad_enabled()
-            self.predict_embed_calls.append((embed, np.asarray(mask), multimask))
-            count = len(mask)
-            masks = np.zeros((count, 1, 4, 5), dtype=bool)
-            masks[:, :, 1:3, 2:4] = True
-            scores = np.arange(count, dtype=np.float32)[:, None] + 0.25
-            return {"masks": masks, "scores": scores}
+            self.refine_embed_calls.append((embed, np.asarray(logit)))
+            return [
+                {
+                    "box": (2, 1, 4, 3),
+                    "roi": np.ones((2, 2), dtype=bool),
+                    "metrics": {"score": float(index) + 0.25},
+                }
+                for index in range(len(logit))
+            ]
 
         def refine(self, *_args, **_kwargs):
             self.refine_calls += 1
@@ -85,10 +88,9 @@ def test_ground_script_refines_logits_in_one_batch(monkeypatch) -> None:
 
     fake = FakeSingle.instances[0]
     assert fake.encode_calls == 1
-    assert len(fake.predict_embed_calls) == 1
-    _embed, mask, multimask = fake.predict_embed_calls[0]
-    assert mask.shape == (3, 2, 2)
-    assert multimask is False
+    assert len(fake.refine_embed_calls) == 1
+    _embed, logit = fake.refine_embed_calls[0]
+    assert logit.shape == (3, 2, 2)
     assert fake.refine_calls == 0
     assert all(item["mask"].shape == (4, 5) for item in objects)
     assert [item["metrics"]["refined_score"] for item in objects] == pytest.approx(
@@ -213,12 +215,17 @@ def test_single_script_writes_json_and_draws_from_json(monkeypatch, tmp_path) ->
             return cls()
 
         def predict(self, *_args, **_kwargs):
-            mask = np.zeros((4, 5), dtype=bool)
-            mask[1:3, 2:4] = True
-            return {
-                "masks": np.array([mask]),
-                "scores": np.array([0.75], dtype=np.float32),
-            }
+            return [
+                {
+                    "object_id": 1,
+                    "class_id": None,
+                    "box": (2, 1, 4, 3),
+                    "roi": np.ones((2, 2), dtype=bool),
+                    "prompt_index": 0,
+                    "candidate_index": 0,
+                    "metrics": {"score": 0.75},
+                }
+            ]
 
     monkeypatch.setattr(single, "SinglePredictor", FakePredictor)
     monkeypatch.setattr(single.Image, "open", lambda _path: Image.new("RGB", (5, 4)))
@@ -245,13 +252,17 @@ def test_finetune_single_script_writes_json_and_draws_from_json(
 
     class FakePredictor:
         def predict(self, *_args, **_kwargs):
-            mask = np.zeros((4, 5), dtype=bool)
-            mask[1:3, 2:4] = True
-            return {
-                "masks": np.array([mask]),
-                "scores": np.array([0.75], dtype=np.float32),
-                "class_scores": np.array([[0.8, 0.2]], dtype=np.float32),
-            }
+            return [
+                {
+                    "object_id": 1,
+                    "class_id": None,
+                    "box": (2, 1, 4, 3),
+                    "roi": np.ones((2, 2), dtype=bool),
+                    "prompt_index": 0,
+                    "candidate_index": 0,
+                    "metrics": {"score": 0.75, "class_scores": [0.8, 0.2]},
+                }
+            ]
 
     monkeypatch.setattr(single, "make_predictor", lambda _device: FakePredictor())
     monkeypatch.setattr(single.Image, "open", lambda _path: Image.new("RGB", (5, 4)))

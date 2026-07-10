@@ -58,15 +58,16 @@ def main():
 
 
 def segment_reference(image, device):
-    predictor = SinglePredictor.from_path(WEIGHT, {"device": device})
-    out = predictor.predict(
+    predictor = SinglePredictor.from_path(WEIGHT, device=device)
+    objects = predictor.predict(
         image,
         point_coords=POINT,
         point_labels=LABEL,
         multimask=True,
     )
-    index = int(np.argmax(out["scores"]))
-    return out["masks"][index], float(out["scores"][index])
+    item = max(objects, key=lambda value: value["metrics"]["score"])
+    mask = pack.full(image.size[::-1], item["box"], item["roi"])
+    return mask, float(item["metrics"]["score"])
 
 
 def make_result(frames, ref_mask, ref_score, outputs):

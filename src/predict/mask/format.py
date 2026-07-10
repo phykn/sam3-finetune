@@ -20,24 +20,6 @@ def resize_masks(
     )
 
 
-def make_full(
-    masks: torch.Tensor,
-    scores: torch.Tensor,
-    orig_hw: tuple[int, int],
-    threshold: float,
-) -> dict[str, object]:
-    logits = masks.clamp(-32.0, 32.0).float()
-    return {
-        "masks": resize_masks(masks, orig_hw, threshold)
-        .squeeze(0)
-        .detach()
-        .cpu()
-        .numpy(),
-        "scores": scores.squeeze(0).float().detach().cpu().numpy(),
-        "logits": logits.squeeze(0).detach().cpu().numpy(),
-    }
-
-
 def make_low(
     masks: torch.Tensor,
     scores: torch.Tensor,
@@ -98,11 +80,3 @@ def make_objects(
                 }
             )
     return out
-
-
-def make_classes(logits: torch.Tensor) -> dict[str, object]:
-    logits = logits.squeeze(0).float().detach().cpu()
-    return {
-        "class_logits": logits.numpy(),
-        "class_scores": logits.sigmoid().numpy(),
-    }

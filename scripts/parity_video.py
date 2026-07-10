@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT))
 
 import sam3.model.decoder as upstream_decoder  # noqa: E402
 from sam3.model_builder import build_sam3_multiplex_video_model  # noqa: E402
-from src.data import image as image_data  # noqa: E402
+from src.data import image as image_data, pack  # noqa: E402
 from src.ml.model import Sam3ImageModel, Sam3VideoModel  # noqa: E402
 from src.ml.structures import NestedTensor  # noqa: E402
 from src.predict.single import SinglePredictor  # noqa: E402
@@ -51,10 +51,10 @@ def main():
 def make_ref_mask(image, device):
     model = Sam3ImageModel(path=WEIGHT)
     predictor = SinglePredictor(model, device=device)
-    out = predictor.predict(image, point_coords=POINT, point_labels=LABEL)
-    index = int(np.argmax(out["scores"]))
-    mask = out["masks"][index].copy()
-    print(f"reference score: {float(out['scores'][index]):.6f}")
+    objects = predictor.predict(image, point_coords=POINT, point_labels=LABEL)
+    item = max(objects, key=lambda value: value["metrics"]["score"])
+    mask = pack.full(image.size[::-1], item["box"], item["roi"])
+    print(f"reference score: {float(item['metrics']['score']):.6f}")
     print(f"reference pixels: {int(mask.sum())}")
     del predictor, model
     return mask

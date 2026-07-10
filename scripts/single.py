@@ -26,8 +26,8 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     image = Image.open(IMAGE).convert("RGB")
 
-    predictor = SinglePredictor.from_path(WEIGHT, {"device": device})
-    out = predictor.predict(
+    predictor = SinglePredictor.from_path(WEIGHT, device=device)
+    objects = predictor.predict(
         image,
         point_coords=POINT,
         point_labels=LABEL,
@@ -35,11 +35,12 @@ def main():
     )
 
     OUT.mkdir(parents=True, exist_ok=True)
-    mask = out["masks"][0]
-    score = float(out["scores"][0])
+    item = objects[0]
+    mask = pack.full(image.size[::-1], item["box"], item["roi"])
+    score = float(item["metrics"]["score"])
     output = OUT / "frog_single.png"
     result = OUT / "frog_single.json"
-    save_result(make_result(image, mask, score), result)
+    save_result(make_result(image, item), result)
     make_sheet(load_result(result)).save(output)
 
     print(f"device: {device}")
@@ -51,8 +52,7 @@ def main():
     print(f"mask pixels: {int(mask.sum())}")
 
 
-def make_result(image, mask, score):
-    box, roi = pack.box_roi(mask)
+def make_result(image, item):
     point = [float(POINT[0][0]), float(POINT[0][1]), int(LABEL[0])]
     return Sample(
         image=DataImage(array=np.asarray(image, dtype=np.uint8)),
@@ -60,10 +60,14 @@ def make_result(image, mask, score):
             Object(
                 object_id=1,
                 class_id=None,
-                box=box,
-                roi=roi,
+                box=item["box"],
+                roi=item["roi"],
                 points=[point],
-                metrics={"score": float(score)},
+                metrics=dict(item["metrics"]),
+                meta={
+                    "prompt_index": item["prompt_index"],
+                    "candidate_index": item["candidate_index"],
+                },
             )
         ],
     )

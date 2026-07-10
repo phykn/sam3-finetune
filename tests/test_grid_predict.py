@@ -21,7 +21,7 @@ class FakeSingle:
         width, height = image.size
         return {"orig_hw": (height, width)}
 
-    def predict_embed_low(
+    def _predict_low(
         self,
         embed,
         point_coords,
@@ -32,38 +32,28 @@ class FakeSingle:
         assert not torch.is_grad_enabled()
         self.batches.append((point_coords.shape, point_labels.shape, multimask))
         self.masks.append(mask)
+        if mask is not None:
+            self.refine_logits.append(np.asarray(mask))
         height, width = embed["orig_hw"]
-        masks = np.zeros((len(point_coords), height, width), dtype=bool)
+        masks = np.zeros((len(point_coords), 1, height, width), dtype=bool)
         for index, point in enumerate(point_coords[:, 0, :]):
             x = min(max(int(point[0]), 0), width - 1)
             y = min(max(int(point[1]), 0), height - 1)
-            masks[index, max(y - 1, 0) : y + 1, max(x - 1, 0) : x + 1] = True
+            masks[index, 0, max(y - 1, 0) : y + 1, max(x - 1, 0) : x + 1] = True
         return {
             "masks": masks,
-            "scores": np.ones(len(point_coords), dtype=np.float32),
+            "scores": np.ones((len(point_coords), 1), dtype=np.float32),
             "logits": np.where(masks, 2.0, -2.0).astype(np.float32),
         }
 
-    def refine_low(self, embed, logit, point_coords=None, point_labels=None):
-        logit = np.asarray(logit)
-        assert logit.dtype != bool
-        self.refine_logits.append(logit)
-        return self.predict_embed_low(
-            embed,
-            point_coords,
-            point_labels,
-            mask=logit,
-            multimask=False,
-        )
-
 
 class FakeClassSingle(FakeSingle):
-    def predict_embed_low(self, *args, **kwargs):
-        out = super().predict_embed_low(*args, **kwargs)
+    def _predict_low(self, *args, **kwargs):
+        out = super()._predict_low(*args, **kwargs)
         score = 0.8 if kwargs.get("mask") is not None else 0.2
         out["class_scores"] = np.tile(
-            np.array([score, 1 - score], dtype=np.float32),
-            (len(out["scores"]), 1),
+            np.array([[[score, 1 - score]]], dtype=np.float32),
+            (len(out["scores"]), 1, 1),
         )
         return out
 

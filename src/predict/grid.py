@@ -87,7 +87,7 @@ class GridPredictor:
         nms: float = 0.7,
         min_stability: float = 0.75,
     ) -> "GridPredictor":
-        single = SinglePredictor.from_path(path, {"device": device})
+        single = SinglePredictor.from_path(path, device=device)
         return cls(
             single,
             tiles=tiles,
@@ -162,7 +162,7 @@ class GridPredictor:
         items = []
 
         for batch in _batches(points, self.batch_size):
-            out = self.single.predict_embed_low(
+            out = self.single._predict_low(
                 embed,
                 point_coords=batch[:, None, :],
                 point_labels=np.ones((len(batch), 1), dtype=np.int32),
@@ -215,11 +215,12 @@ class GridPredictor:
                 chunk_items = [item for _index, item in chunk]
                 points = _local_points(chunk_items)
                 logits_in = np.stack([item["refine_logit"] for item in chunk_items])
-                out = self.single.refine_low(
+                out = self.single._predict_low(
                     embed,
-                    logits_in,
                     point_coords=points,
                     point_labels=np.ones((len(chunk), 1), dtype=np.int32),
+                    mask=logits_in,
+                    multimask=False,
                 )
                 masks = format_masks(out["masks"])
                 logits = format_logits(out["logits"])
