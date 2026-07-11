@@ -111,6 +111,18 @@ def test_background_samples_do_not_contribute_mask_or_iou_loss():
     assert stats == changed_stats
 
 
+def test_iou_loss_compares_sigmoid_score_with_target_iou():
+    batch = make_batch()
+    out = make_output()
+    with torch.no_grad():
+        out["mask_logits"][0, 0] = torch.tensor([[10.0, 10.0], [-10.0, -10.0]])
+        out["iou_scores"][0, 0] = 10.0
+
+    _total, stats = finetune_loss(batch, out)
+
+    assert stats["iou_loss"] < 1e-6
+
+
 def test_no_valid_masks_keeps_class_loss_trainable():
     batch = make_batch(mask_valid=(0.0, 0.0))
     out = make_output()

@@ -99,7 +99,11 @@ def finetune_loss(
     bce_sum = (mask_bce(mask_logits, target) * mask_valid).sum()
     dice_sum = (mask_dice(mask_logits, target) * mask_valid).sum()
     actual_iou = target_iou(mask_logits, target)
-    iou_per_sample = F.mse_loss(iou_scores, actual_iou, reduction="none").mean(1)
+    iou_per_sample = F.mse_loss(
+        iou_scores.sigmoid(),
+        actual_iou,
+        reduction="none",
+    ).mean(1)
     iou_sum = (iou_per_sample * mask_valid).sum()
 
     class_logits = class_logits[:, 0]
