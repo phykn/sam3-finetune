@@ -14,7 +14,7 @@ def test_finetune_dataset_matches_folder_classes():
 
     for split in ("train", "valid"):
         folders = config["data"][split]["folders"]
-        assert len(folders) == 3
+        assert len(folders) == 4
         for item in folders:
             folder = ROOT / item["path"]
             class_id = int(folder.name.split("_", 1)[0])
@@ -37,11 +37,14 @@ def test_finetune_dataset_uses_object_background_class_targets():
 
     assert [item["target"] for item in folders] == [
         [0, 0, 0],
+        [0, 0, 0],
         [1, 1, 0],
         [1, 0, 1],
     ]
     assert [item["weight"] for item in folders] == [
         [1, 0, 0],
+        [1, 0, 0],
         [1, 1, 1],
         [1, 1, 1],
     ]
+    assert [item["cond"] for item in folders] == [0, 1, 0, 1]
