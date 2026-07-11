@@ -82,8 +82,9 @@ def finetune_loss(
     class_target = batch["label_target"].float()
     if class_logits.shape != class_target.shape:
         raise ValueError("class target shape must match class logits")
+    base_weights = batch["label_weight"].float()
     weights = class_weights(
-        batch["label_weight"].float(),
+        base_weights,
         class_logits,
         batch["is_auto_bg"],
     )
@@ -99,7 +100,7 @@ def finetune_loss(
     bce, bce_value = mean_loss(bce_sum, mask_valid.sum())
     dice, dice_value = mean_loss(dice_sum, mask_valid.sum())
     iou, iou_value = mean_loss(iou_sum, mask_valid.sum())
-    classes, class_value = mean_loss(class_sum, weights.sum())
+    classes, class_value = mean_loss(class_sum, base_weights.sum())
     total = bce + dice + iou + classes
     return total, {
         "loss": bce_value + dice_value + iou_value + class_value,

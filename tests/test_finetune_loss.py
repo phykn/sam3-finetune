@@ -73,6 +73,29 @@ def test_auto_background_uses_detached_particle_probability():
     assert adjusted.requires_grad is False
 
 
+def test_auto_background_weight_reduces_class_gradient():
+    particle = 0.9
+    logit = torch.logit(torch.tensor(particle))
+    batch = {
+        "target": torch.zeros(1, 1, 1, 1),
+        "mask_valid": torch.zeros(1),
+        "is_auto_bg": torch.ones(1),
+        "label_target": torch.zeros(1, 1),
+        "label_weight": torch.ones(1, 1),
+    }
+    out = {
+        "mask_logits": torch.zeros(1, 1, 1, 1, requires_grad=True),
+        "iou_scores": torch.zeros(1, 1, requires_grad=True),
+        "class_logits": logit.reshape(1, 1, 1).requires_grad_(),
+    }
+
+    loss, _stats = finetune_loss(batch, out)
+    loss.backward()
+
+    expected = particle * (1 - particle)
+    assert torch.allclose(out["class_logits"].grad, torch.tensor([[[expected]]]))
+
+
 def test_background_samples_do_not_contribute_mask_or_iou_loss():
     batch = make_batch()
     out = make_output()
