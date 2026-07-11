@@ -7,15 +7,11 @@ model:
   feature_rank: 16
 data:
   train:
-    paths: []
-    conds: []
-    labels: []
+    folders: []
     batch_size: 4
     num_workers: 4
   valid:
-    paths: []
-    conds: []
-    labels: []
+    folders: []
     batch_size: 4
     num_workers: 4
 train:

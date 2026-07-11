@@ -111,3 +111,34 @@ def test_make_finetune_loader_builds_distributed_validation_loader(tmp_path):
     assert isinstance(loader.sampler, DistributedSampler)
     assert loader.sampler.shuffle is False
     assert loader.loader.drop_last is False
+
+
+def test_make_finetune_loader_expands_folder_labels(tmp_path):
+    folder = tmp_path / "particle"
+    folder.mkdir()
+    second = write_sample(folder / "b.json")
+    first = write_sample(folder / "a.json")
+
+    loader = make_finetune_loader(
+        {
+            "folders": [
+                {
+                    "path": str(folder),
+                    "cond": 2,
+                    "target": [1, 0, 1],
+                    "weight": [1, 1, 0],
+                }
+            ],
+            "batch_size": 1,
+            "num_workers": 0,
+        },
+        train=False,
+    )
+    dataset = loader.loader.dataset
+
+    assert dataset.paths == [str(first), str(second)]
+    assert dataset.conds == (2, 2)
+    assert dataset.labels == (
+        {"target": [1, 0, 1], "weight": [1, 1, 0]},
+        {"target": [1, 0, 1], "weight": [1, 1, 0]},
+    )

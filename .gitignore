@@ -5,7 +5,7 @@ AGENTS.md
 __pycache__/
 *.py[cod]
 outputs/
-data/
+/data/
 sam3-main/
 weight/
 docs/

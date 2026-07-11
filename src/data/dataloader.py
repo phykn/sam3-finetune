@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
 from .dataset import TrainDataset, ValidDataset
+from .folder import expand
 from .image import to_tensor
 
 
@@ -95,10 +96,16 @@ def make_finetune_loader(
     world_size: int = 1,
 ) -> InfiniteLoader:
     dataset_type = TrainDataset if train else ValidDataset
+    if "folders" in config:
+        paths, conds, labels = expand(config["folders"])
+    else:
+        paths = config["paths"]
+        conds = config.get("conds")
+        labels = config.get("labels")
     dataset = dataset_type(
-        config["paths"],
-        conds=config.get("conds"),
-        labels=config.get("labels"),
+        paths,
+        conds=conds,
+        labels=labels,
     )
     sampler = None
     if world_size > 1:
