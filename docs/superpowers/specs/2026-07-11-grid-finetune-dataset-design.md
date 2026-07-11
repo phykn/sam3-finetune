@@ -29,14 +29,15 @@ Run the original `sam3.1_multiplex.pt` through `GridPredictor` with the existing
 
 ## Class Assignment
 
-Use the existing manually defined class boxes only as class regions; do not use them as SAM prompts for frog and leaf candidates.
+Use the existing manually defined class boxes as basic SAM box prompts to build class reference masks. Do not use LoRA or a trained classifier.
 
 For every grid candidate:
 
-1. Compute the fraction of candidate mask pixels inside each manual class box.
-2. Assign the class with the largest fraction when the candidate point is inside that class box and at least half of the candidate mask is inside it.
+1. Compute the fraction of candidate mask pixels inside each class reference mask.
+2. Assign the class with the largest fraction when the candidate point is inside that reference mask and at least half of the candidate mask overlaps it.
 3. Discard candidates that do not satisfy both conditions.
 4. Keep GridPredictor's stability, area, edge, and NMS filtering.
+5. For frog, keep only the largest candidate covering at least 25% of the manual frog region; use the original box mask when no candidate qualifies.
 
 Class `0` remains manually confirmed background data. Preserve its existing objects because their masks are excluded from mask loss by `mask_valid=0`; they are still needed to create loader samples and prompts.
 

@@ -43,7 +43,7 @@
       "metrics": {
         "score": 2.90625,
         "stability": 0.88558524651863,
-        "region_overlap": 1.0
+        "region_overlap": 0.9993193431181755
       },
       "meta": {
         "source_point": [

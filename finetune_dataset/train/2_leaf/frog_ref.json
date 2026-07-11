@@ -101,7 +101,7 @@
       "metrics": {
         "score": 3.03125,
         "stability": 0.9544893851847043,
-        "region_overlap": 0.9969224193203676
+        "region_overlap": 0.9944005129301132
       },
       "meta": {
         "source_point": [
@@ -217,7 +217,7 @@
       "metrics": {
         "score": 2.640625,
         "stability": 0.7608948962945701,
-        "region_overlap": 0.9960875944139542
+        "region_overlap": 0.9947562897353692
       },
       "meta": {
         "source_point": [
@@ -275,7 +275,7 @@
       "metrics": {
         "score": 2.90625,
         "stability": 0.9526842584167425,
-        "region_overlap": 1.0
+        "region_overlap": 0.9982686124165224
       },
       "meta": {
         "source_point": [
@@ -333,7 +333,7 @@
       "metrics": {
         "score": 2.328125,
         "stability": 0.8174250832408435,
-        "region_overlap": 1.0
+        "region_overlap": 0.998143439480163
       },
       "meta": {
         "source_point": [
@@ -391,7 +391,7 @@
       "metrics": {
         "score": 2.171875,
         "stability": 0.8865784499054821,
-        "region_overlap": 1.0
+        "region_overlap": 0.9941884038383565
       },
       "meta": {
         "source_point": [

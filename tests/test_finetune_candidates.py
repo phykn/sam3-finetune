@@ -19,6 +19,22 @@ def candidate(box, roi, point):
     }
 
 
+class ReferenceSingle:
+    def __init__(self):
+        self.calls = 0
+
+    def predict(self, _image, box, multimask):
+        self.calls += 1
+        assert multimask is False
+        return [
+            {
+                "box": tuple(value),
+                "roi": np.ones((value[3] - value[1], value[2] - value[0])),
+            }
+            for value in np.asarray(box, dtype=int)
+        ]
+
+
 def test_assign_class_uses_point_and_mask_overlap():
     item = candidate((1, 1, 5, 5), np.ones((4, 4)), (2, 2))
     regions = {1: [(0, 0, 4, 5)], 2: [(4, 0, 6, 5)]}
@@ -47,6 +63,50 @@ def test_assign_class_rejects_equal_best_classes():
     assert assign_class(item, regions, (4, 4)) is None
 
 
+def test_assign_class_rejects_candidate_outside_reference_mask():
+    item = candidate((0, 0, 4, 4), np.ones((4, 4)), (2, 2))
+    reference = np.zeros((4, 4), dtype=bool)
+    reference[:, :1] = True
+
+    assert (
+        assign_class(
+            item,
+            {1: [(0, 0, 4, 4)]},
+            (4, 4),
+            class_masks={1: reference},
+        )
+        is None
+    )
+
+
+def test_make_reference_masks_batches_class_boxes():
+    class FakeSingle:
+        def __init__(self):
+            self.boxes = None
+
+        def predict(self, _image, box, multimask):
+            self.boxes = np.asarray(box)
+            assert multimask is False
+            return [
+                {
+                    "box": tuple(value),
+                    "roi": np.ones((value[3] - value[1], value[2] - value[0])),
+                }
+                for value in self.boxes.astype(int)
+            ]
+
+    single = FakeSingle()
+    masks = candidates.make_reference_masks(
+        single,
+        Image.new("RGB", (6, 4)),
+        {1: [(0, 0, 2, 2)], 2: [(3, 0, 5, 2), (3, 2, 6, 4)]},
+    )
+
+    assert single.boxes.shape == (3, 4)
+    assert masks[1].sum() == 4
+    assert masks[2].sum() == 10
+
+
 def test_make_sample_writes_assigned_candidates_and_preserves_background(
     monkeypatch,
     tmp_path,
@@ -71,6 +131,7 @@ def test_make_sample_writes_assigned_candidates_and_preserves_background(
     class FakePredictor:
         def __init__(self):
             self.calls = 0
+            self.single = ReferenceSingle()
 
         def predict(self, _image):
             self.calls += 1
@@ -106,6 +167,7 @@ def test_make_sample_writes_assigned_candidates_and_preserves_background(
     )
 
     assert predictor.calls == 1
+    assert predictor.single.calls == 1
     assert counts == {0: 1, 1: 1, 2: 1}
     saved_background = load(out / "train" / "0_background" / "frog.json")
     frog = load(out / "train" / "1_frog" / "frog.json")
@@ -136,13 +198,15 @@ def test_make_preview_keeps_image_size_and_draws_objects():
     assert np.any(np.asarray(preview) != np.asarray(image))
 
 
-def test_frog_fallback_requires_a_large_candidate():
+def test_select_frog_keeps_only_largest_full_object():
     small = Object(1, 1, (0, 0, 2, 2), np.ones((2, 2)))
-    large = Object(2, 1, (0, 0, 8, 4), np.ones((4, 8)))
-    region = [(0, 0, 8, 8)]
+    whole = Object(2, 1, (0, 0, 8, 4), np.ones((4, 8)))
+    duplicate = Object(3, 1, (0, 0, 7, 4), np.ones((4, 7)))
 
-    assert candidates.needs_frog_fallback([small], region)
-    assert not candidates.needs_frog_fallback([small, large], region)
+    assert candidates.select_frog(
+        [small, duplicate, whole],
+        [(0, 0, 8, 8)],
+    ) == [whole]
 
 
 def test_make_sample_falls_back_to_source_frog_mask(monkeypatch, tmp_path):
@@ -169,6 +233,9 @@ def test_make_sample_falls_back_to_source_frog_mask(monkeypatch, tmp_path):
         save(Sample(data_image, objects), path)
 
     class FakePredictor:
+        def __init__(self):
+            self.single = ReferenceSingle()
+
         def predict(self, _image):
             return [
                 {

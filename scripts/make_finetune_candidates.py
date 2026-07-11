@@ -17,7 +17,13 @@ NAMES = {0: "background", 1: "frog", 2: "leaf"}
 COLORS = {1: (255, 0, 255), 2: (40, 120, 255)}
 
 
-def assign_class(item, regions, image_shape, min_overlap=0.5):
+def assign_class(
+    item,
+    regions,
+    image_shape,
+    min_overlap=0.5,
+    class_masks=None,
+):
     mask = np.zeros(image_shape, dtype=bool)
     x0, y0, x1, y1 = item["box"]
     mask[y0:y1, x0:x1] = np.asarray(item["roi"], dtype=bool)
@@ -28,6 +34,16 @@ def assign_class(item, regions, image_shape, min_overlap=0.5):
     px, py = item["points"][0][:2]
     scores = []
     for class_id, boxes in regions.items():
+        if class_masks is not None:
+            reference = np.asarray(class_masks[class_id], dtype=bool)
+            x = min(reference.shape[1] - 1, max(0, int(px)))
+            y = min(reference.shape[0] - 1, max(0, int(py)))
+            if not reference[y, x]:
+                continue
+            overlap = float(np.logical_and(mask, reference).sum()) / area
+            if overlap >= min_overlap:
+                scores.append((class_id, overlap))
+            continue
         overlap = 0.0
         for box in boxes:
             bx0, by0, bx1, by1 = box
@@ -45,13 +61,36 @@ def assign_class(item, regions, image_shape, min_overlap=0.5):
     return scores[0]
 
 
-def needs_frog_fallback(objects, regions, min_ratio=0.25):
+def select_frog(objects, regions, min_ratio=0.25):
+    full = []
     for obj in objects:
         area = int(obj.roi.sum())
-        for x0, y0, x1, y1 in regions:
-            if area / ((x1 - x0) * (y1 - y0)) >= min_ratio:
-                return False
-    return True
+        if any(
+            area / ((x1 - x0) * (y1 - y0)) >= min_ratio for x0, y0, x1, y1 in regions
+        ):
+            full.append(obj)
+    return [] if not full else [max(full, key=lambda obj: int(obj.roi.sum()))]
+
+
+def make_reference_masks(single, image, classes):
+    boxes = []
+    class_ids = []
+    for class_id, regions in classes.items():
+        boxes.extend(regions)
+        class_ids.extend([class_id] * len(regions))
+    results = single.predict(
+        image,
+        box=np.asarray(boxes, dtype=np.float32),
+        multimask=False,
+    )
+    masks = {
+        class_id: np.zeros((image.height, image.width), dtype=bool)
+        for class_id in classes
+    }
+    for class_id, result in zip(class_ids, results, strict=True):
+        x0, y0, x1, y1 = result["box"]
+        masks[class_id][y0:y1, x0:x1] |= np.asarray(result["roi"], dtype=bool)
+    return masks
 
 
 def make_sample(predictor, split, filename, classes):
@@ -63,9 +102,15 @@ def make_sample(predictor, split, filename, classes):
         raise FileNotFoundError(background_path)
 
     image = Image.open(image_path).convert("RGB")
+    class_masks = make_reference_masks(predictor.single, image, classes)
     grouped = {1: [], 2: []}
     for item in predictor.predict(image):
-        assigned = assign_class(item, classes, (image.height, image.width))
+        assigned = assign_class(
+            item,
+            classes,
+            (image.height, image.width),
+            class_masks=class_masks,
+        )
         if assigned is None:
             continue
         class_id, overlap = assigned
@@ -79,7 +124,8 @@ def make_sample(predictor, split, filename, classes):
             )
         )
 
-    if needs_frog_fallback(grouped[1], classes[1]):
+    grouped[1] = select_frog(grouped[1], classes[1])
+    if not grouped[1]:
         frog_path = SOURCE / split / "1_frog" / f"{Path(filename).stem}.json"
         if not frog_path.is_file():
             raise FileNotFoundError(frog_path)

@@ -18,64 +18,6 @@
       "object_id": 1,
       "class_id": 2,
       "box": [
-        23,
-        304,
-        79,
-        345
-      ],
-      "roi": {
-        "shape": [
-          41,
-          56
-        ],
-        "dtype": "uint8",
-        "format": "png",
-        "encoding": "base64",
-        "data": "iVBORw0KGgoAAAANSUhEUgAAADgAAAApCAAAAABFZ7X8AAAAqElEQVR4nL3VwQ6EIAxF0VvC///ymxiVcQC1vMV0A1RO2kCCwRjRrUVi05i4wZFRMxxp1vFYdUeoWoy2f5VBMR3FdBTTsbfqweDPFcOFXqh6DIrTqcxWhQeFB4UHdYyLp6o2W6soPCg8KDwoPCg8qG6dvA4NmRTUJJeAmmbj7QXQTb56jGeoh2+R/5XmKoqX2MrFOmNHvzKhmrnIHPuSc8y6S61tlmbwAT/SIEzcjQtiAAAAAElFTkSuQmCC"
-      },
-      "points": [
-        [
-          46.5,
-          306.75,
-          1
-        ]
-      ],
-      "metrics": {
-        "score": 2.734375,
-        "stability": 0.943064182194617,
-        "region_overlap": 1.0
-      },
-      "meta": {
-        "source_point": [
-          46.5,
-          306.75
-        ],
-        "class_regions": [
-          [
-            0,
-            180,
-            415,
-            382
-          ],
-          [
-            390,
-            0,
-            550,
-            215
-          ],
-          [
-            0,
-            0,
-            205,
-            75
-          ]
-        ]
-      }
-    },
-    {
-      "object_id": 2,
-      "class_id": 2,
-      "box": [
         0,
         0,
         160,
@@ -101,7 +43,7 @@
       "metrics": {
         "score": 2.609375,
         "stability": 0.8796992481203008,
-        "region_overlap": 1.0
+        "region_overlap": 0.9994389901823282
       },
       "meta": {
         "source_point": [
@@ -131,297 +73,7 @@
       }
     },
     {
-      "object_id": 3,
-      "class_id": 2,
-      "box": [
-        405,
-        114,
-        459,
-        150
-      ],
-      "roi": {
-        "shape": [
-          36,
-          54
-        ],
-        "dtype": "uint8",
-        "format": "png",
-        "encoding": "base64",
-        "data": "iVBORw0KGgoAAAANSUhEUgAAADYAAAAkCAAAAADnMJaRAAAAuklEQVR4nJ2V2xKEMAhDSf//n7MzuzuKLZcgD45KDyTUC8wHvkdaGwjPqWO+gHXkSijbr+NstIotltRmiVWCmHorbSC7W5u3sOE1yaohAqxtZoGgoJIidQkP4C8w9RYIG2DmGi7lNTm5Za84PIoowcvbpJ/hHsmYW//OI9C8Ld0h/b7pDTHb7kSZLnNbCRHbRPIdZiJ3jIQKxXOSFKh4BmigdAVKKM83X/e8bJC5bVc2ij9e81i49GPCH3vSHjwv+0PZAAAAAElFTkSuQmCC"
-      },
-      "points": [
-        [
-          441.5,
-          139.75,
-          1
-        ]
-      ],
-      "metrics": {
-        "score": 2.234375,
-        "stability": 0.9193324061196105,
-        "region_overlap": 1.0
-      },
-      "meta": {
-        "source_point": [
-          441.5,
-          139.75
-        ],
-        "class_regions": [
-          [
-            0,
-            180,
-            415,
-            382
-          ],
-          [
-            390,
-            0,
-            550,
-            215
-          ],
-          [
-            0,
-            0,
-            205,
-            75
-          ]
-        ]
-      }
-    },
-    {
-      "object_id": 4,
-      "class_id": 2,
-      "box": [
-        315,
-        356,
-        389,
-        382
-      ],
-      "roi": {
-        "shape": [
-          26,
-          74
-        ],
-        "dtype": "uint8",
-        "format": "png",
-        "encoding": "base64",
-        "data": "iVBORw0KGgoAAAANSUhEUgAAAEoAAAAaCAAAAAA1NZVaAAAAjklEQVR4nK3UUQrEMAhF0fuk+9+yQwl0ZiAmsepfEz0VlIiTkOv74VHSnglvPEnt/4UfZR5AI3yTewxxW9YksUpPQvwOuQThXNmSeIjq6AifluUdgr162dEd1iah6tzmxSWI5bbnJKyw3vyHuiCeruoS6oIYSFLy+bG1SSgreXijnBRDYC9egohKZa+a4gNwRRkl3JheLAAAAABJRU5ErkJggg=="
-      },
-      "points": [
-        [
-          348.5,
-          371.25,
-          1
-        ]
-      ],
-      "metrics": {
-        "score": 1.5234375,
-        "stability": 0.8118032786885246,
-        "region_overlap": 1.0
-      },
-      "meta": {
-        "source_point": [
-          348.5,
-          371.25
-        ],
-        "class_regions": [
-          [
-            0,
-            180,
-            415,
-            382
-          ],
-          [
-            390,
-            0,
-            550,
-            215
-          ],
-          [
-            0,
-            0,
-            205,
-            75
-          ]
-        ]
-      }
-    },
-    {
-      "object_id": 5,
-      "class_id": 2,
-      "box": [
-        132,
-        190,
-        160,
-        212
-      ],
-      "roi": {
-        "shape": [
-          22,
-          28
-        ],
-        "dtype": "uint8",
-        "format": "png",
-        "encoding": "base64",
-        "data": "iVBORw0KGgoAAAANSUhEUgAAABwAAAAWCAAAAAD2/aMuAAAAWUlEQVR4nMWRwQrAMAhDE9n//3KGVIZrmx52mRerjyRQiVasrmlGez382qLXkitQrblTJQ7LAIRnTKUtniDCJ2bmD1Ce6att/q3z1UHpT1Zu67FbTK1Hm+NvDdINKIQll1MAAAAASUVORK5CYII="
-      },
-      "points": [
-        [
-          139.5,
-          199.25,
-          1
-        ]
-      ],
-      "metrics": {
-        "score": 1.5078125,
-        "stability": 0.8821490467937608,
-        "region_overlap": 1.0
-      },
-      "meta": {
-        "source_point": [
-          139.5,
-          199.25
-        ],
-        "class_regions": [
-          [
-            0,
-            180,
-            415,
-            382
-          ],
-          [
-            390,
-            0,
-            550,
-            215
-          ],
-          [
-            0,
-            0,
-            205,
-            75
-          ]
-        ]
-      }
-    },
-    {
-      "object_id": 6,
-      "class_id": 2,
-      "box": [
-        403,
-        75,
-        442,
-        112
-      ],
-      "roi": {
-        "shape": [
-          37,
-          39
-        ],
-        "dtype": "uint8",
-        "format": "png",
-        "encoding": "base64",
-        "data": "iVBORw0KGgoAAAANSUhEUgAAACcAAAAlCAAAAADkAK/iAAAAn0lEQVR4nK2UUQ7EIAhEB+L9rzxNG3crVWR2Uz6smucDE4shCzsHhlVG4QZ9j8G2nE3TVV6LSyY+W2XwGrNzaIoMTy6jEPMmmEVfLsPo22JwDUOTKHSgxOgShgsRMLiGwTWMyTudwjUdJB/T/2OKNzn+4GuSDSXH/vVvB9mH363m//fC0VfX9uGUzJdvDYbdrG09j/b6xm0CrEoxS25/AB2mFlU3q0tjAAAAAElFTkSuQmCC"
-      },
-      "points": [
-        [
-          410.5,
-          96.75,
-          1
-        ]
-      ],
-      "metrics": {
-        "score": 1.3359375,
-        "stability": 0.8182565789473685,
-        "region_overlap": 1.0
-      },
-      "meta": {
-        "source_point": [
-          410.5,
-          96.75
-        ],
-        "class_regions": [
-          [
-            0,
-            180,
-            415,
-            382
-          ],
-          [
-            390,
-            0,
-            550,
-            215
-          ],
-          [
-            0,
-            0,
-            205,
-            75
-          ]
-        ]
-      }
-    },
-    {
-      "object_id": 7,
-      "class_id": 2,
-      "box": [
-        0,
-        339,
-        295,
-        382
-      ],
-      "roi": {
-        "shape": [
-          43,
-          295
-        ],
-        "dtype": "uint8",
-        "format": "png",
-        "encoding": "base64",
-        "data": "iVBORw0KGgoAAAANSUhEUgAAAScAAAArCAAAAAAfhBFSAAABg0lEQVR4nO2YC47DIAxEmWjvf+VZ0bS7hK8DNCSYkVo1FGz8MASA0Sc4v1nRRoEQlAhBKeKEeLEMlA5OyP0pAjU9JwjqUDcniGtSKyecrE+FnFDVioo4oaUxVXBCuwnOzgmd7HBWTuhsjwJXOHngGazvjC8lnPjv+8aw8F3zFLiFoft8O1i4wgmLvqPduAMsXOlMwoleqU2voaAwwCdP9ORwk4WSjc46rJQDFA3y0CNw/0jGkf06Fu3LQFHYt309/6zpdnCzA8wZ2JQiQqLo8OYzBVK+E0t2t7Q/PE4hqGgUrzgRbwijQcztxxlmlV+qhpUf9ZY9xthvKKASyg+6BOH1+gulgB3T+dTzQvnxQmKinQ0dZna5RN6rTxJSDh/M5HJi//nseBTMpBbZ9al2s00zuY6XKagPGWZy/XHZAD70cHGFgmvxRjPTJ5S3H19KZMLiJNPiVNB7g9nECUaD0MoJRodsnGveCQSHU/SaSUvGlLXuC2Ta1BzW2lQ7s9Do92n6Bd/TSE/JodmJAAAAAElFTkSuQmCC"
-      },
-      "points": [
-        [
-          192.5,
-          362.8999938964844,
-          1
-        ]
-      ],
-      "metrics": {
-        "score": 2.359375,
-        "stability": 0.8059796437659033,
-        "region_overlap": 1.0
-      },
-      "meta": {
-        "source_point": [
-          192.5,
-          362.8999938964844
-        ],
-        "class_regions": [
-          [
-            0,
-            180,
-            415,
-            382
-          ],
-          [
-            390,
-            0,
-            550,
-            215
-          ],
-          [
-            0,
-            0,
-            205,
-            75
-          ]
-        ]
-      }
-    },
-    {
-      "object_id": 8,
+      "object_id": 2,
       "class_id": 2,
       "box": [
         439,
@@ -449,7 +101,7 @@
       "metrics": {
         "score": 2.203125,
         "stability": 0.8106802131086607,
-        "region_overlap": 0.9439938623410785
+        "region_overlap": 0.9340749671196843
       },
       "meta": {
         "source_point": [
@@ -479,7 +131,7 @@
       }
     },
     {
-      "object_id": 9,
+      "object_id": 3,
       "class_id": 2,
       "box": [
         374,
@@ -507,7 +159,7 @@
       "metrics": {
         "score": 1.6796875,
         "stability": 0.819634703196347,
-        "region_overlap": 0.9821840976575388
+        "region_overlap": 0.7113163972286374
       },
       "meta": {
         "source_point": [
