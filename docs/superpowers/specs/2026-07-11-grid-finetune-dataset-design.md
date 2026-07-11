@@ -10,9 +10,9 @@ Generate more, cleaner finetuning masks with `GridPredictor` while preserving th
 
 ## Output
 
-Write candidates to `finetune_dataset_candidate/` with the same split, class-folder, JSON schema, and embedded image/ROI format as `finetune_dataset/`. Never overwrite the existing dataset.
+Update `finetune_dataset/` in place with the same split, class-folder, JSON schema, and embedded image/ROI format. Keep only this dataset version.
 
-Write one preview image per source image under `finetune_dataset_candidate/preview/`. The preview shows candidate IDs, class colors, masks, and scores so incorrect candidates can be reviewed before replacement.
+Write one preview image per source image under `finetune_dataset/preview/`. The preview shows candidate IDs, class colors, masks, and scores.
 
 ## Generation
 
@@ -43,8 +43,8 @@ Class `0` remains manually confirmed background data. Preserve its existing obje
 ## Safety
 
 - Fail before writing if an input image or original class JSON is missing.
-- Recreate only `finetune_dataset_candidate/` when explicitly running the generator.
-- Do not modify `asset/`, `weight/`, or `finetune_dataset/`.
+- Update only known class JSON and preview files under `finetune_dataset/`.
+- Do not modify `asset/` or `weight/`.
 - Store the source grid point, score, stability, and class-region overlap in object metadata/metrics.
 
 ## Verification

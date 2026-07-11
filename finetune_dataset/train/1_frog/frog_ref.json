@@ -43,7 +43,8 @@
           420,
           610,
           850
-        ]
+        ],
+        "candidate_source": "box_fallback"
       }
     }
   ]
