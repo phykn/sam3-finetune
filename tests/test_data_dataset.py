@@ -244,7 +244,7 @@ def test_base_dataset_returns_train_item_without_aug(tmp_path):
     assert item["is_auto_bg"] is False
 
 
-def test_base_dataset_resizes_target_as_soft_float_mask(tmp_path):
+def test_base_dataset_resizes_target_as_binary_float_mask(tmp_path):
     obj = Object(
         object_id=1,
         class_id=2,
@@ -264,9 +264,7 @@ def test_base_dataset_resizes_target_as_soft_float_mask(tmp_path):
 
     assert item["target"].dtype == np.float32
     assert item["target"].shape == (5, 5)
-    assert item["target"].min() >= 0.0
-    assert item["target"].max() <= 1.0
-    assert ((item["target"] > 0.0) & (item["target"] < 1.0)).any()
+    assert set(np.unique(item["target"])) <= {0.0, 1.0}
 
 
 def test_base_dataset_adds_condition_and_label_from_sample_index(tmp_path):

@@ -74,7 +74,10 @@ def resize_mask(value: np.ndarray, size: int, binary: bool = False) -> np.ndarra
         np.clip(value.astype(np.float32) * 255.0, 0.0, 255.0).astype(np.uint8),
         mode="L",
     )
-    image = image.resize((size, size), PILImage.Resampling.BILINEAR)
+    resample = (
+        PILImage.Resampling.NEAREST if binary else PILImage.Resampling.BILINEAR
+    )
+    image = image.resize((size, size), resample)
     return np.asarray(image, dtype=np.float32) / 255.0
 
 
