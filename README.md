@@ -1,213 +1,238 @@
 # SAM3 Finetune
 
-Lightweight SAM 3 rewrite for local finetuning and inference experiments.
+A local-checkpoint SAM 3.1 rewrite for image segmentation, reference grounding,
+video propagation, and LoRA finetuning. Runtime code lives under `src/` and does
+not depend on Hugging Face.
 
-The project keeps the upstream SAM 3 checkout as reference code and builds a
-smaller runtime under `src/`.
-
-## Overview
-
-The model code is organized as a one-way stack:
+## Repository
 
 ```text
-components -> blocks -> models -> predictors
+config/            model and finetuning configuration templates
+finetune_dataset/  small frog/leaf finetuning dataset and previews
+notebooks/         dataset, forward, loss, and grid-prediction checks
+src/data/          dataset, augmentation, prompts, and JSON sample format
+src/finetune/      LoRA model, router, loss, checkpoint, DDP, and trainer
+src/ml/            SAM 3.1 components, blocks, and assembled models
+src/predict/       single-image, grid, grounding, and video predictors
+tests/             runtime and mathematical regression tests
 ```
 
-Main model entrypoints:
-
-- `Sam3ImageModel`: prompt-based image segmentation
-- `Sam3GroundingModel`: visual-token grounding
-- `Sam3VideoModel`: video mask propagation
-
-Prediction workflows:
-
-- `single`: one image with point, box, or mask prompts
-- `grid`: automatic mask proposals from grid prompts
-- `ground`: reference-guided grounding
-- `video`: mask propagation across frames
-
-## Architecture
-
-Runtime dependencies move in one direction:
-
-```text
-data/io/ops/runtime -> components -> blocks -> model -> build/predict -> scripts
-```
-
-- `components` contain reusable mathematical modules.
-- `blocks` assemble components for one model stage.
-- `model` connects blocks for image, grounding, or video workflows.
-- `predict` uses public model methods without importing model internals.
-
-## Repository Layout
-
-```text
-config/       model config
-scripts/      runnable examples and parity checks
-src/data/     input preprocessing
-src/io/       checkpoint and video frame loading
-src/ml/components/  reusable neural-network components
-src/ml/blocks/      image, grounding, and video model blocks
-src/ml/model/       assembled image, grounding, and video models
-src/ops/      shared tensor and box operations
-src/predict/  prediction workflows
-src/finetune/ finetune model, losses, checkpoints, DDP, and trainer
-tests/        unit tests
-```
-
-`sam3-main/`, `weight/`, and `asset/` are local-only directories and are not
-part of the committed runtime.
+`weight/visual_token.pt` is included for no-text grounding. `asset/`, `docs/`,
+`scripts/`, `outputs/`, other weight files, and the upstream `sam3-main/`
+checkout are local-only and are not part of the remote repository.
 
 ## Setup
 
-Create a virtual environment and install the Python dependencies:
-
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
-
-Install `torch` and `torchvision` separately with the CUDA wheel/index that
-matches your machine.
-
-## Build Models
-
-```python
-from src.build import build_grounding_model, build_image_model, build_video_model
-
-config = {
-    "path": "weight/sam3.pt",
-    "visual_path": "weight/visual_token.pt",
-    "device": "cuda",
-}
-
-image_model = build_image_model(config)
-grounding_model = build_grounding_model(config)
-video_model = build_video_model(config)
-```
-
-## Run Examples
-
-```powershell
-.\.venv\Scripts\python.exe scripts\single.py
-.\.venv\Scripts\python.exe scripts\grid.py
-.\.venv\Scripts\python.exe scripts\ground.py
-.\.venv\Scripts\python.exe scripts\video.py
-```
-
-## Reference Grounding
-
-Grounding uses annotated boxes from one or more reference images to find matching
-objects in a new image. Boxes are pixel-space `(x0, y0, x1, y1)` values with the
-same meaning as `src.data.sample.Object.box`.
-
-```python
-import numpy as np
-
-from src.predict import GroundPredictor
-
-predictor = GroundPredictor.from_path(
-    "weight/sam3.1_multiplex.pt",
-    "weight/visual_token.pt",
-)
-reference = predictor.encode_reference(
-    reference_image,
-    np.array([[20, 30, 80, 100], [100, 25, 160, 95]], dtype=np.float32),
-    np.array([0, 0], dtype=np.int64),
-)
-objects = predictor.predict(target_image, [reference])
-```
-
-Pass additional encoded references in the same list. Every reference box keeps
-its own normalized feature; boxes of the same class in one image form one trained
-box prompt. Target candidates use their predicted masks and the best same-class
-reference similarity. NMS removes duplicates only within a class, so overlaps
-between different classes remain.
-
-Each result is an object dictionary with `object_id`, `class_id`, integer `box`, a
-full boolean `mask`, a low-resolution `logit`, and `score`/`similarity` metrics.
-`scripts/ground.py` converts these objects to the existing `Sample/Object` JSON
-format. Reference masks are not accepted by this API; a mask-to-box helper can be
-added separately if needed.
-
-The target image backbone runs once. Class prompts then decode sequentially with
-batch size 1 to preserve exact SAM3.1 BF16 single-prompt behavior. Score and
-similarity filtering stay on the GPU, and raw decoder tensors are not returned.
-
-The video predictor tracks forward from mask prompts. Objects can be added on
-the latest cached frame or removed explicitly:
-
-```python
-from src.predict import VideoPredictor
-
-predictor = VideoPredictor.from_path("weight/sam3.1_multiplex.pt")
-state = predictor.start(first_frame, first_mask, obj_id=1)
-out = predictor.predict(next_frame, state)
-ids = predictor.add_masks(state, new_masks, [2, 3])
-ids = predictor.remove_objects(state, [2])
-```
-
-Automatic discovery is separate from tracking. It requires grounding results
-to be associated with active tracks before calling `add_masks`.
-
-Parity checks against the reference implementation:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\parity_image.py
-.\.venv\Scripts\python.exe scripts\parity_ground.py
-.\.venv\Scripts\python.exe scripts\parity_video.py
-.\.venv\Scripts\python.exe scripts\parity_video_dynamic.py
-```
-
-## Finetune
-
-`config/finetune.yaml` contains the model, training/validation data, and trainer
-settings. Set the local SAM3.1 checkpoint and sample paths before running it.
-
-Single-process training:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\finetune.py --config config\finetune.yaml
-```
-
-Single-server multi-GPU training on Linux:
+Create a virtual environment and install the repository dependencies:
 
 ```bash
-torchrun --standalone --nproc-per-node=4 scripts/finetune.py \
-  --config config/finetune.yaml
+python -m venv .venv
+./.venv/bin/python -m pip install --upgrade pip
+./.venv/bin/python -m pip install -r requirements.txt
 ```
 
-Resume restores the trainable parameters, optimizer, and global step. Data order
-and augmentation randomness start from a new loader sequence:
+On Windows, use `.venv\Scripts\python.exe` instead. Install `torch` and
+`torchvision` separately using the CUDA wheel that matches the machine.
+
+Place the official checkpoint at an explicit local path, for example:
+
+```text
+weight/sam3.1_multiplex.pt
+```
+
+Weights are never downloaded automatically.
+
+## Dataset
+
+Samples use the `sam3.sample.v2` JSON schema. Images and object ROIs are stored
+as base64 PNG data, so the included example dataset has no external image-file
+dependency.
+
+The finetuning loader accepts class folders:
+
+```yaml
+data:
+  train:
+    folders:
+      - path: finetune_dataset/train/0_background
+        cond: 0
+        target: [0, 0, 0]
+        weight: [1, 0, 0]
+      - path: finetune_dataset/train/1_frog
+        cond: 0
+        target: [1, 1, 0]
+        weight: [1, 1, 1]
+      - path: finetune_dataset/train/2_leaf
+        cond: 1
+        target: [1, 0, 1]
+        weight: [1, 1, 1]
+    batch_size: 2
+    num_workers: 0
+```
+
+Class-head outputs are independent sigmoid attributes per mask. Index `0` is
+object presence. Later indices are task-defined attributes; in the included
+dataset they distinguish frog and leaf samples.
+
+```python
+from src.build import build_finetune_loader
+
+loader = build_finetune_loader(config["data"]["train"], train=True)
+batch = next(loader)
+```
+
+Images are `1008 x 1008`; target masks and decoder logits are `288 x 288`.
+Background samples have `mask_valid=0` and train the class head without applying
+mask or IoU loss.
+
+## LoRA Finetuning
+
+`build_finetune_model` loads the base checkpoint, freezes SAM, and adds the LoRA
+experts, feature adapters, router, and class head.
+
+```python
+from pathlib import Path
+
+import torch
+import yaml
+
+from src.build import build_finetune_loader, build_finetune_model
+from src.finetune.trainer import FinetuneTrainer
+
+config = yaml.safe_load(Path("config/finetune.yaml").read_text())
+config["model"]["path"] = "weight/sam3.1_multiplex.pt"
+config["model"]["device"] = "cuda"
+
+model = build_finetune_model(config["model"])
+train_loader = build_finetune_loader(config["data"]["train"], train=True)
+valid_loader = build_finetune_loader(config["data"]["valid"], train=False)
+optimizer = torch.optim.AdamW(
+    model.trainable_parameters(),
+    lr=config["train"]["learning_rate"],
+)
+
+trainer = FinetuneTrainer(
+    model=model,
+    train_loader=train_loader,
+    valid_loader=valid_loader,
+    optimizer=optimizer,
+    steps=config["train"]["steps"],
+    valid_steps=config["train"]["valid_steps"],
+    device="cuda",
+    run_root=config["train"]["run_root"],
+    save_every=config["train"]["save_every"],
+    clip_grad_norm=config["train"]["clip_grad_norm"],
+    amp=config["train"]["amp"],
+    config=config,
+)
+try:
+    stats = trainer.train()
+finally:
+    trainer.close()
+```
+
+Only trainable parameters and optimizer state are stored in
+`sam3.finetune.v1` checkpoints. Resume before constructing DDP:
+
+```python
+from src.finetune.checkpoint import load_checkpoint
+
+step, saved_config = load_checkpoint(
+    "run/example/checkpoints/last.pt",
+    model,
+    optimizer,
+)
+```
+
+The DDP helpers under `src.finetune.ddp` target single-server multi-GPU training.
+CPU/Gloo behavior is covered by tests; NCCL execution must be verified on the
+target Linux server.
+
+## LoRA Grid Prediction
+
+Load the base model, then restore a finetuning checkpoint's trainable state:
+
+```python
+import torch
+
+from src.build import build_finetune_model
+from src.finetune.checkpoint import load_trainable_state
+from src.predict import GridPredictor, SinglePredictor
+
+model = build_finetune_model(
+    {
+        "path": "weight/sam3.1_multiplex.pt",
+        "device": "cuda",
+        "num_conditions": 2,
+        "num_experts": 4,
+        "num_classes": 3,
+        "lora_rank": 8,
+        "feature_rank": 16,
+    }
+)
+checkpoint = torch.load(
+    "run/example/checkpoints/last.pt",
+    map_location="cpu",
+    weights_only=False,
+)
+load_trainable_state(model, checkpoint["model"])
+model.eval()
+
+single = SinglePredictor(model, device="cuda", cond=0)
+predictor = GridPredictor(
+    single,
+    tiles=(1, 2),
+    points_per_side=(10, 10),
+    batch_size=4,
+)
+objects = predictor.predict(image)
+```
+
+Use condition `0` for frog and `1` for leaf with the included example mapping.
+Grid objects contain mask geometry, quality metrics, and class logits/scores when
+the underlying model is a `FinetuneModel`.
+
+## Other Prediction APIs
+
+Public predictor entry points are exported from `src.predict`:
+
+- `SinglePredictor`: point, box, or mask-prompt image segmentation
+- `GridPredictor`: automatic grid proposals with refinement and NMS
+- `GroundPredictor`: reference-box visual grounding
+- `VideoPredictor`: forward video-mask propagation with explicit add/remove APIs
+
+Model builders are exported from `src.build`:
+
+- `build_image_model`
+- `build_grounding_model`
+- `build_video_model`
+- `build_finetune_model`
+- `build_finetune_loader`
+
+All builders load weights only from explicit local paths.
+
+## Notebooks
+
+The committed notebooks contain executed outputs:
+
+| Notebook | Purpose |
+| --- | --- |
+| `01_dataset.ipynb` | Inspect training images, prompts, targets, and classes |
+| `02_forward.ipynb` | Compare LoRA-model prediction masks with targets |
+| `03_loss.ipynb` | Compute the finetuning loss breakdown on loader batches |
+| `04_predict.ipynb` | Run LoRA-model grid prediction and inspect masks |
+
+Set `LORA_PATH` in notebooks `02` through `04` to inspect a trained checkpoint.
+With `LORA_PATH=None`, the LoRA structure exists but its zero-initialized adapter
+delta has not been trained.
+
+## Tests
 
 ```bash
-torchrun --standalone --nproc-per-node=4 scripts/finetune.py \
-  --config config/finetune.yaml \
-  --resume run/example/checkpoints/last.pt
+./.venv/bin/python -m pytest tests
 ```
 
-Class-head outputs are independent sigmoid attributes for each mask. Index 0 is
-always particle/object presence; later indices can represent SEM attributes such
-as particle size. `SinglePredictor` and `GridPredictor` return `class_logits` and
-`class_scores` when used with `FinetuneModel`. Finetune example JSON stores the
-probability vector in `object.metrics.class_scores`.
-
-Checkpoints use the new `sam3.finetune.v1` format under
-`run/<run-id>/checkpoints/`. Older LoRA checkpoints are not supported. CPU/Gloo
-multi-process behavior is tested locally; NCCL multi-GPU execution must be checked
-on the target Linux server.
-
-## Test
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest tests
-```
-
-## Notes
-
-- Official SAM3.1 checkpoints are loaded strictly from explicit local paths.
-- Checkpoint key translation is owned by `src/io/checkpoint.py`.
-- Checkpoints produced by the previous LoRA rewrite are not supported.
-- Hugging Face loading is intentionally not used in this rewrite path.
-- Cached visual tokens are used for no-text grounding.
+The tracked remote test suite contains 251 tests covering model structure,
+checkpoint loading, data, finetuning math, prediction, grounding, and video
+state. Local-only scripts and their script-specific tests are intentionally not
+part of the remote repository.

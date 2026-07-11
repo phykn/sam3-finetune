@@ -12,5 +12,6 @@ tests/test_finetune_candidates.py
 tests/test_finetune_script.py
 tests/test_scripts_standalone.py
 sam3-main/
-weight/
+weight/*
+!weight/visual_token.pt
 docs/
