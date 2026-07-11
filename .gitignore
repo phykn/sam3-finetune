@@ -6,6 +6,11 @@ __pycache__/
 *.py[cod]
 outputs/
 /data/
+asset/
+scripts/
+tests/test_finetune_candidates.py
+tests/test_finetune_script.py
+tests/test_scripts_standalone.py
 sam3-main/
 weight/
 docs/
