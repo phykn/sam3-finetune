@@ -96,7 +96,8 @@ class FinetuneTrainer:
         self.optimizer.step()
 
         self.step += 1
-        self.save_checkpoint()
+        if self.step % self.save_every == 0:
+            self.save_checkpoint()
         stats["grad_norm"] = grad_norm
         self._log("train", stats)
         return stats
@@ -146,6 +147,8 @@ class FinetuneTrainer:
                 progress.set_postfix(
                     {key: f"{value:.4g}" for key, value in stats.items()}
                 )
+        if remaining > 0 and self.step % self.save_every != 0:
+            self.save_checkpoint()
         return stats
 
     def save_checkpoint(self) -> None:

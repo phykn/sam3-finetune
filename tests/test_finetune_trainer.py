@@ -86,6 +86,26 @@ def test_train_step_updates_trainable_params_and_saves_checkpoint(tmp_path):
     assert "scale" in checkpoint["model"]
 
 
+def test_train_step_skips_checkpoint_before_save_interval(tmp_path):
+    model = TinyFinetuneModel()
+    trainer = FinetuneTrainer(
+        model=model,
+        train_loader=cycle([make_batch()]),
+        valid_loader=cycle([make_batch()]),
+        optimizer=torch.optim.SGD(model.parameters(), lr=0.1),
+        steps=2,
+        valid_steps=1,
+        device="cpu",
+        run_root=tmp_path,
+        save_every=2,
+    )
+
+    trainer.train_step()
+    trainer.close()
+
+    assert not (trainer.checkpoint_dir / "last.pt").exists()
+
+
 def test_train_runs_fixed_steps_and_saves_interval_checkpoint(tmp_path):
     model = TinyFinetuneModel()
     optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
