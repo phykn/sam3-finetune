@@ -55,6 +55,30 @@ def mean_loss(
     return backward, float(logged.cpu())
 
 
+@torch.no_grad()
+def class_stats(
+    loss: torch.Tensor,
+    logits: torch.Tensor,
+    target: torch.Tensor,
+    weights: torch.Tensor,
+    is_auto_bg: torch.Tensor,
+) -> dict[str, float]:
+    known = weights.detach().clone()
+    auto = is_auto_bg.to(device=known.device, dtype=torch.bool).flatten()
+    known[auto] = 0
+    correct = ((logits >= 0) == (target >= 0.5)).to(weights)
+    stats = {}
+    for index in range(logits.shape[1]):
+        _, loss_value = mean_loss(loss[:, index].sum(), weights[:, index].sum())
+        _, acc_value = mean_loss(
+            (correct[:, index] * known[:, index]).sum(),
+            known[:, index].sum(),
+        )
+        stats[f"class_loss_{index}"] = loss_value
+        stats[f"class_acc_{index}"] = acc_value
+    return stats
+
+
 def finetune_loss(
     batch: dict[str, torch.Tensor],
     out: dict[str, torch.Tensor],
@@ -88,24 +112,35 @@ def finetune_loss(
         class_logits,
         batch["is_auto_bg"],
     )
-    class_sum = (
+    class_loss = (
         F.binary_cross_entropy_with_logits(
             class_logits,
             class_target,
             reduction="none",
         )
         * weights
-    ).sum()
+    )
+    class_sum = class_loss.sum()
+    stats = class_stats(
+        class_loss,
+        class_logits,
+        class_target,
+        base_weights,
+        batch["is_auto_bg"],
+    )
 
     bce, bce_value = mean_loss(bce_sum, mask_valid.sum())
     dice, dice_value = mean_loss(dice_sum, mask_valid.sum())
     iou, iou_value = mean_loss(iou_sum, mask_valid.sum())
     classes, class_value = mean_loss(class_sum, base_weights.sum())
     total = bce + dice + iou + classes
-    return total, {
-        "loss": bce_value + dice_value + iou_value + class_value,
-        "mask_bce": bce_value,
-        "mask_dice": dice_value,
-        "iou_loss": iou_value,
-        "class_loss": class_value,
-    }
+    stats.update(
+        {
+            "loss": bce_value + dice_value + iou_value + class_value,
+            "mask_bce": bce_value,
+            "mask_dice": dice_value,
+            "iou_loss": iou_value,
+            "class_loss": class_value,
+        }
+    )
+    return total, stats

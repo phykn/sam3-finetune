@@ -125,6 +125,23 @@ def test_no_valid_masks_keeps_class_loss_trainable():
     assert torch.isfinite(out["class_logits"].grad).all()
 
 
+def test_class_stats_report_each_label_and_ignore_auto_background_accuracy():
+    batch = make_batch()
+    batch["is_auto_bg"] = torch.tensor([0.0, 1.0])
+    out = make_output()
+    out["class_logits"] = torch.tensor(
+        [[[2.0, -2.0]], [[2.0, 2.0]]],
+        requires_grad=True,
+    )
+
+    _loss, stats = finetune_loss(batch, out)
+
+    assert stats["class_acc_0"] == 1.0
+    assert stats["class_acc_1"] == 1.0
+    assert stats["class_loss_0"] > 0
+    assert stats["class_loss_1"] > 0
+
+
 def test_mean_loss_scales_backward_for_ddp_gradient_average(monkeypatch):
     reduced = iter((torch.tensor(4.0), torch.tensor(10.0)))
     monkeypatch.setattr("src.finetune.loss.world_size", lambda: 2)

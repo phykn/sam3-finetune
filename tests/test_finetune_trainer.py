@@ -78,6 +78,10 @@ def test_train_step_updates_trainable_params_and_saves_checkpoint(tmp_path):
         "mask_dice",
         "iou_loss",
         "class_loss",
+        "class_loss_0",
+        "class_acc_0",
+        "class_loss_1",
+        "class_acc_1",
         "grad_norm",
     }
     assert checkpoint["step"] == 1
@@ -181,6 +185,10 @@ def test_valid_step_does_not_update_model(tmp_path):
         "mask_dice",
         "iou_loss",
         "class_loss",
+        "class_loss_0",
+        "class_acc_0",
+        "class_loss_1",
+        "class_acc_1",
     }
 
 
