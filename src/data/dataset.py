@@ -1,22 +1,18 @@
 from typing import Any
 
 import numpy as np
-from PIL import Image as PILImage
 from torch.utils.data import Dataset
 
+from . import item
 from .augment.image.crop import random_crop
 from .augment.image.flip import random_flip
 from .augment.image.pixel import random_pixel
 from .augment.image.resize import resize
 from .augment.image.rotate import random_rotate
 from .augment.image.zoom_out import random_zoom_out
-from .augment.prompt.box import jitter_mask_box
-from .augment.prompt.mask import degrade_mask_prompt
-from .augment.prompt.point import sample_point_prompt
 from .sample import Sample, load
 
 PROMPTS = ("point", "box", "mask")
-MASK_OPS = ("none", "shift", "erode", "dilate", "blur", "resize")
 IMAGE_OPS = (
     "none",
     "brightness",
@@ -83,15 +79,15 @@ class BaseDataset(Dataset):
         prompt = self.prompts[int(np.random.randint(len(self.prompts)))]
 
         if prompt == "point":
-            item = self._make_point_item(image, target, union)
+            out = item.point(image, target, union, self.bg_prob, self.mask_size)
         elif prompt == "box":
-            item = self._make_box_item(image, target)
+            out = item.box(image, target, self.box_jitter, self.mask_size)
         elif prompt == "mask":
-            item = self._make_mask_item(image, target)
+            out = item.mask(image, target, self.mask_size)
         else:
             raise ValueError(f"unknown prompt type: {prompt}")
-        self._add_sample_data(item, sample_index)
-        return item
+        self._add_sample_data(out, sample_index)
+        return out
 
     def _load_sample(self, index: int) -> Sample:
         return load(self.paths[index])
@@ -201,88 +197,11 @@ class BaseDataset(Dataset):
         union[pair[..., 2] == 0] = 1
         return image, target, union
 
-    def _make_point_item(
-        self,
-        image: np.ndarray,
-        target: np.ndarray,
-        union: np.ndarray,
-    ) -> dict[str, Any]:
-        out = sample_point_prompt(
-            target,
-            union,
-            bg_prob=self.bg_prob,
-        )
-        prompt = self._empty_prompt("point")
-        prompt["points"] = out["points"]
-        prompt["point_labels"] = out["point_labels"]
-        return {
-            "image": image,
-            "prompt": prompt,
-            "target": self._resize_target_mask(out["target"]),
-            "mask_valid": out["has_mask"],
-            "is_auto_bg": out["is_auto_bg"],
-        }
-
-    def _make_box_item(self, image: np.ndarray, target: np.ndarray) -> dict[str, Any]:
-        prompt = self._empty_prompt("box")
-        prompt["box"] = jitter_mask_box(
-            target,
-            image.shape,
-            amount=self.box_jitter,
-        )
-        return {
-            "image": image,
-            "prompt": prompt,
-            "target": self._resize_target_mask(target),
-            "mask_valid": True,
-            "is_auto_bg": False,
-        }
-
-    def _make_mask_item(self, image: np.ndarray, target: np.ndarray) -> dict[str, Any]:
-        prompt = self._empty_prompt("mask")
-        mask = degrade_mask_prompt(
-            target,
-            ops=MASK_OPS,
-        )
-        prompt["mask"] = self._resize_float_mask(mask)
-        return {
-            "image": image,
-            "prompt": prompt,
-            "target": self._resize_target_mask(target),
-            "mask_valid": True,
-            "is_auto_bg": False,
-        }
-
-    def _resize_target_mask(self, mask: np.ndarray) -> np.ndarray:
-        mask = (np.asarray(mask) > 0).astype(np.float32)
-        return self._resize_float_mask(mask)
-
-    def _resize_float_mask(self, mask: np.ndarray) -> np.ndarray:
-        mask = np.asarray(mask, dtype=np.float32)
-        image = PILImage.fromarray(
-            np.clip(mask * 255.0, 0.0, 255.0).astype(np.uint8),
-            mode="L",
-        )
-        image = image.resize(
-            (self.mask_size, self.mask_size),
-            PILImage.Resampling.BILINEAR,
-        )
-        return np.asarray(image, dtype=np.float32) / 255.0
-
     def _make_union_mask(self, sample: Sample) -> np.ndarray:
         out = np.zeros(sample.image.shape[:2], dtype=bool)
         for obj in sample.objects:
             out |= obj.mask(sample.image.shape).astype(bool)
         return out.astype(np.uint8)
-
-    def _empty_prompt(self, kind: str) -> dict[str, Any]:
-        return {
-            "type": kind,
-            "points": None,
-            "point_labels": None,
-            "box": None,
-            "mask": None,
-        }
 
     def _add_sample_data(self, item: dict[str, Any], sample_index: int) -> None:
         if self.conds is not None:
