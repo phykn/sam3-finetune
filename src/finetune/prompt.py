@@ -40,3 +40,21 @@ def build_prompt(
             -torch.ones(batch, 1, dtype=torch.int, device=device),
         )
     return point_prompt, mask_prompt
+
+
+def build_prompts(
+    items: list[dict],
+    image_size: int,
+    mask_size: tuple[int, int],
+    device: torch.device,
+) -> tuple[tuple[torch.Tensor, torch.Tensor], torch.Tensor | None]:
+    prompts = [build_prompt(item, image_size, mask_size, device) for item in items]
+    points = (
+        torch.cat([prompt[0][0] for prompt in prompts]),
+        torch.cat([prompt[0][1] for prompt in prompts]),
+    )
+    if prompts[0][1] is None:
+        masks = None
+    else:
+        masks = torch.cat([prompt[1] for prompt in prompts])
+    return points, masks

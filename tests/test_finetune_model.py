@@ -1,3 +1,5 @@
+import copy
+
 import pytest
 import torch
 from torch import nn
@@ -9,6 +11,7 @@ from src.finetune.model import FinetuneModel
 class FakeImageModel(nn.Module):
     def __init__(self) -> None:
         super().__init__()
+        self.decode_calls = 0
         self.keep = nn.Linear(3, 3)
         self.sam_mask = nn.Module()
         self.sam_mask.mask_decoder = nn.Module()
@@ -50,6 +53,7 @@ class FakeImageModel(nn.Module):
         repeat_image=False,
         mix=None,
     ):
+        self.decode_calls += 1
         count = 3 if multimask else 1
         pooled = image_embed.mean(dim=(2, 3))
         token = self.sam_mask.mask_decoder.transformer.q_proj(pooled, mix)
@@ -198,3 +202,61 @@ def test_batch_forward_loss_backward_reaches_every_trainable_parameter():
     assert gradients
     assert all(gradient is not None for gradient in gradients)
     assert all(torch.isfinite(gradient).all() for gradient in gradients)
+
+
+def test_forward_batches_prompts_by_type():
+    model, base = make_model(num_classes=2)
+    reference = copy.deepcopy(model)
+    batch = {
+        "image": torch.zeros(4, 3, 8, 8),
+        "cond": torch.tensor([0, 1, 0, 0]),
+        "prompt": [
+            {
+                "type": "point",
+                "points": [[2.0, 2.0]],
+                "point_labels": [1],
+                "box": None,
+                "mask": None,
+            },
+            {
+                "type": "box",
+                "points": None,
+                "point_labels": None,
+                "box": [1.0, 1.0, 6.0, 6.0],
+                "mask": None,
+            },
+            {
+                "type": "mask",
+                "points": None,
+                "point_labels": None,
+                "box": None,
+                "mask": [[1.0, 0.0], [0.0, 1.0]],
+            },
+            {
+                "type": "point",
+                "points": [[4.0, 4.0]],
+                "point_labels": [1],
+                "box": None,
+                "mask": None,
+            },
+        ],
+    }
+
+    out = model(batch)
+    single = [
+        reference(
+            {
+                "image": batch["image"][index : index + 1],
+                "cond": batch["cond"][index : index + 1],
+                "prompt": [batch["prompt"][index]],
+            }
+        )
+        for index in range(4)
+    ]
+
+    assert base.decode_calls == 3
+    assert out["mask_logits"].shape[0] == 4
+    assert out["class_logits"].shape == (4, 1, 2)
+    for key in out:
+        expected = torch.cat([item[key] for item in single])
+        assert torch.allclose(out[key], expected)

@@ -5,7 +5,7 @@ from torch import nn
 
 from ..ml.model import Sam3ImageModel
 from .adapter import FeatureAdapter, LoraLinear
-from .prompt import build_prompt
+from .prompt import build_prompts
 from .router import Router
 
 LORA_NAMES = {"q_proj", "k_proj", "v_proj", "out_proj", "lin1", "lin2"}
@@ -47,25 +47,29 @@ class FinetuneModel(nn.Module):
         image_embed = encoded["image_embed"]
         high_res = tuple(encoded["high_res_features"])
 
-        decoded = []
-        image_pe = self.get_image_position_encoding(image.device)
+        groups: dict[str, list[int]] = {}
         for index, prompt in enumerate(prompts):
-            decoded.append(
-                self._decode_prompt(
-                    prompt,
-                    image_embed[index : index + 1],
-                    (
-                        high_res[0][index : index + 1],
-                        high_res[1][index : index + 1],
-                    ),
-                    image_pe,
-                    cond[index : index + 1],
-                    prompt["type"],
-                    image.device,
-                )
-            )
+            groups.setdefault(prompt["type"], []).append(index)
 
-        masks, ious, classes = zip(*decoded)
+        decoded = {}
+        image_pe = self.get_image_position_encoding(image.device)
+        for prompt_type, indices in groups.items():
+            index = torch.tensor(indices, device=image.device)
+            out = self._decode_prompts(
+                [prompts[value] for value in indices],
+                image_embed[index],
+                (high_res[0][index], high_res[1][index]),
+                image_pe,
+                cond[index],
+                prompt_type,
+                image.device,
+            )
+            for offset, original_index in enumerate(indices):
+                decoded[original_index] = tuple(
+                    value[offset : offset + 1] for value in out
+                )
+
+        masks, ious, classes = zip(*(decoded[index] for index in range(len(prompts))))
         return {
             "mask_logits": torch.cat(masks, dim=0),
             "iou_scores": torch.cat(ious, dim=0),
@@ -200,9 +204,9 @@ class FinetuneModel(nn.Module):
             return prompt_type[:1]
         raise ValueError("prompt_type length must match image batch")
 
-    def _decode_prompt(
+    def _decode_prompts(
         self,
-        prompt: dict[str, Any],
+        prompts: list[dict[str, Any]],
         image_embed: torch.Tensor,
         high_res: tuple[torch.Tensor, torch.Tensor],
         image_pe: torch.Tensor,
@@ -210,8 +214,8 @@ class FinetuneModel(nn.Module):
         prompt_type: str,
         device: torch.device,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        point_prompt, mask_prompt = build_prompt(
-            prompt,
+        point_prompt, mask_prompt = build_prompts(
+            prompts,
             self.size,
             self.model.mask_input_size,
             device,
