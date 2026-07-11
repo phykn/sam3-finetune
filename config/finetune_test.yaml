@@ -1,0 +1,48 @@
+model:
+  path: weight/sam3.1_multiplex.pt
+  num_conditions: 1
+  num_experts: 4
+  num_classes: 3
+  lora_rank: 8
+  feature_rank: 16
+data:
+  train:
+    folders:
+      - path: finetune_dataset/train/0_background
+        cond: 0
+        target: [0, 0, 0]
+        weight: [1, 0, 0]
+      - path: finetune_dataset/train/1_frog
+        cond: 0
+        target: [1, 1, 0]
+        weight: [1, 1, 1]
+      - path: finetune_dataset/train/2_leaf
+        cond: 0
+        target: [1, 0, 1]
+        weight: [1, 1, 1]
+    batch_size: 2
+    num_workers: 0
+  valid:
+    folders:
+      - path: finetune_dataset/valid/0_background
+        cond: 0
+        target: [0, 0, 0]
+        weight: [1, 0, 0]
+      - path: finetune_dataset/valid/1_frog
+        cond: 0
+        target: [1, 1, 0]
+        weight: [1, 1, 1]
+      - path: finetune_dataset/valid/2_leaf
+        cond: 0
+        target: [1, 0, 1]
+        weight: [1, 1, 1]
+    batch_size: 2
+    num_workers: 0
+train:
+  steps: 10
+  valid_steps: 3
+  learning_rate: 0.0001
+  save_every: 5
+  clip_grad_norm: 1.0
+  amp: true
+  run_root: run
