@@ -8,6 +8,17 @@ import torch
 from PIL import Image
 
 
+def mock_path_image(monkeypatch, module, size=(5, 4)):
+    real_open = Image.open
+
+    def open_image(value):
+        if isinstance(value, (str, Path)):
+            return Image.new("RGB", size)
+        return real_open(value)
+
+    monkeypatch.setattr(module.Image, "open", open_image)
+
+
 def test_script_files_do_not_import_other_script_files() -> None:
     scripts_dir = Path(__file__).resolve().parents[1] / "scripts"
     offenders: list[str] = []
@@ -145,7 +156,7 @@ def test_grid_script_uses_small_gpu_batch(monkeypatch, tmp_path) -> None:
             return None
 
     monkeypatch.setattr(grid, "GridPredictor", FakePredictor)
-    monkeypatch.setattr(grid.Image, "open", lambda _path: Image.new("RGB", (5, 4)))
+    mock_path_image(monkeypatch, grid)
     monkeypatch.setattr(grid, "make_sheet", lambda *_args: FakeSheet())
     monkeypatch.setattr(grid, "OUT", tmp_path)
 
@@ -186,7 +197,7 @@ def test_finetune_grid_script_writes_json(monkeypatch, tmp_path) -> None:
             return None
 
     monkeypatch.setattr(grid, "make_predictor", lambda _device: FakePredictor())
-    monkeypatch.setattr(grid.Image, "open", lambda _path: Image.new("RGB", (5, 4)))
+    mock_path_image(monkeypatch, grid)
     monkeypatch.setattr(grid, "make_sheet", lambda *_args: FakeSheet())
     monkeypatch.setattr(grid, "OUT", tmp_path)
 
@@ -222,7 +233,7 @@ def test_single_script_writes_json_and_draws_from_json(monkeypatch, tmp_path) ->
             ]
 
     monkeypatch.setattr(single, "SinglePredictor", FakePredictor)
-    monkeypatch.setattr(single.Image, "open", lambda _path: Image.new("RGB", (5, 4)))
+    mock_path_image(monkeypatch, single)
     monkeypatch.setattr(single, "OUT", tmp_path)
 
     single.main()
@@ -259,7 +270,7 @@ def test_finetune_single_script_writes_json_and_draws_from_json(
             ]
 
     monkeypatch.setattr(single, "make_predictor", lambda _device: FakePredictor())
-    monkeypatch.setattr(single.Image, "open", lambda _path: Image.new("RGB", (5, 4)))
+    mock_path_image(monkeypatch, single)
     monkeypatch.setattr(single, "OUT", tmp_path)
 
     single.main()

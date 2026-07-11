@@ -3,7 +3,7 @@ from typing import Any
 import numpy as np
 from PIL import Image as PILImage
 
-from .sample import png, rle
+from .sample import png
 
 
 def image(value: PILImage.Image | np.ndarray) -> dict[str, Any]:
@@ -23,14 +23,6 @@ def image(value: PILImage.Image | np.ndarray) -> dict[str, Any]:
 
 def read_image(data: dict[str, Any]) -> PILImage.Image:
     return PILImage.fromarray(png.unpack(data["data"]), mode="RGB")
-
-
-def mask(value: np.ndarray) -> dict[str, Any]:
-    return rle.pack(np.asarray(value, dtype=np.uint8))
-
-
-def read_mask(data: dict[str, Any]) -> np.ndarray:
-    return rle.unpack(data).astype(bool)
 
 
 def box_roi(value: np.ndarray) -> tuple[tuple[int, int, int, int], np.ndarray]:

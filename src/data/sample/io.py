@@ -2,10 +2,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from . import png, rle
+from . import png
 from .core import Image, Object, Sample
 
-SCHEMA = "sam3.sample.v1"
+SCHEMA = "sam3.sample.v2"
 
 
 def to_json(sample: Sample) -> dict[str, Any]:
@@ -56,7 +56,7 @@ def _obj_to_json(obj: Object) -> dict[str, Any]:
         "object_id": obj.object_id,
         "class_id": obj.class_id,
         "box": list(obj.box),
-        "roi": rle.pack(obj.roi),
+        "roi": _roi_to_json(obj.roi),
         "points": None if obj.points is None else [list(pt) for pt in obj.points],
         "metrics": obj.metrics,
         "meta": obj.meta,
@@ -68,8 +68,28 @@ def _obj_from_json(data: dict[str, Any]) -> Object:
         object_id=data["object_id"],
         class_id=data.get("class_id"),
         box=tuple(data["box"]),
-        roi=rle.unpack(data["roi"]),
+        roi=_roi_from_json(data["roi"]),
         points=data.get("points"),
         metrics=data.get("metrics", {}),
         meta=data.get("meta", {}),
     )
+
+
+def _roi_to_json(roi) -> dict[str, Any]:
+    shape = tuple(roi.shape)
+    image = roi
+    if 0 in shape:
+        image = [[0]]
+    return {
+        "shape": list(shape),
+        "dtype": "uint8",
+        "format": "png",
+        "encoding": "base64",
+        "data": png.pack(image, mode="L"),
+    }
+
+
+def _roi_from_json(data: dict[str, Any]):
+    height, width = data["shape"]
+    roi = png.unpack(data["data"], mode="L")
+    return roi[:height, :width]

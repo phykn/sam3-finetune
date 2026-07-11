@@ -91,11 +91,14 @@ def test_sample_json_round_trip_embeds_image_and_roi(tmp_path):
     data = to_json(sample)
     loaded = from_json(data)
 
-    assert data["schema_version"] == "sam3.sample.v1"
+    assert data["schema_version"] == "sam3.sample.v2"
     assert data["image"]["format"] == "png"
     assert data["image"]["encoding"] == "base64"
     assert isinstance(data["image"]["data"], str)
-    assert data["objects"][0]["roi"]["encoding"] == "rle"
+    assert data["objects"][0]["roi"]["format"] == "png"
+    assert data["objects"][0]["roi"]["encoding"] == "base64"
+    assert data["objects"][0]["roi"]["shape"] == [2, 3]
+    assert isinstance(data["objects"][0]["roi"]["data"], str)
     assert loaded.image.id == "img-1"
     assert loaded.image.shape == (4, 6, 3)
     assert np.array_equal(loaded.image.array, image.array)
@@ -112,3 +115,21 @@ def test_sample_json_round_trip_embeds_image_and_roi(tmp_path):
     assert '\n  "schema_version"' in path.read_text(encoding="utf-8")
     assert np.array_equal(from_file.image.array, image.array)
     assert np.array_equal(from_file.objects[0].roi, roi)
+
+
+def test_sample_json_round_trip_keeps_empty_roi_shape():
+    sample = Sample(
+        image=Image(array=np.zeros((2, 3, 3), dtype=np.uint8)),
+        objects=[
+            Object(
+                object_id=1,
+                class_id=None,
+                box=(0, 0, 0, 0),
+                roi=np.zeros((0, 0), dtype=np.uint8),
+            )
+        ],
+    )
+
+    loaded = from_json(to_json(sample))
+
+    assert loaded.objects[0].roi.shape == (0, 0)
