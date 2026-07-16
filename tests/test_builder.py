@@ -107,6 +107,7 @@ def test_build_finetune_loader_uses_split_and_rank(monkeypatch):
 
     def make_loader(
         config,
+        num_classes,
         train,
         rank=0,
         world_size=1,
@@ -114,6 +115,7 @@ def test_build_finetune_loader_uses_split_and_rank(monkeypatch):
         calls.append(
             {
                 "config": config,
+                "num_classes": num_classes,
                 "train": train,
                 "rank": rank,
                 "world_size": world_size,
@@ -134,6 +136,7 @@ def test_build_finetune_loader_uses_split_and_rank(monkeypatch):
             ],
             "num_workers": 0,
         },
+        num_classes=2,
         train=False,
         rank=1,
         world_size=2,
@@ -152,6 +155,7 @@ def test_build_finetune_loader_uses_split_and_rank(monkeypatch):
                 ],
                 "num_workers": 0,
             },
+            "num_classes": 2,
             "train": False,
             "rank": 1,
             "world_size": 2,

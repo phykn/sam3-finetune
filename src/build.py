@@ -26,12 +26,14 @@ def build_finetune_model(config: dict) -> FinetuneModel:
 
 def build_finetune_loader(
     config: dict,
+    num_classes: int,
     train: bool = True,
     rank: int = 0,
     world_size: int = 1,
 ) -> InfiniteLoader:
     return make_finetune_loader(
         config,
+        num_classes=num_classes,
         train=train,
         rank=rank,
         world_size=world_size,

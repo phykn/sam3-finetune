@@ -20,7 +20,6 @@ class MaskDecoder(nn.Module):
         dynamic_multimask_stability_thresh=0.98,
         pred_obj_scores: bool = False,
         pred_obj_scores_mlp: bool = False,
-        use_multimask_token_for_obj_ptr: bool = False,
     ) -> None:
         super().__init__()
         self.transformer_dim = transformer_dim
@@ -35,7 +34,6 @@ class MaskDecoder(nn.Module):
         self.pred_obj_scores = pred_obj_scores
         if self.pred_obj_scores:
             self.obj_score_token = nn.Embedding(1, transformer_dim)
-        self.use_multimask_token_for_obj_ptr = use_multimask_token_for_obj_ptr
 
         self.output_upscaling = nn.Sequential(
             nn.ConvTranspose2d(
@@ -104,15 +102,16 @@ class MaskDecoder(nn.Module):
         if multimask_output:
             masks = masks[:, 1:, :, :]
             iou_pred = iou_pred[:, 1:]
+            sam_tokens_out = mask_tokens_out[:, 1:]
         elif self.dynamic_multimask_via_stability and not self.training:
-            masks, iou_pred = self._dynamic_multimask_via_stability(masks, iou_pred)
+            masks, iou_pred, selected = self._dynamic_multimask_via_stability(
+                masks, iou_pred
+            )
+            batch = torch.arange(selected.shape[0], device=selected.device)
+            sam_tokens_out = mask_tokens_out[batch, selected].unsqueeze(1)
         else:
             masks = masks[:, 0:1, :, :]
             iou_pred = iou_pred[:, 0:1]
-
-        if multimask_output and self.use_multimask_token_for_obj_ptr:
-            sam_tokens_out = mask_tokens_out[:, 1:]
-        else:
             sam_tokens_out = mask_tokens_out[:, 0:1]
 
         return masks, iou_pred, sam_tokens_out, object_score_logits
@@ -224,4 +223,5 @@ class MaskDecoder(nn.Module):
             singlemask_iou_scores,
             best_multimask_iou_scores,
         )
-        return mask_logits_out, iou_scores_out
+        selected = torch.where(is_stable.flatten(), 0, best_scores_inds + 1)
+        return mask_logits_out, iou_scores_out, selected

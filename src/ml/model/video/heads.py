@@ -37,7 +37,6 @@ def build_interactive_decoder(self):
         iou_prediction_use_sigmoid=self.iou_prediction_use_sigmoid,
         pred_obj_scores=self.pred_obj_scores,
         pred_obj_scores_mlp=self.pred_obj_scores_mlp,
-        use_multimask_token_for_obj_ptr=self.use_multimask_token_for_obj_ptr,
         **(self.interactive_sam_mask_decoder_extra_args or {}),
     )
     if self.share_necks:

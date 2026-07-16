@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import torch
+from torch import nn
+
 import src.ml.components.nn.attention as model_misc
 import src.ml.components.video.memory as memory
 from src.ml.components.grounding.box_out import write_box_outputs
@@ -61,6 +64,36 @@ def test_sam_mask_decoder_is_the_mask_decoder_module_location():
     assert not (root / "src" / "sam").exists()
     assert not (root / "src" / "mask_decoder.py").exists()
     assert MaskDecoder.__module__ == "src.ml.components.sam.mask_decoder"
+
+
+def test_dynamic_mask_selection_returns_the_matching_token():
+    decoder = MaskDecoder.__new__(MaskDecoder)
+    nn.Module.__init__(decoder)
+    decoder.dynamic_multimask_via_stability = True
+    decoder.dynamic_multimask_stability_delta = 0.05
+    decoder.dynamic_multimask_stability_thresh = 0.98
+    decoder.eval()
+
+    masks = torch.zeros(1, 4, 1, 2)
+    masks[0, 0, 0] = torch.tensor([0.1, 0.0])
+    masks[0, 2] = 2
+    ious = torch.tensor([[0.1, 0.2, 0.9, 0.3]])
+    tokens = torch.arange(4.0).view(1, 4, 1)
+    objects = torch.ones(1, 1)
+    decoder.predict_masks = lambda **_kwargs: (masks, ious, tokens, objects)
+
+    out_masks, out_ious, out_tokens, _objects = decoder(
+        image_embeddings=torch.empty(0),
+        image_pe=torch.empty(0),
+        sparse_prompt_embeddings=torch.empty(0),
+        dense_prompt_embeddings=torch.empty(0),
+        multimask_output=False,
+        repeat_image=False,
+    )
+
+    assert torch.equal(out_masks, masks[:, 2:3])
+    assert torch.equal(out_ious, ious[:, 2:3])
+    assert out_tokens.item() == 2
 
 
 def test_sam_transformer_is_the_transformer_module_location():

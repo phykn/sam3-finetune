@@ -71,6 +71,7 @@ class InfiniteLoader:
 def make_infinite_train_loader(
     paths: list[str],
     batch_size: int,
+    num_classes: int,
     conds: list[int] | tuple[int, ...] | None = None,
     labels: (
         list[dict[str, list[float]]] | tuple[dict[str, list[float]], ...] | None
@@ -85,16 +86,23 @@ def make_infinite_train_loader(
             "labels": labels,
             "num_workers": num_workers,
         },
+        num_classes=num_classes,
         train=True,
     )
 
 
 def make_finetune_loader(
     config: dict[str, Any],
+    num_classes: int,
     train: bool,
     rank: int = 0,
     world_size: int = 1,
 ) -> InfiniteLoader:
+    if num_classes <= 0:
+        raise ValueError("num_classes must be positive")
+    label_config = config.get("folders", config.get("labels")) or []
+    _check_label_count(label_config, num_classes)
+
     dataset_type = TrainDataset if train else ValidDataset
     if "folders" in config:
         paths, conds, labels = expand(config["folders"])
@@ -107,6 +115,16 @@ def make_finetune_loader(
         conds=conds,
         labels=labels,
     )
+    if len(dataset) == 0:
+        raise ValueError("finetune dataset contains no valid objects")
+
+    batch_size = config["batch_size"]
+    per_rank = len(dataset) // world_size if world_size > 1 else len(dataset)
+    if train and per_rank < batch_size:
+        raise ValueError(
+            "per-rank dataset size must be at least batch_size when training"
+        )
+
     sampler = None
     if world_size > 1:
         sampler = DistributedSampler(
@@ -119,7 +137,7 @@ def make_finetune_loader(
     num_workers = config.get("num_workers", 4)
     loader = DataLoader(
         dataset,
-        batch_size=config["batch_size"],
+        batch_size=batch_size,
         shuffle=train and sampler is None,
         sampler=sampler,
         drop_last=train,
@@ -129,3 +147,11 @@ def make_finetune_loader(
         collate_fn=collate,
     )
     return InfiniteLoader(loader, sampler=sampler)
+
+
+def _check_label_count(labels: list[dict], num_classes: int) -> None:
+    for label in labels:
+        if len(label["target"]) != num_classes:
+            raise ValueError("label target length must match num_classes")
+        if len(label["weight"]) != num_classes:
+            raise ValueError("label weight length must match num_classes")

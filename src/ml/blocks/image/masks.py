@@ -23,7 +23,6 @@ class ImageMaskDecoder(nn.Module):
             iou_prediction_use_sigmoid=False,
             pred_obj_scores=True,
             pred_obj_scores_mlp=True,
-            use_multimask_token_for_obj_ptr=True,
             dynamic_multimask_via_stability=True,
             dynamic_multimask_stability_delta=0.05,
             dynamic_multimask_stability_thresh=0.98,

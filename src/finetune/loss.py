@@ -100,7 +100,7 @@ def finetune_loss(
     dice_sum = (mask_dice(mask_logits, target) * mask_valid).sum()
     actual_iou = target_iou(mask_logits, target)
     iou_per_sample = F.mse_loss(
-        iou_scores.sigmoid(),
+        iou_scores,
         actual_iou,
         reduction="none",
     ).mean(1)

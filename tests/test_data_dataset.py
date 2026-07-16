@@ -46,7 +46,7 @@ def test_base_dataset_returns_box_prompt_item(tmp_path):
     assert len(dataset) == 1
     assert item["image"].shape == (8, 8, 3)
     assert item["prompt"]["type"] == "box"
-    assert item["prompt"]["box"].tolist() == [1.0, 1.0, 3.0, 3.0]
+    assert item["prompt"]["box"].tolist() == [1.0, 2.0, 3.0, 4.0]
     assert item["target"].sum() == 4
     assert item["mask_valid"] is True
     assert item["is_auto_bg"] is False
@@ -237,7 +237,7 @@ def test_base_dataset_returns_train_item_without_aug(tmp_path):
     assert item["prompt"]["type"] == "box"
     assert item["prompt"]["points"] is None
     assert item["prompt"]["point_labels"] is None
-    assert item["prompt"]["box"].tolist() == [1.0, 1.0, 3.0, 3.0]
+    assert item["prompt"]["box"].tolist() == [1.0, 2.0, 3.0, 4.0]
     assert item["prompt"]["mask"] is None
     assert item["target"].sum() == 4
     assert item["mask_valid"] is True
@@ -529,6 +529,29 @@ def test_resize_keeps_ratio_and_pads_right_or_bottom():
     assert (out_mask[:, 4:] == 0).all()
 
 
+def test_dataset_stretches_non_square_input_without_resize_padding(tmp_path):
+    obj = Object(
+        object_id=1,
+        class_id=2,
+        box=(0, 0, 8, 4),
+        roi=np.ones((4, 8), dtype=np.uint8),
+    )
+    source = np.full((4, 8, 3), 100, dtype=np.uint8)
+    path = write_sample(tmp_path / "wide.json", [obj], image=source)
+
+    item = BaseDataset(
+        [str(path)],
+        prompts=["box"],
+        box_jitter=0.0,
+        size=8,
+        mask_size=8,
+    )[0]
+
+    assert (item["image"] == 100).all()
+    assert (item["target"] == 1).all()
+    assert item["prompt"]["box"].tolist() == [0.0, 0.0, 8.0, 8.0]
+
+
 def test_random_crop_uses_square_crop_before_resize():
     image = np.full((4, 8, 3), 100, dtype=np.uint8)
     mask = np.ones((4, 8), dtype=np.uint8)
@@ -802,7 +825,9 @@ def test_base_dataset_background_point_uses_augmented_union(tmp_path, monkeypatc
 
     item = dataset[0]
 
-    assert item["prompt"]["points"].tolist() == [[0.0, 0.0]]
+    x, y = item["prompt"]["points"][0].tolist()
+    assert x in (0.0, 1.0)
+    assert y in (0.0, 1.0)
     assert item["target"].sum() == 0
     assert item["mask_valid"] is False
     assert item["is_auto_bg"] is True
@@ -852,4 +877,4 @@ def test_base_dataset_shape_aug_keeps_target_non_empty(tmp_path, monkeypatch):
     item = dataset[0]
 
     assert item["target"].sum() == 4
-    assert item["prompt"]["box"].tolist() == [1.0, 1.0, 3.0, 3.0]
+    assert item["prompt"]["box"].tolist() == [1.0, 2.0, 3.0, 4.0]

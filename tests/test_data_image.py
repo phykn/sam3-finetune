@@ -20,3 +20,21 @@ def test_make_tensor_normalizes_and_returns_original_size():
     assert orig_hw == (10, 20)
     assert tensor.shape == (1, 3, 8, 8)
     assert torch.allclose(tensor, torch.full_like(tensor, -1.0))
+
+
+def test_make_tensor_uses_the_shared_image_resize():
+    array = np.arange(4 * 8 * 3, dtype=np.uint8).reshape(4, 8, 3)
+
+    tensor, _orig_hw = image.make_tensor(array, 6, torch.device("cpu"))
+    expected = image.to_tensor(image.resize_image(array, 6)).unsqueeze(0)
+
+    assert torch.equal(tensor, expected)
+
+
+def test_resize_mask_stretches_all_channels_to_the_target_square():
+    mask = np.ones((4, 8, 3), dtype=np.uint8)
+
+    out = image.resize_mask(mask, 8)
+
+    assert out.shape == (8, 8, 3)
+    assert (out == 1).all()

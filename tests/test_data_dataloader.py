@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from torch.utils.data.distributed import DistributedSampler
 
@@ -81,6 +82,7 @@ def test_infinite_train_loader_returns_next_batch(tmp_path):
     loader = make_infinite_train_loader(
         [str(path)],
         batch_size=1,
+        num_classes=1,
         num_workers=0,
     )
 
@@ -102,6 +104,7 @@ def test_make_finetune_loader_builds_distributed_validation_loader(tmp_path):
             "batch_size": 1,
             "num_workers": 0,
         },
+        num_classes=1,
         train=False,
         rank=0,
         world_size=2,
@@ -132,6 +135,7 @@ def test_make_finetune_loader_expands_folder_labels(tmp_path):
             "batch_size": 1,
             "num_workers": 0,
         },
+        num_classes=3,
         train=False,
     )
     dataset = loader.loader.dataset
@@ -142,3 +146,64 @@ def test_make_finetune_loader_expands_folder_labels(tmp_path):
         {"target": [1, 0, 1], "weight": [1, 1, 0]},
         {"target": [1, 0, 1], "weight": [1, 1, 0]},
     )
+
+
+@pytest.mark.parametrize("train", [True, False])
+def test_make_finetune_loader_rejects_empty_dataset(train):
+    with pytest.raises(ValueError, match="no valid objects"):
+        make_finetune_loader(
+            {"paths": [], "batch_size": 1, "num_workers": 0},
+            num_classes=1,
+            train=train,
+        )
+
+
+def test_make_finetune_loader_rejects_small_per_rank_training_set(tmp_path):
+    path = write_sample(tmp_path / "sample.json")
+
+    with pytest.raises(ValueError, match="per-rank dataset size"):
+        make_finetune_loader(
+            {"paths": [str(path)], "batch_size": 1, "num_workers": 0},
+            num_classes=1,
+            train=True,
+            rank=0,
+            world_size=2,
+        )
+
+
+def test_make_finetune_loader_checks_direct_label_count(tmp_path):
+    path = write_sample(tmp_path / "sample.json")
+
+    with pytest.raises(ValueError, match="target length"):
+        make_finetune_loader(
+            {
+                "paths": [str(path)],
+                "labels": [{"target": [1, 0], "weight": [1, 1]}],
+                "batch_size": 1,
+                "num_workers": 0,
+            },
+            num_classes=3,
+            train=False,
+        )
+
+
+def test_make_finetune_loader_checks_empty_folder_label_count(tmp_path):
+    folder = tmp_path / "empty"
+    folder.mkdir()
+
+    with pytest.raises(ValueError, match="weight length"):
+        make_finetune_loader(
+            {
+                "folders": [
+                    {
+                        "path": str(folder),
+                        "target": [1, 0, 0],
+                        "weight": [1, 1],
+                    }
+                ],
+                "batch_size": 1,
+                "num_workers": 0,
+            },
+            num_classes=3,
+            train=False,
+        )

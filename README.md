@@ -77,11 +77,16 @@ dataset they distinguish frog and leaf samples.
 ```python
 from src.build import build_finetune_loader
 
-loader = build_finetune_loader(config["data"]["train"], train=True)
+loader = build_finetune_loader(
+    config["data"]["train"],
+    num_classes=config["model"]["num_classes"],
+    train=True,
+)
 batch = next(loader)
 ```
 
-Images are `1008 x 1008`; target masks and decoder logits are `288 x 288`.
+Training and prediction both resize images directly to `1008 x 1008`; target
+masks and decoder logits are `288 x 288`.
 Background samples have `mask_valid=0` and train the class head without applying
 mask or IoU loss.
 
@@ -104,8 +109,13 @@ config["model"]["path"] = "weight/sam3.1_multiplex.pt"
 config["model"]["device"] = "cuda"
 
 model = build_finetune_model(config["model"])
-train_loader = build_finetune_loader(config["data"]["train"], train=True)
-valid_loader = build_finetune_loader(config["data"]["valid"], train=False)
+num_classes = config["model"]["num_classes"]
+train_loader = build_finetune_loader(
+    config["data"]["train"], num_classes=num_classes, train=True
+)
+valid_loader = build_finetune_loader(
+    config["data"]["valid"], num_classes=num_classes, train=False
+)
 optimizer = torch.optim.AdamW(
     model.trainable_parameters(),
     lr=config["train"]["learning_rate"],

@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from src.data.sample import (
     Image,
@@ -117,7 +118,7 @@ def test_sample_json_round_trip_embeds_image_and_roi(tmp_path):
     assert np.array_equal(from_file.objects[0].roi, roi)
 
 
-def test_sample_json_round_trip_keeps_empty_roi_shape():
+def test_sample_json_rejects_empty_object_geometry():
     sample = Sample(
         image=Image(array=np.zeros((2, 3, 3), dtype=np.uint8)),
         objects=[
@@ -130,6 +131,78 @@ def test_sample_json_round_trip_keeps_empty_roi_shape():
         ],
     )
 
-    loaded = from_json(to_json(sample))
+    with pytest.raises(ValueError, match="positive area"):
+        to_json(sample)
 
-    assert loaded.objects[0].roi.shape == (0, 0)
+
+def valid_json():
+    sample = Sample(
+        image=Image(array=np.zeros((4, 6, 3), dtype=np.uint8)),
+        objects=[
+            Object(
+                object_id=1,
+                class_id=2,
+                box=(2, 1, 5, 3),
+                roi=np.ones((2, 3), dtype=np.uint8),
+                points=[(3, 2, 1)],
+                metrics={"score": 0.9, "classes": [0.8, 0.2]},
+            )
+        ],
+    )
+    return to_json(sample)
+
+
+def test_sample_json_rejects_wrong_schema_version():
+    data = valid_json()
+    data["schema_version"] = "sam3.sample.v1"
+
+    with pytest.raises(ValueError, match="schema_version"):
+        from_json(data)
+
+
+def test_sample_json_rejects_decoded_image_shape_mismatch():
+    data = valid_json()
+    data["image"]["shape"] = [3, 6, 3]
+
+    with pytest.raises(ValueError, match="decoded image shape"):
+        from_json(data)
+
+
+@pytest.mark.parametrize(
+    "box",
+    [
+        [2, 1, 7, 3],
+        [2, 1, 2, 3],
+        [2, 3, 5, 1],
+    ],
+)
+def test_sample_json_rejects_invalid_object_box(box):
+    data = valid_json()
+    data["objects"][0]["box"] = box
+
+    with pytest.raises(ValueError, match="inside the image with positive area"):
+        from_json(data)
+
+
+def test_sample_json_rejects_roi_shape_that_does_not_match_box():
+    data = valid_json()
+    data["objects"][0]["box"] = [2, 1, 4, 3]
+
+    with pytest.raises(ValueError, match="ROI shape"):
+        from_json(data)
+
+
+def test_sample_json_rejects_nonfinite_point():
+    data = valid_json()
+    data["objects"][0]["points"][0][0] = float("nan")
+
+    with pytest.raises(ValueError, match="point values must be finite"):
+        from_json(data)
+
+
+def test_sample_json_rejects_nested_nonfinite_metric():
+    data = valid_json()
+    data["objects"][0]["metrics"]["classes"][1] = float("inf")
+
+    with pytest.raises(ValueError, match="metric values must be finite"):
+        from_json(data)

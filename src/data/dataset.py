@@ -3,11 +3,10 @@ from typing import Any
 import numpy as np
 from torch.utils.data import Dataset
 
-from . import item
+from . import image as image_data, item
 from .augment.image.crop import random_crop
 from .augment.image.flip import random_flip
 from .augment.image.pixel import random_pixel
-from .augment.image.resize import resize
 from .augment.image.rotate import random_rotate
 from .augment.image.zoom_out import random_zoom_out
 from .sample import Sample, load
@@ -189,11 +188,11 @@ class BaseDataset(Dataset):
         valid: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         pair = np.stack([target, union, valid], axis=-1)
-        image, pair = resize(image, pair, size=(self.size, self.size))
-        pair = np.asarray(pair, dtype=np.uint8)
+        image = image_data.resize_image(image, self.size)
+        pair = image_data.resize_mask(pair, self.size)
         target = pair[..., 0]
         union = pair[..., 1]
-        # Keep background clicks inside the real image, not resize padding.
+        # Keep background clicks outside augmentation padding.
         union[pair[..., 2] == 0] = 1
         return image, target, union
 
