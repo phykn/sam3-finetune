@@ -34,6 +34,17 @@ def _class_rows(out: dict[str, object], count: int) -> list[dict[str, np.ndarray
     return rows
 
 
+def _prediction_rows(out: dict[str, object]):
+    scores = np.asarray(out["scores"]).reshape(-1)
+    return zip(
+        format_masks(out["masks"]),
+        format_logits(out["logits"]),
+        scores,
+        _class_rows(out, len(scores)),
+        strict=True,
+    )
+
+
 def _match(value: int | tuple[int, ...], count: int) -> tuple[int, ...]:
     try:
         values = (value,) if isinstance(value, Integral) else tuple(value)
@@ -198,18 +209,12 @@ class GridPredictor:
                 point_labels=np.ones((len(batch), 1), dtype=np.int32),
                 multimask=False,
             )
-            masks = format_masks(out["masks"])
-            logits = format_logits(out["logits"])
-            scores = np.asarray(out["scores"]).reshape(-1)
-            classes = _class_rows(out, len(scores))
-            for point, mask, logit, score, class_values in zip(
+            for point, prediction in zip(
                 batch,
-                masks,
-                logits,
-                scores,
-                classes,
+                _prediction_rows(out),
                 strict=True,
             ):
+                mask, logit, score, class_values = prediction
                 item = make_candidate(
                     mask,
                     logit,
@@ -244,19 +249,13 @@ class GridPredictor:
                 mask=logits_in,
                 multimask=False,
             )
-            masks = format_masks(out["masks"])
-            logits = format_logits(out["logits"])
-            scores = np.asarray(out["scores"]).reshape(-1)
-            classes = _class_rows(out, len(scores))
-            for item, point, mask, logit, score, class_values in zip(
+            for item, point, prediction in zip(
                 chunk,
                 points[:, 0, :],
-                masks,
-                logits,
-                scores,
-                classes,
+                _prediction_rows(out),
                 strict=True,
             ):
+                mask, logit, score, class_values = prediction
                 new_item = make_candidate(
                     mask,
                     logit,

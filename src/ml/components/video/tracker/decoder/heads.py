@@ -1,7 +1,6 @@
 import torch
 import torch.nn.functional as F
 
-from ...sam_heads import get_propagation_dense_pe
 from ..multiplex.state import MultiplexState
 from ..outputs import NO_OBJ_SCORE, SAMOutput
 
@@ -196,7 +195,7 @@ def run_propagation_sam(
     assert high_res_features is not None
     assert multiplex_state is not None
 
-    image_pe = self._maybe_clone(get_propagation_dense_pe(self))
+    image_pe = self._maybe_clone(propagation_dense_pe(self))
     out = self.sam_mask_decoder(
         image_embeddings=backbone_features,
         image_pe=image_pe,
@@ -212,6 +211,12 @@ def run_propagation_sam(
         multiplex_state.demux(out["sam_tokens_out"]),
         multiplex_state.demux(out["object_score_logits"]),
     )
+
+
+def propagation_dense_pe(self):
+    return self.image_pe_layer(
+        (self.sam_image_embedding_size, self.sam_image_embedding_size)
+    ).unsqueeze(0)
 
 
 def output_suppression_embeddings(self, multiplex_state):

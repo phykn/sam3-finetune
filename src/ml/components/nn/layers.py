@@ -66,6 +66,7 @@ class MLP(nn.Module):
         dropout: float = 0.0,
         residual: bool = False,
         out_norm: nn.Module | None = None,
+        sigmoid_output: bool = False,
     ):
         super().__init__()
         self.num_layers = num_layers
@@ -82,6 +83,7 @@ class MLP(nn.Module):
             raise ValueError("residual is only supported if input_dim == output_dim")
         self.residual = residual
         self.out_norm = out_norm or nn.Identity()
+        self.sigmoid_output = sigmoid_output
 
     def forward(self, x):
         orig_x = x
@@ -89,4 +91,5 @@ class MLP(nn.Module):
             x = self.drop(F.relu(layer(x))) if index < self.num_layers - 1 else layer(x)
         if self.residual:
             x = x + orig_x
-        return self.out_norm(x)
+        x = self.out_norm(x)
+        return x.sigmoid() if self.sigmoid_output else x

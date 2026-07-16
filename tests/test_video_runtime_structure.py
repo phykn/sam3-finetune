@@ -16,9 +16,9 @@ ROOT = Path(__file__).resolve().parents[1] / "src" / "ml"
 def test_video_runtime_has_only_inference_dependencies():
     params = list(signature(VideoRuntime).parameters)
     assert params == [
-        "backbone",
-        "transformer",
-        "maskmem_backbone",
+        "features",
+        "memory",
+        "tracking",
         "multiplex_controller",
     ]
     assert not hasattr(VideoRuntime, "forward_tracking")

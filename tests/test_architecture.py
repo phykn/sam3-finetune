@@ -13,9 +13,10 @@ LAYERS = {
     "src.ml.components": 1,
     "src.ml.blocks": 2,
     "src.ml.model": 3,
-    "src.build": 4,
-    "src.predict": 4,
-    "scripts": 5,
+    "src.finetune": 4,
+    "src.build": 5,
+    "src.predict": 5,
+    "scripts": 6,
 }
 
 
@@ -112,14 +113,14 @@ def test_predict_does_not_import_model_internals() -> None:
     assert bad == []
 
 
-def test_video_tracker_is_model_not_block() -> None:
-    assert not (ROOT / "ml" / "blocks" / "video_tracker.py").exists()
+def test_video_runtime_is_model_not_block() -> None:
+    assert not (ROOT / "ml" / "blocks" / "video" / "runtime.py").exists()
 
 
 def test_video_blocks_do_not_create_runtime() -> None:
     bad = []
-    for path in (ROOT / "ml" / "blocks").glob("video_*.py"):
+    for path in (ROOT / "ml" / "blocks" / "video").glob("*.py"):
         for name in resolve_imports(path):
-            if name == "src.ml.components.video.tracking_model":
+            if name.startswith("src.ml.model"):
                 bad.append(f"{path.relative_to(WORKSPACE)}: {name}")
     assert bad == []

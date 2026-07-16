@@ -5,7 +5,13 @@ import src.ml.components.video.memory as memory
 from src.ml.components.grounding.box_out import write_box_outputs
 from src.ml.components.grounding.scoring import DotProductScorer
 from src.ml.components.nn.activation import resolve_activation
-from src.ml.components.nn.layers import clone_modules, LayerNorm2d, LayerScale, MLPBlock
+from src.ml.components.nn.layers import (
+    clone_modules,
+    LayerNorm2d,
+    LayerScale,
+    MLP,
+    MLPBlock,
+)
 from src.ml.components.sam.mask_decoder import MaskDecoder
 from src.ml.components.sam.prompt_encoder import PositionEmbeddingRandom, PromptEncoder
 from src.ml.components.sam.rope import (
@@ -84,6 +90,16 @@ def test_sam_rope_is_the_rope_module_location():
 def test_layer_norm_2d_has_single_source():
     assert memory.LayerNorm2d is LayerNorm2d
     assert not hasattr(model_misc, "LayerNorm2d")
+
+
+def test_mlp_has_single_source():
+    root = Path(__file__).resolve().parents[1] / "src" / "ml" / "components"
+
+    assert MLP.__module__ == "src.ml.components.nn.layers"
+    assert not (root / "video" / "mlp.py").exists()
+    assert not hasattr(
+        __import__("src.ml.components.sam.mask_decoder", fromlist=["MLP"]), "MLP"
+    )
 
 
 def test_nn_modules_are_split_by_responsibility():

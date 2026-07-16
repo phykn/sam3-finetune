@@ -1,8 +1,7 @@
 import torch
 from torch import nn
 
-from ...components.video import create
-from ...components.video.sam_heads import build_sam_heads
+from ...blocks.video.tracking import NUM_MULTIMASK_OUTPUTS
 from ...components.video.tracker.decoder import heads as decoder_heads
 from ...components.video.tracker.frame import features as frame_features
 from ...components.video.tracker.frame import inference as frame_inference
@@ -14,20 +13,28 @@ from ...components.video.tracker.memory import conditioning as memory_conditioni
 from ...components.video.tracker.memory import encoding as memory_encoding
 from ...components.video.tracker.multiplex.state import MultiplexController
 from ...components.video.tracker.runtime import step as runtime_step
-from ...components.video.tracker.runtime.init import init_tracking_model
 from . import masks, objects, propagate
+from .heads import build_sam_heads
+from .init import init_tracking_model
 from .state import add_object, create_state
 
+IMAGE_SIZE = 1008
+BACKBONE_STRIDE = 14
 
-def runtime_config(backbone, transformer, maskmem_backbone, multiplex_controller):
+
+def runtime_config(features, memory, tracking, multiplex_controller):
     return {
-        "backbone": backbone,
-        "transformer": transformer,
-        "maskmem_backbone": maskmem_backbone,
+        "backbone": features,
+        "transformer": tracking.transformer,
+        "maskmem_backbone": memory.encoder,
+        "image_pe_layer": tracking.image_pe,
+        "sam_mask_decoder": tracking.mask_decoder,
+        "output_valid_embed": tracking.output_valid_embed,
+        "output_invalid_embed": tracking.output_invalid_embed,
         "multiplex_controller": multiplex_controller,
         "num_maskmem": 7,
-        "image_size": create.IMAGE_SIZE,
-        "backbone_stride": create.BACKBONE_STRIDE,
+        "image_size": IMAGE_SIZE,
+        "backbone_stride": BACKBONE_STRIDE,
         "apply_sigmoid_to_mask_logits_for_mem_enc": True,
         "sigmoid_scale_for_mem_enc": 2.0,
         "sigmoid_bias_for_mem_enc": -1.0,
@@ -66,7 +73,7 @@ def runtime_config(backbone, transformer, maskmem_backbone, multiplex_controller
             "dynamic_multimask_stability_thresh": 0.98,
         },
         "save_image_features": True,
-        "num_multimask_outputs": create.MULTIMASK_OUTPUTS,
+        "num_multimask_outputs": NUM_MULTIMASK_OUTPUTS,
         "decode_mask_with_shared_tokens": False,
         "decode_mask_attribute_with_shared_tokens": False,
         "share_necks": False,
@@ -85,14 +92,14 @@ def runtime_config(backbone, transformer, maskmem_backbone, multiplex_controller
 
 
 class VideoRuntime(nn.Module):
-    def __init__(self, backbone, transformer, maskmem_backbone, multiplex_controller):
+    def __init__(self, features, memory, tracking, multiplex_controller):
         super().__init__()
         init_tracking_model(
             self,
             runtime_config(
-                backbone,
-                transformer,
-                maskmem_backbone,
+                features,
+                memory,
+                tracking,
                 multiplex_controller,
             ),
         )
@@ -302,6 +309,6 @@ class VideoRuntime(nn.Module):
         return objects.clear_non_cond_mem_around_input(self, *args, **kwargs)
 
 
-def create_runtime(backbone, transformer, maskmem_backbone):
+def create_runtime(features, memory, tracking):
     controller = MultiplexController(16, eval_multiplex_count=16)
-    return VideoRuntime(backbone, transformer, maskmem_backbone, controller)
+    return VideoRuntime(features, memory, tracking, controller)

@@ -241,7 +241,7 @@ class FakeVideo(nn.Module):
         return {"image": "features"}
 
 
-class FakeVideoFeatBlock(nn.Module):
+class FakeVideoFeaturesBlock(nn.Module):
     def __init__(self):
         super().__init__()
         self.calls = []
@@ -255,7 +255,7 @@ class FakeVideoFeatBlock(nn.Module):
         return {"frame": features}
 
 
-class FakeVideoMemBlock(nn.Module):
+class FakeVideoMemoryBlock(nn.Module):
     def __init__(self):
         super().__init__()
         self.calls = []
@@ -266,7 +266,7 @@ class FakeVideoMemBlock(nn.Module):
         return {"memory": frame, "mask": mask, "obj_id": obj_id}
 
 
-class FakeVideoTrackBlock(nn.Module):
+class FakeVideoTrackingBlock(nn.Module):
     def __init__(self):
         super().__init__()
         self.calls = []
@@ -385,25 +385,25 @@ def test_video_model_assembles_video_blocks(monkeypatch):
 
     calls = []
 
-    def create_runtime(backbone, transformer, maskmem_backbone):
-        calls.append((backbone, transformer, maskmem_backbone))
+    def create_runtime(features, memory, tracking):
+        calls.append((features, memory, tracking))
         return FakeVideo()
 
-    monkeypatch.setattr(model_module, "VideoFeat", FakeVideoFeatBlock)
-    monkeypatch.setattr(model_module, "VideoMem", FakeVideoMemBlock)
-    monkeypatch.setattr(model_module, "VideoTrack", FakeVideoTrackBlock)
+    monkeypatch.setattr(model_module, "VideoFeatures", FakeVideoFeaturesBlock)
+    monkeypatch.setattr(model_module, "VideoMemory", FakeVideoMemoryBlock)
+    monkeypatch.setattr(model_module, "VideoTracking", FakeVideoTrackingBlock)
     monkeypatch.setattr(model_module, "create_runtime", create_runtime)
     model = Sam3VideoModel()
 
-    assert isinstance(model.video_feat, FakeVideoFeatBlock)
-    assert isinstance(model.video_mem, FakeVideoMemBlock)
-    assert isinstance(model.video_track, FakeVideoTrackBlock)
+    assert isinstance(model.video_feat, FakeVideoFeaturesBlock)
+    assert isinstance(model.video_mem, FakeVideoMemoryBlock)
+    assert isinstance(model.video_track, FakeVideoTrackingBlock)
     assert isinstance(model.runtime, FakeVideo)
     assert calls == [
         (
             model.video_feat,
-            model.video_track.transformer,
-            model.video_mem.encoder,
+            model.video_mem,
+            model.video_track,
         )
     ]
 
@@ -565,8 +565,8 @@ def test_video_model_loads_path_with_strict_block(monkeypatch):
         def load_state_dict(self, state, strict=False):
             calls.append(("load_state_dict", state, strict))
 
-    def create_runtime(backbone, transformer, maskmem_backbone):
-        calls.append(("create_runtime", backbone, transformer, maskmem_backbone))
+    def create_runtime(features, memory, tracking):
+        calls.append(("create_runtime", features, memory, tracking))
         return FakeRuntime()
 
     class FakeCheckpoint:
@@ -579,9 +579,9 @@ def test_video_model_loads_path_with_strict_block(monkeypatch):
             return cls()
 
     monkeypatch.setattr(model_module, "Checkpoint", FakeCheckpoint)
-    monkeypatch.setattr(model_module, "VideoFeat", FakeVideoFeatBlock)
-    monkeypatch.setattr(model_module, "VideoMem", FakeVideoMemBlock)
-    monkeypatch.setattr(model_module, "VideoTrack", FakeVideoTrackBlock)
+    monkeypatch.setattr(model_module, "VideoFeatures", FakeVideoFeaturesBlock)
+    monkeypatch.setattr(model_module, "VideoMemory", FakeVideoMemoryBlock)
+    monkeypatch.setattr(model_module, "VideoTracking", FakeVideoTrackingBlock)
     monkeypatch.setattr(model_module, "create_runtime", create_runtime)
 
     model = Sam3VideoModel("model.pt")

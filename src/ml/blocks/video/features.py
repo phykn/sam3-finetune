@@ -1,12 +1,13 @@
 import torch
 from torch import nn
 
+from ..vision import make_vision_backbone
 
-class VideoFrame(nn.Module):
-    def __init__(self, vision_backbone=None, scalp: int = 0) -> None:
+
+class VideoFeatures(nn.Module):
+    def __init__(self) -> None:
         super().__init__()
-        self.vision_backbone = vision_backbone
-        self.scalp = scalp
+        self.vision_backbone = make_vision_backbone()
 
     def forward_image(
         self,
@@ -15,9 +16,6 @@ class VideoFrame(nn.Module):
         need_interactive_out: bool = True,
         need_propagation_out: bool = True,
     ):
-        if self.vision_backbone is None:
-            raise RuntimeError("video feature block has no vision backbone")
-
         (
             sam3_features,
             sam3_pos,
@@ -32,23 +30,16 @@ class VideoFrame(nn.Module):
             need_propagation_out=need_propagation_out,
         )
 
-        sam3_features, sam3_pos = self.scalp_levels(sam3_features, sam3_pos)
-        interactive_features, interactive_pos = self.scalp_levels(
-            interactive_features,
-            interactive_pos,
-        )
-        propagation_features, propagation_pos = self.scalp_levels(
-            propagation_features,
-            propagation_pos,
-        )
-
         out = {}
         if need_sam3_out:
-            out.update(self.out(sam3_features, sam3_pos))
+            out.update(self._branch(sam3_features, sam3_pos))
         if need_interactive_out:
-            out["interactive"] = self.out(interactive_features, interactive_pos)
+            out["interactive"] = self._branch(
+                interactive_features,
+                interactive_pos,
+            )
         if need_propagation_out:
-            out["sam2_backbone_out"] = self.out(
+            out["sam2_backbone_out"] = self._branch(
                 propagation_features,
                 propagation_pos,
             )
@@ -60,32 +51,27 @@ class VideoFrame(nn.Module):
             raise RuntimeError("video feature block expected feature levels")
 
         return {
-            "vision_features": self.tensor(fpn[-1]),
+            "vision_features": self._tensor(fpn[-1]),
             "vision_mask": getattr(fpn[-1], "mask", features.get("vision_mask")),
             "vision_pos_enc": tuple(features["vision_pos_enc"]),
             "backbone_fpn": fpn,
-            "feat_sizes": tuple(self.size(level) for level in fpn),
+            "feat_sizes": tuple(self._size(level) for level in fpn),
         }
 
     @staticmethod
-    def tensor(value) -> torch.Tensor:
+    def _tensor(value) -> torch.Tensor:
         return getattr(value, "tensors", value)
 
-    @staticmethod
-    def size(value) -> tuple[int, int]:
-        tensor = VideoFrame.tensor(value)
+    @classmethod
+    def _size(cls, value) -> tuple[int, int]:
+        tensor = cls._tensor(value)
         return int(tensor.shape[-2]), int(tensor.shape[-1])
 
-    def scalp_levels(self, features, pos):
-        if self.scalp <= 0:
-            return features, pos
-        return features[: -self.scalp], pos[: -self.scalp]
-
     @classmethod
-    def out(cls, features, pos):
+    def _branch(cls, features, pos):
         last = features[-1]
         return {
-            "vision_features": cls.tensor(last),
+            "vision_features": cls._tensor(last),
             "vision_mask": getattr(last, "mask", None),
             "vision_pos_enc": pos,
             "backbone_fpn": features,

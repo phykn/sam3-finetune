@@ -12,7 +12,7 @@ finetune_dataset/  small frog/leaf finetuning dataset and previews
 notebooks/         dataset, forward, loss, and grid-prediction checks
 src/data/          dataset, augmentation, prompts, and JSON sample format
 src/finetune/      LoRA model, router, loss, checkpoint, DDP, and trainer
-src/ml/            SAM 3.1 components, blocks, and assembled models
+src/ml/            SAM 3.1 components -> workflow blocks -> assembled models
 src/predict/       single-image, grid, grounding, and video predictors
 tests/             runtime and mathematical regression tests
 ```
@@ -232,7 +232,7 @@ delta has not been trained.
 ./.venv/bin/python -m pytest tests
 ```
 
-The tracked remote test suite contains 251 tests covering model structure,
+The tracked remote test suite contains 254 tests covering model structure,
 checkpoint loading, data, finetuning math, prediction, grounding, and video
 state. Local-only scripts and their script-specific tests are intentionally not
 part of the remote repository.

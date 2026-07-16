@@ -35,6 +35,9 @@ def test_core_packages_are_grouped_by_responsibility():
         "src/ml/blocks/grounding/image.py",
         "src/ml/blocks/grounding/prompt.py",
         "src/ml/blocks/grounding/decoder.py",
+        "src/ml/blocks/video/features.py",
+        "src/ml/blocks/video/memory.py",
+        "src/ml/blocks/video/tracking.py",
         "src/ml/model/image.py",
         "src/ml/model/grounding.py",
         "src/ml/model/video/model.py",
@@ -54,3 +57,9 @@ def test_finetune_refactor_has_flat_runtime_files():
     assert (root / "src" / "finetune" / "ddp.py").is_file()
     assert (root / "scripts" / "finetune.py").is_file()
     assert not (root / "config" / "finetune_model.yaml").exists()
+
+
+def test_unused_video_loader_is_removed():
+    root = Path(__file__).resolve().parents[1]
+
+    assert not (root / "src" / "io" / "load.py").exists()

@@ -1,8 +1,7 @@
 import torch
 from torch import nn
-from torch.nn import functional as F
 
-from ..nn.layers import LayerNorm2d
+from ..nn.layers import LayerNorm2d, MLP as _MLP
 
 
 class MaskDecoder(nn.Module):
@@ -60,12 +59,12 @@ class MaskDecoder(nn.Module):
 
         self.output_hypernetworks_mlps = nn.ModuleList(
             [
-                MLP(transformer_dim, transformer_dim, transformer_dim // 8, 3)
+                _MLP(transformer_dim, transformer_dim, transformer_dim // 8, 3)
                 for _ in range(self.num_mask_tokens)
             ]
         )
 
-        self.iou_prediction_head = MLP(
+        self.iou_prediction_head = _MLP(
             transformer_dim,
             iou_head_hidden_dim,
             self.num_mask_tokens,
@@ -75,7 +74,7 @@ class MaskDecoder(nn.Module):
         if self.pred_obj_scores:
             self.pred_obj_score_head = nn.Linear(transformer_dim, 1)
             if pred_obj_scores_mlp:
-                self.pred_obj_score_head = MLP(transformer_dim, transformer_dim, 1, 3)
+                self.pred_obj_score_head = _MLP(transformer_dim, transformer_dim, 1, 3)
 
         self.dynamic_multimask_via_stability = dynamic_multimask_via_stability
         self.dynamic_multimask_stability_delta = dynamic_multimask_stability_delta
@@ -154,9 +153,9 @@ class MaskDecoder(nn.Module):
             assert image_embeddings.shape[0] == tokens.shape[0]
             src = image_embeddings
         src = src + dense_prompt_embeddings
-        assert image_pe.size(0) == 1, (
-            "image_pe should have size 1 in batch dim (from `get_dense_pe()`)"
-        )
+        assert (
+            image_pe.size(0) == 1
+        ), "image_pe should have size 1 in batch dim (from `get_dense_pe()`)"
         pos_src = torch.repeat_interleave(image_pe, tokens.shape[0], dim=0)
         b, c, h, w = src.shape
 
@@ -226,28 +225,3 @@ class MaskDecoder(nn.Module):
             best_multimask_iou_scores,
         )
         return mask_logits_out, iou_scores_out
-
-
-class MLP(nn.Module):
-    def __init__(
-        self,
-        input_dim: int,
-        hidden_dim: int,
-        output_dim: int,
-        num_layers: int,
-        sigmoid_output: bool = False,
-    ) -> None:
-        super().__init__()
-        self.num_layers = num_layers
-        h = [hidden_dim] * (num_layers - 1)
-        self.layers = nn.ModuleList(
-            nn.Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim])
-        )
-        self.sigmoid_output = sigmoid_output
-
-    def forward(self, x):
-        for i, layer in enumerate(self.layers):
-            x = F.relu(layer(x)) if i < self.num_layers - 1 else layer(x)
-        if self.sigmoid_output:
-            x = torch.sigmoid(x)
-        return x

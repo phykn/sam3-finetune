@@ -1,21 +1,82 @@
 import torch
 from torch import nn
 
-from ..components.sam.prompt_encoder import PositionEmbeddingRandom
-from ..components.video.create import create_transformer, make_two_way_transformer
-from ..components.video.multiplex import MultiplexMaskDecoder
+from ...components.sam.prompt_encoder import PositionEmbeddingRandom
+from ...components.sam.transformer import TwoWayTransformer
+from ...components.transformer.model import Transformer
+from ...components.transformer.video import (
+    RotaryAttention,
+    VideoDecoderLayer,
+    VideoTransformerEncoder,
+)
+from ...components.video.multiplex import MultiplexMaskDecoder
+
+NUM_MULTIMASK_OUTPUTS = 3
 
 
-class VideoTrack(nn.Module):
+def _make_transformer(use_rope_real: bool = False):
+    self_attn = RotaryAttention(
+        d_model=256,
+        num_heads=8,
+        dropout_p=0.1,
+        rope_theta=10000.0,
+        feat_sizes=[72, 72],
+        use_rope_real=use_rope_real,
+    )
+    cross_attn = RotaryAttention(
+        d_model=256,
+        num_heads=8,
+        dropout_p=0.1,
+        rope_theta=10000.0,
+        feat_sizes=[72, 72],
+        rope_k_repeat=True,
+        use_rope_real=use_rope_real,
+    )
+    layer = VideoDecoderLayer(
+        activation="gelu",
+        d_model=256,
+        num_heads=8,
+        dropout=0.1,
+        dim_feedforward=2048,
+        pos_enc_at_attn=False,
+        pre_norm=True,
+        pos_enc_at_cross_attn_keys=True,
+        pos_enc_at_cross_attn_queries=False,
+        self_attention_rope=self_attn,
+        cross_attention_rope=cross_attn,
+    )
+    encoder = VideoTransformerEncoder(
+        d_model=256,
+        frozen=False,
+        pos_enc_at_input=True,
+        use_image_in_output=False,
+        layer=layer,
+        num_layers=4,
+        use_act_checkpoint=False,
+        batch_first=True,
+    )
+    return Transformer(encoder=encoder, decoder=None, d_model=256)
+
+
+def make_two_way_transformer(embed_dim):
+    return TwoWayTransformer(
+        depth=2,
+        embedding_dim=embed_dim,
+        mlp_dim=2048,
+        num_heads=8,
+    )
+
+
+class VideoTracking(nn.Module):
     def __init__(self) -> None:
         super().__init__()
-        self.transformer = create_transformer()
+        self.transformer = _make_transformer()
         self.image_pe = PositionEmbeddingRandom(128)
         self.output_valid_embed = nn.Parameter(torch.zeros(16, 256))
         self.output_invalid_embed = nn.Parameter(torch.zeros(16, 256))
         self.mask_decoder = MultiplexMaskDecoder(
             multiplex_count=16,
-            num_multimask_outputs=3,
+            num_multimask_outputs=NUM_MULTIMASK_OUTPUTS,
             transformer=make_two_way_transformer(256),
             transformer_dim=256,
             iou_head_depth=3,
@@ -30,24 +91,6 @@ class VideoTrack(nn.Module):
             dynamic_multimask_stability_thresh=0.98,
             multimask_outputs_only=True,
         )
-
-    def from_ckpt(self, ckpt, strict=False):
-        self.transformer.load_state_dict(
-            ckpt.block_state("video.transformer"),
-            strict=strict,
-        )
-        self.image_pe.load_state_dict(
-            ckpt.block_state("video.image_pe_layer"),
-            strict=strict,
-        )
-        self.mask_decoder.load_state_dict(
-            ckpt.block_state("video.sam_mask_decoder"),
-            strict=strict,
-        )
-        with torch.no_grad():
-            self.output_valid_embed.copy_(ckpt.state["video.output_valid_embed"])
-            self.output_invalid_embed.copy_(ckpt.state["video.output_invalid_embed"])
-        return self
 
     def forward(self, frame, memory, multimask=True) -> dict[str, object]:
         encoded = self.encode(frame, memory)
@@ -105,7 +148,7 @@ class VideoTrack(nn.Module):
 
     @staticmethod
     def seq(value):
-        tensor = VideoTrack.tensor(value)
+        tensor = VideoTracking.tensor(value)
         if tensor.dim() == 4:
             return tensor.flatten(2).permute(2, 0, 1)
         return tensor
