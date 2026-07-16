@@ -70,7 +70,7 @@ def make_model(num_classes=3):
         base,
         num_conditions=2,
         num_experts=2,
-        num_labels=num_classes,
+        num_classes=num_classes,
         lora_rank=2,
         feature_rank=2,
     )
@@ -139,7 +139,7 @@ def test_build_prompt_merges_box_and_point_inputs():
 
 
 def test_model_rejects_empty_class_head():
-    with pytest.raises(ValueError, match="num_labels"):
+    with pytest.raises(ValueError, match="num_classes"):
         make_model(num_classes=0)
 
 

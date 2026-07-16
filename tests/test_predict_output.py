@@ -34,13 +34,12 @@ def test_objects_preserve_prompt_and_candidate_axes():
 
     objects = mask_format.make_objects(masks, scores, (4, 6), classes)
 
-    assert len(objects) == 4
-    assert [item["object_id"] for item in objects] == [1, 2, 3, 4]
+    assert len(objects) == 3
+    assert [item["object_id"] for item in objects] == [1, 2, 3]
     assert [(item["prompt_index"], item["candidate_index"]) for item in objects] == [
         (0, 0),
         (0, 1),
         (1, 0),
-        (1, 1),
     ]
     assert all(item["class_id"] is None for item in objects)
     assert objects[0]["roi"].dtype == np.bool_
@@ -50,13 +49,11 @@ def test_objects_preserve_prompt_and_candidate_axes():
     np.testing.assert_array_equal(actual, expected)
 
 
-def test_objects_keep_empty_mask_cardinality():
+def test_objects_drop_empty_masks():
     objects = mask_format.make_objects(
         torch.full((1, 1, 2, 2), -2.0),
         torch.tensor([[0.25]]),
         (4, 4),
     )
 
-    assert len(objects) == 1
-    assert objects[0]["box"] == (0, 0, 0, 0)
-    assert objects[0]["roi"].shape == (0, 0)
+    assert objects == []

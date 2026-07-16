@@ -1,3 +1,4 @@
+from numbers import Integral
 from typing import Any
 
 import numpy as np
@@ -5,7 +6,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
-from .dataset import TrainDataset, ValidDataset
+from .dataset import TrainDataset, ValidDataset, validate_cond, validate_label
 from .folder import expand
 from .image import to_tensor
 
@@ -72,10 +73,9 @@ def make_infinite_train_loader(
     paths: list[str],
     batch_size: int,
     num_classes: int,
-    conds: list[int] | tuple[int, ...] | None = None,
-    labels: (
-        list[dict[str, list[float]]] | tuple[dict[str, list[float]], ...] | None
-    ) = None,
+    num_conditions: int,
+    conds: list[int] | tuple[int, ...],
+    labels: list[dict[str, list[float]]] | tuple[dict[str, list[float]], ...],
     num_workers: int = 4,
 ) -> InfiniteLoader:
     return make_finetune_loader(
@@ -87,6 +87,7 @@ def make_infinite_train_loader(
             "num_workers": num_workers,
         },
         num_classes=num_classes,
+        num_conditions=num_conditions,
         train=True,
     )
 
@@ -94,25 +95,43 @@ def make_infinite_train_loader(
 def make_finetune_loader(
     config: dict[str, Any],
     num_classes: int,
+    num_conditions: int,
     train: bool,
     rank: int = 0,
     world_size: int = 1,
 ) -> InfiniteLoader:
+    if isinstance(num_classes, bool) or not isinstance(num_classes, Integral):
+        raise ValueError("num_classes must be a positive integer")
     if num_classes <= 0:
-        raise ValueError("num_classes must be positive")
-    label_config = config.get("folders", config.get("labels")) or []
-    _check_label_count(label_config, num_classes)
+        raise ValueError("num_classes must be a positive integer")
+    if isinstance(num_conditions, bool) or not isinstance(num_conditions, Integral):
+        raise ValueError("num_conditions must be a positive integer")
+    if num_conditions <= 0:
+        raise ValueError("num_conditions must be a positive integer")
 
     dataset_type = TrainDataset if train else ValidDataset
     if "folders" in config:
-        paths, conds, labels = expand(config["folders"])
+        folders = config["folders"]
+        for folder in folders:
+            if "cond" not in folder:
+                raise ValueError("folder must contain cond")
+        _check_conds([folder["cond"] for folder in folders], num_conditions)
+        _check_labels(folders, num_classes)
+        paths, conds, labels = expand(folders)
     else:
         paths = config["paths"]
         conds = config.get("conds")
         labels = config.get("labels")
+        if conds is None:
+            raise ValueError("conds are required for finetuning")
+        if labels is None:
+            raise ValueError("labels are required for finetuning")
+        _check_conds(conds, num_conditions)
+        _check_labels(labels, num_classes)
     dataset = dataset_type(
         paths,
         conds=conds,
+        num_conditions=num_conditions,
         labels=labels,
     )
     if len(dataset) == 0:
@@ -149,9 +168,11 @@ def make_finetune_loader(
     return InfiniteLoader(loader, sampler=sampler)
 
 
-def _check_label_count(labels: list[dict], num_classes: int) -> None:
+def _check_conds(conds: list[int] | tuple[int, ...], num_conditions: int) -> None:
+    for cond in conds:
+        validate_cond(cond, num_conditions)
+
+
+def _check_labels(labels: list[dict] | tuple[dict, ...], num_classes: int) -> None:
     for label in labels:
-        if len(label["target"]) != num_classes:
-            raise ValueError("label target length must match num_classes")
-        if len(label["weight"]) != num_classes:
-            raise ValueError("label weight length must match num_classes")
+        validate_label(label, num_classes)

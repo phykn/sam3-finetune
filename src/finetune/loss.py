@@ -33,8 +33,8 @@ def class_weights(
 ) -> torch.Tensor:
     out = weights.detach().clone()
     auto = is_auto_bg.to(device=out.device, dtype=torch.bool).flatten()
-    particle = logits[:, 0].detach().sigmoid()
-    out[auto, 0] *= 1 - particle[auto]
+    presence = logits[:, 0].detach().sigmoid()
+    out[auto, 0] *= presence[auto]
     return out
 
 

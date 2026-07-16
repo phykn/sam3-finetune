@@ -205,7 +205,7 @@ def test_finetune_model_freezes_base_and_wraps_decoder_linear():
         base,
         num_conditions=2,
         num_experts=2,
-        num_labels=3,
+        num_classes=3,
         lora_rank=2,
         feature_rank=2,
     )
@@ -229,7 +229,7 @@ def test_finetune_model_uses_image_model_api_with_mix():
         base,
         num_conditions=3,
         num_experts=2,
-        num_labels=4,
+        num_classes=4,
         lora_rank=2,
         feature_rank=2,
     )

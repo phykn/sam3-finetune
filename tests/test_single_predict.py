@@ -4,6 +4,7 @@ import torch
 from PIL import Image
 
 from src.data import pack
+from src.finetune.checkpoint import FORMAT
 from src.predict.single import SinglePredictor
 
 
@@ -23,6 +24,7 @@ class FakeModel(torch.nn.Module):
         super().__init__()
         self.prompt_encoder = FakePromptEncoder()
         self.images = []
+        self.image_grad_enabled = []
         self.prompts = []
         self.decodes = []
 
@@ -36,6 +38,7 @@ class FakeModel(torch.nn.Module):
 
     def encode_image(self, images):
         self.images.append(tuple(images.shape))
+        self.image_grad_enabled.append(torch.is_grad_enabled())
         batch = images.shape[0]
         return {
             "image_embed": torch.zeros(batch, 256, 72, 72),
@@ -171,12 +174,25 @@ def test_single_predictor_refines_from_logit():
     objects = predictor.refine(
         Image.new("RGB", (20, 10), color=(0, 0, 0)),
         logit,
+        point_coords=np.array([[[10.0, 5.0]]], dtype=np.float32),
+        point_labels=np.array([[1]], dtype=np.int32),
     )
 
     assert len(objects) == 1
     assert pack.full((10, 20), objects[0]["box"], objects[0]["roi"]).all()
     assert model.prompts[0][2].dtype == torch.float32
+    assert model.prompts[0][0][1].tolist() == [[1]]
     assert model.decodes[0]["multimask"] is False
+
+
+def test_single_predictor_encode_disables_gradients():
+    model = FakeModel()
+    predictor = SinglePredictor(model, device="cpu")
+
+    with torch.enable_grad():
+        predictor.encode(Image.new("RGB", (20, 10)))
+
+    assert model.image_grad_enabled == [False]
 
 
 def test_single_predictor_refines_embed_from_logit():
@@ -201,7 +217,7 @@ def test_single_predictor_can_keep_low_res_masks():
     predictor = SinglePredictor(model, device="cpu")
     embed = predictor.encode(Image.new("RGB", (20, 10), color=(0, 0, 0)))
 
-    out = predictor._predict_low(
+    out = predictor.predict_low(
         embed,
         point_coords=np.array([[[10.0, 5.0]]], dtype=np.float32),
         point_labels=np.array([[1]], dtype=np.int32),
@@ -218,12 +234,12 @@ def test_single_predictor_passes_condition_and_prompt_type():
     predictor = SinglePredictor(model, device="cpu", cond=2)
     embed = predictor.encode(Image.new("RGB", (20, 10), color=(0, 0, 0)))
 
-    predictor._predict_low(
+    predictor.predict_low(
         embed,
         point_coords=np.array([[[10.0, 5.0]]], dtype=np.float32),
         point_labels=np.array([[1]], dtype=np.int32),
     )
-    predictor._predict_low(
+    predictor.predict_low(
         embed,
         box=np.array([2, 1, 18, 9], dtype=np.float32),
         cond=1,
@@ -267,9 +283,11 @@ def test_single_predictor_keeps_fixed_image_options():
             raise AssertionError(f"Expected TypeError for {kwargs}")
 
 
-def test_single_predictor_removes_public_low_methods():
+def test_single_predictor_exposes_one_low_level_method():
     predictor = SinglePredictor(FakeModel(), device="cpu")
 
+    assert hasattr(predictor, "predict_low")
+    assert not hasattr(predictor, "_predict_low")
     assert not hasattr(predictor, "predict_embed_low")
     assert not hasattr(predictor, "refine_low")
 
@@ -283,3 +301,53 @@ def test_single_predictor_from_path_uses_explicit_options(monkeypatch):
     assert predictor.cond == 3
     with pytest.raises(TypeError):
         SinglePredictor.from_path("unused.pt", {"device": "cpu"})
+
+
+def test_single_predictor_from_finetune_uses_saved_model_config(
+    monkeypatch,
+    tmp_path,
+):
+    captured = []
+    checkpoint_path = tmp_path / "last.pt"
+    torch.save(
+        {
+            "format": FORMAT,
+            "model": {},
+            "config": {
+                "model": {
+                    "path": "stale-base.pt",
+                    "num_conditions": 2,
+                    "num_experts": 3,
+                    "num_classes": 4,
+                    "lora_rank": 5,
+                    "feature_rank": 6,
+                }
+            },
+        },
+        checkpoint_path,
+    )
+
+    def build(config):
+        captured.append(config)
+        return FakeModel()
+
+    monkeypatch.setattr("src.predict.single.build_finetune_model", build)
+    predictor = SinglePredictor.from_finetune(
+        "new-base.pt",
+        checkpoint_path,
+        device="cpu",
+        cond=1,
+    )
+
+    assert predictor.cond == 1
+    assert captured == [
+        {
+            "path": "new-base.pt",
+            "device": "cpu",
+            "num_conditions": 2,
+            "num_experts": 3,
+            "num_classes": 4,
+            "lora_rank": 5,
+            "feature_rank": 6,
+        }
+    ]

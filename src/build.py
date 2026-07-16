@@ -17,7 +17,7 @@ def build_finetune_model(config: dict) -> FinetuneModel:
         Sam3ImageModel(path=path),
         num_conditions=config.get("num_conditions", 1),
         num_experts=config.get("num_experts", 4),
-        num_labels=config.get("num_classes", 1),
+        num_classes=config.get("num_classes", 1),
         lora_rank=config.get("lora_rank", 8),
         feature_rank=config.get("feature_rank", 16),
     ).to(device)
@@ -27,6 +27,7 @@ def build_finetune_model(config: dict) -> FinetuneModel:
 def build_finetune_loader(
     config: dict,
     num_classes: int,
+    num_conditions: int,
     train: bool = True,
     rank: int = 0,
     world_size: int = 1,
@@ -34,6 +35,7 @@ def build_finetune_loader(
     return make_finetune_loader(
         config,
         num_classes=num_classes,
+        num_conditions=num_conditions,
         train=train,
         rank=rank,
         world_size=world_size,

@@ -60,6 +60,7 @@ class FinetuneTrainer:
         self.valid_count = 0
         self.valid_stats: dict[str, float] = {}
         self.main = ddp.is_main()
+        self._step_updating = False
 
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         if run_dir is None:
@@ -90,12 +91,19 @@ class FinetuneTrainer:
         if not ddp.all_finite(loss):
             raise FloatingPointError(f"non-finite loss at step {self.step}")
         loss.backward()
-        grad_norm = self.grad_norm()
         if self.clip_grad_norm is not None:
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grad_norm)
+            grad_norm = float(
+                torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(),
+                    self.clip_grad_norm,
+                )
+            )
+        else:
+            grad_norm = self.grad_norm()
+        self._step_updating = True
         self.optimizer.step()
-
         self.step += 1
+        self._step_updating = False
         if self.step % self.save_every == 0:
             self.save_checkpoint()
         stats["grad_norm"] = grad_norm
@@ -132,21 +140,27 @@ class FinetuneTrainer:
 
     def train(self) -> dict[str, float]:
         stats: dict[str, float] = {}
+        self._save_last_checkpoint()
         remaining = self.steps - self.step
         indices = range(self.step, self.steps)
         progress = (
             tqdm(indices, total=remaining, desc="finetune") if self.main else indices
         )
-        for _ in progress:
-            stats = self.train_step()
-            if self.step % self.save_every == 0:
-                self.validate()
+        try:
+            for _ in progress:
+                stats = self.train_step()
+                if self.step % self.save_every == 0:
+                    self.validate()
 
-            stats = self._with_valid_stats(stats)
-            if self.main:
-                progress.set_postfix(
-                    {key: f"{value:.4g}" for key, value in stats.items()}
-                )
+                stats = self._with_valid_stats(stats)
+                if self.main:
+                    progress.set_postfix(
+                        {key: f"{value:.4g}" for key, value in stats.items()}
+                    )
+        except KeyboardInterrupt:
+            if not self._step_updating:
+                self.save_checkpoint()
+            raise
         if remaining > 0 and self.step % self.save_every != 0:
             self.save_checkpoint()
         return stats
@@ -154,7 +168,7 @@ class FinetuneTrainer:
     def save_checkpoint(self) -> None:
         if not self.main:
             return
-        if self.step % self.save_every == 0:
+        if self.step > 0 and self.step % self.save_every == 0:
             save_checkpoint(
                 self.checkpoint_dir / f"step-{self.step:06d}.pt",
                 self.model,
@@ -162,6 +176,11 @@ class FinetuneTrainer:
                 self.step,
                 self.config,
             )
+        self._save_last_checkpoint()
+
+    def _save_last_checkpoint(self) -> None:
+        if not self.main:
+            return
         save_checkpoint(
             self.checkpoint_dir / "last.pt",
             self.model,
@@ -211,13 +230,14 @@ class FinetuneTrainer:
         return value
 
     def grad_norm(self) -> float:
-        total = 0.0
-        for param in self.model.parameters():
-            if param.grad is None:
-                continue
-            norm = param.grad.detach().data.norm(2).item()
-            total += norm * norm
-        return total**0.5
+        gradients = [
+            param.grad.detach()
+            for param in self.model.parameters()
+            if param.grad is not None
+        ]
+        if not gradients:
+            return 0.0
+        return float(torch.nn.utils.get_total_norm(gradients))
 
     def _autocast(self) -> Any:
         if self.amp and self.device.type == "cuda":

@@ -6,7 +6,9 @@ import torch
 from PIL import Image
 from torch import nn
 
+from ..build import build_finetune_model
 from ..data import image as image_data, prompt
+from ..finetune.checkpoint import FORMAT, load_trainable_state
 from ..ml.model import Sam3ImageModel
 from .mask import format as mask_format
 
@@ -36,6 +38,33 @@ class SinglePredictor:
             device=device,
             cond=cond,
         )
+
+    @classmethod
+    def from_finetune(
+        cls,
+        base_path: str | Path,
+        checkpoint_path: str | Path,
+        device: str | torch.device = "cuda",
+        cond: int = 0,
+    ) -> "SinglePredictor":
+        checkpoint = torch.load(
+            checkpoint_path,
+            map_location="cpu",
+            weights_only=False,
+        )
+        if not isinstance(checkpoint, dict) or checkpoint.get("format") != FORMAT:
+            raise ValueError("unsupported finetune checkpoint format")
+        if "model" not in checkpoint or "config" not in checkpoint:
+            raise ValueError("finetune checkpoint fields are incomplete")
+        config = checkpoint["config"]
+        if not isinstance(config, dict) or not isinstance(config.get("model"), dict):
+            raise ValueError("finetune checkpoint model config is missing")
+        model_config = dict(config["model"])
+        model_config["path"] = base_path
+        model_config["device"] = device
+        model = build_finetune_model(model_config)
+        load_trainable_state(model, checkpoint["model"])
+        return cls(model, device=device, cond=cond)
 
     def autocast(self) -> AbstractContextManager:
         if self.device.type == "cuda":
@@ -144,6 +173,7 @@ class SinglePredictor:
         classes = decoded[4] if len(decoded) > 4 else None
         return masks, scores, classes
 
+    @torch.inference_mode()
     def encode(self, image: Image.Image | np.ndarray) -> dict[str, object]:
         tensor, orig_hw = image_data.make_tensor(image, self.image_size, self.device)
         with self.autocast():
@@ -155,7 +185,7 @@ class SinglePredictor:
         }
 
     @torch.inference_mode()
-    def _predict_low(
+    def predict_low(
         self,
         embed: dict[str, object],
         point_coords: np.ndarray | torch.Tensor | None = None,
@@ -221,9 +251,18 @@ class SinglePredictor:
         self,
         image: Image.Image | np.ndarray,
         logit: np.ndarray | torch.Tensor,
+        point_coords: np.ndarray | torch.Tensor | None = None,
+        point_labels: np.ndarray | torch.Tensor | None = None,
         cond: int | torch.Tensor | None = None,
     ) -> list[dict[str, object]]:
-        return self.predict(image, mask=logit, multimask=False, cond=cond)
+        return self.predict(
+            image,
+            point_coords=point_coords,
+            point_labels=point_labels,
+            mask=logit,
+            multimask=False,
+            cond=cond,
+        )
 
     @torch.inference_mode()
     def predict(

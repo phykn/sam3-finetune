@@ -59,6 +59,8 @@ def make_objects(
     for prompt_index in range(masks.shape[0]):
         for candidate_index in range(masks.shape[1]):
             box, roi = pack.box_roi(masks[prompt_index, candidate_index])
+            if roi.size == 0:
+                continue
             metrics = {"score": float(scores[prompt_index, candidate_index])}
             if class_logits is not None:
                 metrics["class_logits"] = (

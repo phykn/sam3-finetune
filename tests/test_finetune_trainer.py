@@ -4,6 +4,7 @@ import pytest
 import torch
 from torch import nn
 
+from src.finetune.checkpoint import save_checkpoint
 from src.finetune.trainer import FinetuneTrainer
 
 
@@ -108,6 +109,36 @@ def test_train_step_skips_checkpoint_before_save_interval(tmp_path):
     trainer.close()
 
     assert not (trainer.checkpoint_dir / "last.pt").exists()
+
+
+def test_train_step_reuses_clipping_norm_for_logging(tmp_path, monkeypatch):
+    model = TinyFinetuneModel()
+    trainer = FinetuneTrainer(
+        model=model,
+        train_loader=cycle([make_batch()]),
+        valid_loader=cycle([make_batch()]),
+        optimizer=torch.optim.SGD(model.parameters(), lr=0.1),
+        steps=1,
+        valid_steps=1,
+        device="cpu",
+        run_root=tmp_path,
+        clip_grad_norm=1.0,
+    )
+    monkeypatch.setattr(
+        torch.nn.utils,
+        "clip_grad_norm_",
+        lambda _parameters, _limit: torch.tensor(7.0),
+    )
+    monkeypatch.setattr(
+        trainer,
+        "grad_norm",
+        lambda: pytest.fail("grad norm must not be recomputed after clipping"),
+    )
+
+    stats = trainer.train_step()
+    trainer.close()
+
+    assert stats["grad_norm"] == 7.0
 
 
 def test_train_runs_fixed_steps_and_saves_interval_checkpoint(tmp_path):
@@ -226,6 +257,97 @@ def test_resume_step_runs_only_remaining_global_steps(tmp_path):
     assert trainer.step == 3
     assert checkpoint["step"] == 3
     assert checkpoint["config"] == {"train": {"steps": 3}}
+
+
+def test_keyboard_interrupt_saves_last_completed_step(tmp_path, monkeypatch):
+    model = TinyFinetuneModel()
+    trainer = FinetuneTrainer(
+        model=model,
+        train_loader=cycle([make_batch()]),
+        valid_loader=cycle([make_batch()]),
+        optimizer=torch.optim.SGD(model.parameters(), lr=0.1),
+        steps=3,
+        valid_steps=1,
+        device="cpu",
+        run_root=tmp_path,
+        save_every=100,
+        config={"train": {"steps": 3}},
+    )
+    calls = 0
+
+    def interrupt_after_one_step():
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise KeyboardInterrupt
+        trainer.step += 1
+        return {"loss": 1.0}
+
+    monkeypatch.setattr(trainer, "train_step", interrupt_after_one_step)
+
+    with pytest.raises(KeyboardInterrupt):
+        trainer.train()
+    trainer.close()
+
+    checkpoint = torch.load(
+        trainer.checkpoint_dir / "last.pt",
+        map_location="cpu",
+        weights_only=False,
+    )
+    assert checkpoint["step"] == 1
+    assert checkpoint["config"] == {"train": {"steps": 3}}
+
+
+def test_keyboard_interrupt_during_optimizer_keeps_last_safe_checkpoint(
+    tmp_path,
+    monkeypatch,
+):
+    model = TinyFinetuneModel()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+    trainer = FinetuneTrainer(
+        model=model,
+        train_loader=cycle([make_batch()]),
+        valid_loader=cycle([make_batch()]),
+        optimizer=optimizer,
+        steps=2,
+        valid_steps=1,
+        device="cpu",
+        run_root=tmp_path,
+        save_every=100,
+        config={"train": {"steps": 2}},
+    )
+    initial_scale = model.scale.detach().clone()
+    with torch.no_grad():
+        model.scale.fill_(5)
+    save_checkpoint(
+        trainer.checkpoint_dir / "last.pt",
+        model,
+        optimizer,
+        step=2,
+        config={"train": {"steps": 2}},
+    )
+    with torch.no_grad():
+        model.scale.copy_(initial_scale)
+
+    def interrupt_during_update():
+        with torch.no_grad():
+            model.scale.add_(10)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(optimizer, "step", interrupt_during_update)
+
+    with pytest.raises(KeyboardInterrupt):
+        trainer.train()
+    trainer.close()
+
+    checkpoint = torch.load(
+        trainer.checkpoint_dir / "last.pt",
+        map_location="cpu",
+        weights_only=False,
+    )
+    assert checkpoint["step"] == 0
+    assert torch.equal(checkpoint["model"]["scale"], initial_scale)
+    assert not torch.equal(model.scale, initial_scale)
 
 
 def test_non_main_trainer_skips_logs_and_checkpoints(monkeypatch, tmp_path):

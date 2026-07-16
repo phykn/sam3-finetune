@@ -25,12 +25,52 @@ SIZE = 1008
 MASK_SIZE = 288
 
 
+def validate_cond(cond: int, num_conditions: int | None = None) -> int:
+    if isinstance(cond, (bool, np.bool_)) or not isinstance(cond, (int, np.integer)):
+        raise ValueError("cond must be an integer")
+    cond = int(cond)
+    if cond < 0:
+        raise ValueError("cond must be non-negative")
+    if num_conditions is not None and cond >= num_conditions:
+        raise ValueError("cond must be in [0, num_conditions)")
+    return cond
+
+
+def validate_label(label: dict, num_classes: int | None = None) -> None:
+    if "target" not in label or "weight" not in label:
+        raise ValueError("label must contain target and weight")
+    try:
+        target = np.asarray(label["target"], dtype=np.float64)
+        weight = np.asarray(label["weight"], dtype=np.float64)
+    except (TypeError, ValueError) as error:
+        raise ValueError("label target and weight must be numeric") from error
+    if target.ndim != 1 or weight.ndim != 1:
+        raise ValueError("label target and weight must be one-dimensional")
+    if num_classes is not None and len(target) != num_classes:
+        raise ValueError("label target length must match num_classes")
+    if num_classes is not None and len(weight) != num_classes:
+        raise ValueError("label weight length must match num_classes")
+    if len(target) != len(weight):
+        raise ValueError("label target and weight must have same length")
+    if len(target) == 0:
+        raise ValueError("label target is empty")
+    if not np.isfinite(target).all():
+        raise ValueError("label target must be finite")
+    if ((target < 0) | (target > 1)).any():
+        raise ValueError("label target must be in [0, 1]")
+    if not np.isfinite(weight).all():
+        raise ValueError("label weight must be finite")
+    if (weight < 0).any():
+        raise ValueError("label weight must be non-negative")
+
+
 class BaseDataset(Dataset):
     def __init__(
         self,
         paths: list[str],
         prompts: list[str] | tuple[str, ...] = PROMPTS,
         conds: list[int] | tuple[int, ...] | None = None,
+        num_conditions: int | None = None,
         labels: (
             list[dict[str, list[float]]] | tuple[dict[str, list[float]], ...] | None
         ) = None,
@@ -44,7 +84,13 @@ class BaseDataset(Dataset):
         mask_size: int = MASK_SIZE,
     ) -> None:
         self.paths = paths
-        self.conds = None if conds is None else tuple(int(cond) for cond in conds)
+        if num_conditions is not None and num_conditions <= 0:
+            raise ValueError("num_conditions must be positive")
+        self.conds = (
+            None
+            if conds is None
+            else tuple(validate_cond(cond, num_conditions) for cond in conds)
+        )
         self.labels = None if labels is None else tuple(labels)
         self.prompts = tuple(prompts)
         self.bg_prob = bg_prob
@@ -108,12 +154,7 @@ class BaseDataset(Dataset):
         if len(self.labels) != len(self.paths):
             raise ValueError("labels must match paths length")
         for label in self.labels:
-            target = label["target"]
-            weight = label["weight"]
-            if len(target) != len(weight):
-                raise ValueError("label target and weight must have same length")
-            if len(target) == 0:
-                raise ValueError("label target is empty")
+            validate_label(label)
 
     def _check_image_ops(self) -> None:
         if len(self.image_ops) == 0:
@@ -225,6 +266,7 @@ class TrainDataset(BaseDataset):
         self,
         paths: list[str],
         conds: list[int] | tuple[int, ...] | None = None,
+        num_conditions: int | None = None,
         labels: (
             list[dict[str, list[float]]] | tuple[dict[str, list[float]], ...] | None
         ) = None,
@@ -234,6 +276,7 @@ class TrainDataset(BaseDataset):
         super().__init__(
             paths=paths,
             conds=conds,
+            num_conditions=num_conditions,
             labels=labels,
             bg_prob=bg_prob,
             box_jitter=box_jitter,
@@ -247,6 +290,7 @@ class ValidDataset(BaseDataset):
         self,
         paths: list[str],
         conds: list[int] | tuple[int, ...] | None = None,
+        num_conditions: int | None = None,
         labels: (
             list[dict[str, list[float]]] | tuple[dict[str, list[float]], ...] | None
         ) = None,
@@ -255,6 +299,7 @@ class ValidDataset(BaseDataset):
         super().__init__(
             paths=paths,
             conds=conds,
+            num_conditions=num_conditions,
             labels=labels,
             prompts=("point",),
             bg_prob=bg_prob,

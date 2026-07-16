@@ -17,13 +17,13 @@ class FinetuneModel(nn.Module):
         model: Sam3ImageModel,
         num_conditions: int,
         num_experts: int,
-        num_labels: int,
+        num_classes: int,
         lora_rank: int = 8,
         feature_rank: int = 16,
     ) -> None:
         super().__init__()
-        if num_labels <= 0:
-            raise ValueError("num_labels must be positive")
+        if num_classes <= 0:
+            raise ValueError("num_classes must be positive")
         self.model = model
         self.size = 1008
         self.router = Router(
@@ -34,7 +34,7 @@ class FinetuneModel(nn.Module):
         self.image_adapter = FeatureAdapter(256, feature_rank, num_experts)
         self.high_adapter0 = FeatureAdapter(32, feature_rank, num_experts)
         self.high_adapter1 = FeatureAdapter(64, feature_rank, num_experts)
-        self.class_head = nn.Linear(256, num_labels)
+        self.class_head = nn.Linear(256, num_classes)
         self._freeze_model()
         self._wrap_decoder_linear(lora_rank, num_experts)
 

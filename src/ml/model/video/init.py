@@ -82,7 +82,6 @@ def init_inference_values(model, config):
     model.multimask_min_pt_num = config["multimask_min_pt_num"]
     model.multimask_max_pt_num = config["multimask_max_pt_num"]
     model.multimask_output_for_tracking = config["multimask_output_for_tracking"]
-    model.use_multimask_token_for_obj_ptr = config["use_multimask_token_for_obj_ptr"]
     model.use_best_iou_mask_for_mem_enc = config["use_best_iou_mask_for_mem_enc"]
     model.iou_prediction_use_sigmoid = config["iou_prediction_use_sigmoid"]
     model.object_score_logit_threshold = config["object_score_logit_threshold"]

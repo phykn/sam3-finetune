@@ -61,21 +61,21 @@ def test_target_iou_uses_binary_mask_thresholds():
     assert torch.allclose(iou, torch.tensor([[1 / 3]]))
 
 
-def test_auto_background_uses_detached_particle_probability():
+def test_auto_background_uses_detached_presence_probability():
     logits = torch.tensor([[2.0, -1.0], [-2.0, 1.0]], requires_grad=True)
     weights = torch.tensor([[1.0, 0.0], [1.0, 0.0]])
     auto = torch.tensor([True, False])
 
     adjusted = class_weights(weights, logits, auto)
 
-    assert torch.allclose(adjusted[0, 0], 1 - logits[0, 0].sigmoid())
+    assert torch.allclose(adjusted[0, 0], logits[0, 0].sigmoid())
     assert adjusted[1, 0] == 1
     assert adjusted.requires_grad is False
 
 
-def test_auto_background_weight_reduces_class_gradient():
-    particle = 0.9
-    logit = torch.logit(torch.tensor(particle))
+def test_auto_background_focuses_class_gradient_on_false_positives():
+    presence = 0.9
+    logit = torch.logit(torch.tensor(presence))
     batch = {
         "target": torch.zeros(1, 1, 1, 1),
         "mask_valid": torch.zeros(1),
@@ -92,7 +92,7 @@ def test_auto_background_weight_reduces_class_gradient():
     loss, _stats = finetune_loss(batch, out)
     loss.backward()
 
-    expected = particle * (1 - particle)
+    expected = presence * presence
     assert torch.allclose(out["class_logits"].grad, torch.tensor([[[expected]]]))
 
 

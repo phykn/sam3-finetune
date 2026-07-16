@@ -48,7 +48,6 @@ def runtime_config(features, memory, tracking, multiplex_controller):
         "multimask_min_pt_num": 0,
         "multimask_max_pt_num": 1,
         "multimask_output_for_tracking": True,
-        "use_multimask_token_for_obj_ptr": True,
         "use_best_iou_mask_for_mem_enc": False,
         "iou_prediction_use_sigmoid": False,
         "memory_temporal_stride_for_eval": 1,

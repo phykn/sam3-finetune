@@ -6,6 +6,7 @@ import numpy as np
 import torch
 from PIL import Image
 
+from ..data import image as image_data
 from .grid_ops.boxes import filter_crop, filter_image, is_edge_cut
 from .grid_ops.candidates import (
     format_logits,
@@ -90,6 +91,8 @@ class GridPredictor:
         min_area: int = 64,
         nms_thr: float = 0.7,
         stability_thr: float = 0.75,
+        iou_thr: float = 0.0,
+        presence_thr: float = 0.5,
     ) -> None:
         try:
             tiles = tuple(tiles)
@@ -105,12 +108,18 @@ class GridPredictor:
         overlap = float(overlap)
         nms_thr = float(nms_thr)
         stability_thr = float(stability_thr)
+        iou_thr = float(iou_thr)
+        presence_thr = float(presence_thr)
         if not 0 <= overlap < 1:
             raise ValueError("overlap must be between zero and one")
         if not 0 <= nms_thr <= 1:
             raise ValueError("nms_thr must be between zero and one")
         if not 0 <= stability_thr <= 1:
             raise ValueError("stability_thr must be between zero and one")
+        if not 0 <= iou_thr <= 1:
+            raise ValueError("iou_thr must be between zero and one")
+        if not 0 <= presence_thr <= 1:
+            raise ValueError("presence_thr must be between zero and one")
         self.single = single
         self.tiles = tuple(int(tile) for tile in tiles)
         self.points_per_side = _match(points_per_side, len(self.tiles))
@@ -119,6 +128,8 @@ class GridPredictor:
         self.min_area = _positive_int(min_area, "min_area", zero=True)
         self.nms_thr = nms_thr
         self.stability_thr = stability_thr
+        self.iou_thr = iou_thr
+        self.presence_thr = presence_thr
 
     @classmethod
     def from_path(
@@ -132,6 +143,8 @@ class GridPredictor:
         min_area: int = 64,
         nms_thr: float = 0.7,
         stability_thr: float = 0.75,
+        iou_thr: float = 0.0,
+        presence_thr: float = 0.5,
     ) -> "GridPredictor":
         single = SinglePredictor.from_path(path, device=device)
         return cls(
@@ -143,11 +156,58 @@ class GridPredictor:
             min_area=min_area,
             nms_thr=nms_thr,
             stability_thr=stability_thr,
+            iou_thr=iou_thr,
+            presence_thr=presence_thr,
+        )
+
+    @classmethod
+    def from_finetune(
+        cls,
+        base_path: str | Path,
+        checkpoint_path: str | Path,
+        device: str | torch.device = "cuda",
+        cond: int = 0,
+        tiles: tuple[int, ...] = (1, 2),
+        points_per_side: int | tuple[int, ...] = (10, 10),
+        overlap: float = 0.25,
+        batch_size: int = 64,
+        min_area: int = 64,
+        nms_thr: float = 0.7,
+        stability_thr: float = 0.75,
+        iou_thr: float = 0.0,
+        presence_thr: float = 0.5,
+    ) -> "GridPredictor":
+        single = SinglePredictor.from_finetune(
+            base_path,
+            checkpoint_path,
+            device=device,
+            cond=cond,
+        )
+        return cls(
+            single,
+            tiles=tiles,
+            points_per_side=points_per_side,
+            overlap=overlap,
+            batch_size=batch_size,
+            min_area=min_area,
+            nms_thr=nms_thr,
+            stability_thr=stability_thr,
+            iou_thr=iou_thr,
+            presence_thr=presence_thr,
         )
 
     def _keep(self, item: dict[str, object]) -> bool:
+        class_scores = item.get("class_scores")
+        if class_scores is not None:
+            values = np.asarray(class_scores).reshape(-1)
+            if not values.size:
+                return False
+            presence = float(values[0])
+            if not np.isfinite(presence) or presence < self.presence_thr:
+                return False
         return (
-            item["area"] >= self.min_area
+            float(item["score"]) >= self.iou_thr
+            and item["area"] >= self.min_area
             and item["stability_score"] >= self.stability_thr
             and not is_edge_cut(item)
         )
@@ -203,7 +263,7 @@ class GridPredictor:
         items = []
 
         for batch in _batches(points, self.batch_size):
-            out = self.single._predict_low(
+            out = self.single.predict_low(
                 embed,
                 point_coords=batch[:, None, :],
                 point_labels=np.ones((len(batch), 1), dtype=np.int32),
@@ -225,10 +285,11 @@ class GridPredictor:
                     crop_index,
                     image_size,
                 )
-                if item is None or not self._keep(item):
+                if item is None:
                     continue
                 item.update(class_values)
-                item["refine_logit"] = logit.astype(np.float16, copy=True)
+                if not self._keep(item):
+                    continue
                 items.append(item)
         return items
 
@@ -241,8 +302,8 @@ class GridPredictor:
         for start in range(0, len(items), self.batch_size):
             chunk = items[start : start + self.batch_size]
             points = _local_points(chunk)
-            logits_in = np.stack([item["refine_logit"] for item in chunk])
-            out = self.single._predict_low(
+            logits_in = np.stack([item["logit"] for item in chunk])
+            out = self.single.predict_low(
                 embed,
                 point_coords=points,
                 point_labels=np.ones((len(chunk), 1), dtype=np.int32),
@@ -266,8 +327,10 @@ class GridPredictor:
                     item["crop_index"],
                     item["image_size"],
                 )
-                if new_item is not None and self._keep(new_item):
-                    new_item.update(class_values)
+                if new_item is None:
+                    continue
+                new_item.update(class_values)
+                if self._keep(new_item):
                     refined.append(new_item)
         return refined
 
@@ -292,8 +355,8 @@ class GridPredictor:
         return filter_crop(self._refine_crop(items, embed), self.nms_thr)
 
     @torch.inference_mode()
-    def predict(self, image: Image.Image) -> list[dict[str, object]]:
-        image = image.convert("RGB")
+    def predict(self, image: Image.Image | np.ndarray) -> list[dict[str, object]]:
+        image = image_data.convert_rgb(image)
         items = []
         for tile, crop_index, crop, points in self.iter_points(image.size):
             items.extend(

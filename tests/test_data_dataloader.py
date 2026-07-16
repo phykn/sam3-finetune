@@ -83,6 +83,9 @@ def test_infinite_train_loader_returns_next_batch(tmp_path):
         [str(path)],
         batch_size=1,
         num_classes=1,
+        num_conditions=1,
+        conds=[0],
+        labels=[{"target": [1], "weight": [1]}],
         num_workers=0,
     )
 
@@ -101,10 +104,13 @@ def test_make_finetune_loader_builds_distributed_validation_loader(tmp_path):
     loader = make_finetune_loader(
         {
             "paths": [str(path)],
+            "conds": [0],
+            "labels": [{"target": [1], "weight": [1]}],
             "batch_size": 1,
             "num_workers": 0,
         },
         num_classes=1,
+        num_conditions=1,
         train=False,
         rank=0,
         world_size=2,
@@ -136,6 +142,7 @@ def test_make_finetune_loader_expands_folder_labels(tmp_path):
             "num_workers": 0,
         },
         num_classes=3,
+        num_conditions=3,
         train=False,
     )
     dataset = loader.loader.dataset
@@ -152,8 +159,15 @@ def test_make_finetune_loader_expands_folder_labels(tmp_path):
 def test_make_finetune_loader_rejects_empty_dataset(train):
     with pytest.raises(ValueError, match="no valid objects"):
         make_finetune_loader(
-            {"paths": [], "batch_size": 1, "num_workers": 0},
+            {
+                "paths": [],
+                "conds": [],
+                "labels": [],
+                "batch_size": 1,
+                "num_workers": 0,
+            },
             num_classes=1,
+            num_conditions=1,
             train=train,
         )
 
@@ -163,8 +177,15 @@ def test_make_finetune_loader_rejects_small_per_rank_training_set(tmp_path):
 
     with pytest.raises(ValueError, match="per-rank dataset size"):
         make_finetune_loader(
-            {"paths": [str(path)], "batch_size": 1, "num_workers": 0},
+            {
+                "paths": [str(path)],
+                "conds": [0],
+                "labels": [{"target": [1], "weight": [1]}],
+                "batch_size": 1,
+                "num_workers": 0,
+            },
             num_classes=1,
+            num_conditions=1,
             train=True,
             rank=0,
             world_size=2,
@@ -178,11 +199,13 @@ def test_make_finetune_loader_checks_direct_label_count(tmp_path):
         make_finetune_loader(
             {
                 "paths": [str(path)],
+                "conds": [0],
                 "labels": [{"target": [1, 0], "weight": [1, 1]}],
                 "batch_size": 1,
                 "num_workers": 0,
             },
             num_classes=3,
+            num_conditions=1,
             train=False,
         )
 
@@ -197,6 +220,7 @@ def test_make_finetune_loader_checks_empty_folder_label_count(tmp_path):
                 "folders": [
                     {
                         "path": str(folder),
+                        "cond": 0,
                         "target": [1, 0, 0],
                         "weight": [1, 1],
                     }
@@ -205,5 +229,167 @@ def test_make_finetune_loader_checks_empty_folder_label_count(tmp_path):
                 "num_workers": 0,
             },
             num_classes=3,
+            num_conditions=1,
+            train=False,
+        )
+
+
+@pytest.mark.parametrize("missing", ["conds", "labels"])
+def test_make_finetune_loader_requires_condition_and_labels(tmp_path, missing):
+    path = write_sample(tmp_path / "sample.json")
+    config = {
+        "paths": [str(path)],
+        "conds": [0],
+        "labels": [{"target": [1], "weight": [1]}],
+        "batch_size": 1,
+        "num_workers": 0,
+    }
+    del config[missing]
+
+    with pytest.raises(ValueError, match=f"{missing} are required"):
+        make_finetune_loader(
+            config,
+            num_classes=1,
+            num_conditions=1,
+            train=False,
+        )
+
+
+@pytest.mark.parametrize("cond", [0.5, True, -1, 2])
+def test_make_finetune_loader_rejects_invalid_direct_condition(tmp_path, cond):
+    path = write_sample(tmp_path / "sample.json")
+
+    with pytest.raises(ValueError, match="cond"):
+        make_finetune_loader(
+            {
+                "paths": [str(path)],
+                "conds": [cond],
+                "labels": [{"target": [1], "weight": [1]}],
+                "batch_size": 1,
+                "num_workers": 0,
+            },
+            num_classes=1,
+            num_conditions=2,
+            train=False,
+        )
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("num_classes", 1.5),
+        ("num_classes", True),
+        ("num_conditions", 1.5),
+        ("num_conditions", True),
+    ],
+)
+def test_make_finetune_loader_requires_integer_counts(tmp_path, name, value):
+    path = write_sample(tmp_path / "sample.json")
+    counts = {"num_classes": 1, "num_conditions": 1}
+    counts[name] = value
+
+    with pytest.raises(ValueError, match=name):
+        make_finetune_loader(
+            {
+                "paths": [str(path)],
+                "conds": [0],
+                "labels": [{"target": [1], "weight": [1]}],
+                "batch_size": 1,
+                "num_workers": 0,
+            },
+            train=False,
+            **counts,
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "values", "message"),
+    [
+        ("target", [2, 0], "target must be in"),
+        ("target", [float("nan"), 0], "target must be finite"),
+        ("weight", [-1, 0], "weight must be non-negative"),
+        ("weight", [float("inf"), 0], "weight must be finite"),
+    ],
+)
+def test_make_finetune_loader_rejects_invalid_label_values(
+    tmp_path, field, values, message
+):
+    path = write_sample(tmp_path / "sample.json")
+    label = {"target": [1, 0], "weight": [1, 1]}
+    label[field] = values
+
+    with pytest.raises(ValueError, match=message):
+        make_finetune_loader(
+            {
+                "paths": [str(path)],
+                "conds": [0],
+                "labels": [label],
+                "batch_size": 1,
+                "num_workers": 0,
+            },
+            num_classes=2,
+            num_conditions=1,
+            train=False,
+        )
+
+
+def test_make_finetune_loader_allows_zero_label_weight(tmp_path):
+    path = write_sample(tmp_path / "sample.json")
+
+    loader = make_finetune_loader(
+        {
+            "paths": [str(path)],
+            "conds": [0],
+            "labels": [{"target": [1, 0], "weight": [0, 0]}],
+            "batch_size": 1,
+            "num_workers": 0,
+        },
+        num_classes=2,
+        num_conditions=1,
+        train=False,
+    )
+
+    assert loader.loader.dataset.labels[0]["weight"] == [0, 0]
+
+
+def test_make_finetune_loader_checks_folder_condition_and_label_values(tmp_path):
+    folder = tmp_path / "particle"
+    folder.mkdir()
+
+    with pytest.raises(ValueError, match="cond"):
+        make_finetune_loader(
+            {
+                "folders": [
+                    {
+                        "path": str(folder),
+                        "cond": 1.5,
+                        "target": [1],
+                        "weight": [1],
+                    }
+                ],
+                "batch_size": 1,
+                "num_workers": 0,
+            },
+            num_classes=1,
+            num_conditions=2,
+            train=False,
+        )
+
+    with pytest.raises(ValueError, match="weight must be non-negative"):
+        make_finetune_loader(
+            {
+                "folders": [
+                    {
+                        "path": str(folder),
+                        "cond": 0,
+                        "target": [1],
+                        "weight": [-1],
+                    }
+                ],
+                "batch_size": 1,
+                "num_workers": 0,
+            },
+            num_classes=1,
+            num_conditions=2,
             train=False,
         )

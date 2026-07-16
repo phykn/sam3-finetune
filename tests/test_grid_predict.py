@@ -25,7 +25,7 @@ class FakeSingle:
         width, height = image.size
         return {"orig_hw": (height, width), "crop_index": crop_index}
 
-    def _predict_low(
+    def predict_low(
         self,
         embed,
         point_coords,
@@ -55,8 +55,8 @@ class FakeSingle:
 
 
 class FakeClassSingle(FakeSingle):
-    def _predict_low(self, *args, **kwargs):
-        out = super()._predict_low(*args, **kwargs)
+    def predict_low(self, *args, **kwargs):
+        out = super().predict_low(*args, **kwargs)
         score = 0.8 if kwargs.get("mask") is not None else 0.2
         out["class_scores"] = np.tile(
             np.array([[[score, 1 - score]]], dtype=np.float32),
@@ -142,6 +142,20 @@ def test_grid_predictor_runs_tiles_and_batches_points():
     assert all(logit.dtype.kind == "f" for logit in single.refine_logits)
 
 
+def test_grid_predictor_accepts_numpy_image():
+    predictor = GridPredictor(
+        FakeSingle(),
+        tiles=(1,),
+        points_per_side=1,
+        min_area=1,
+        nms_thr=1.0,
+    )
+
+    out = predictor.predict(np.zeros((64, 48, 3), dtype=np.uint8))
+
+    assert len(out) == 1
+
+
 def test_grid_predictor_keeps_refined_class_scores():
     predictor = GridPredictor(
         FakeClassSingle(),
@@ -150,6 +164,7 @@ def test_grid_predictor_keeps_refined_class_scores():
         batch_size=1,
         nms_thr=1.0,
         min_area=1,
+        presence_thr=0.0,
     )
 
     out = predictor.predict(Image.new("RGB", (64, 64)))
@@ -157,6 +172,58 @@ def test_grid_predictor_keeps_refined_class_scores():
     assert len(out) == 1
     np.testing.assert_allclose(out[0]["metrics"]["class_scores"], [0.8, 0.2])
     assert len(out[0]["metrics"]["class_logits"]) == 2
+
+
+def test_grid_predictor_filters_presence_before_refinement():
+    single = FakeClassSingle()
+    predictor = GridPredictor(
+        single,
+        tiles=(1,),
+        points_per_side=1,
+        min_area=1,
+        nms_thr=1.0,
+    )
+
+    out = predictor.predict(Image.new("RGB", (64, 64)))
+
+    assert out == []
+    assert all(event[0] != "refine" for event in single.events)
+
+
+def test_grid_predictor_filters_raw_iou_before_refinement():
+    class LowIouSingle(FakeSingle):
+        def predict_low(self, *args, **kwargs):
+            out = super().predict_low(*args, **kwargs)
+            out["scores"].fill(-0.2)
+            return out
+
+    single = LowIouSingle()
+    predictor = GridPredictor(
+        single,
+        tiles=(1,),
+        points_per_side=1,
+        min_area=1,
+        nms_thr=1.0,
+        iou_thr=0.4,
+    )
+
+    out = predictor.predict(Image.new("RGB", (64, 64)))
+
+    assert out == []
+    assert all(event[0] != "refine" for event in single.events)
+
+
+def test_grid_predictor_skips_presence_filter_for_base_model():
+    predictor = GridPredictor(
+        FakeSingle(),
+        tiles=(1,),
+        points_per_side=1,
+        min_area=1,
+        nms_thr=1.0,
+        presence_thr=1.0,
+    )
+
+    assert len(predictor.predict(Image.new("RGB", (64, 64)))) == 1
 
 
 def test_make_objects_resizes_logit_to_compact_roi():
@@ -168,8 +235,9 @@ def test_make_objects_resizes_logit_to_compact_roi():
             ],
             dtype=np.float32,
         ),
-        "bbox": (2, 1, 6, 5),
-        "point": (3.0, 2.0),
+        "bbox": (10, 20, 14, 24),
+        "crop": (10, 20, 18, 28),
+        "point": (13.0, 22.0),
         "score": 1.5,
         "stability_score": 0.8,
         "class_logits": np.array([2.0, -2.0], dtype=np.float32),
@@ -179,16 +247,42 @@ def test_make_objects_resizes_logit_to_compact_roi():
     objects = make_objects([item])
 
     assert len(objects) == 1
-    assert objects[0]["box"] == (2, 1, 6, 5)
+    assert objects[0]["box"] == (10, 20, 14, 24)
     assert objects[0]["roi"].shape == (4, 4)
     assert 1 < objects[0]["roi"].sum() < 16
-    assert objects[0]["points"] == [[3.0, 2.0, 1]]
+    assert objects[0]["points"] == [[13.0, 22.0, 1]]
     assert objects[0]["metrics"]["score"] == 1.5
     assert objects[0]["metrics"]["stability"] == 0.8
     assert objects[0]["metrics"]["class_logits"] == [2.0, -2.0]
+    full = np.asarray(
+        Image.fromarray(item["logit"], mode="F").resize(
+            (8, 8),
+            Image.Resampling.BILINEAR,
+        )
+    )
+    np.testing.assert_array_equal(objects[0]["roi"], full[:4, :4] > 0)
 
 
-def test_make_candidate_keeps_low_res_roi_and_scales_box_area():
+def test_make_objects_drops_low_res_pixel_lost_during_resize():
+    mask = np.zeros((288, 288), dtype=bool)
+    mask[100, 100] = True
+    logit = np.where(mask, 2.0, -2.0).astype(np.float32)
+    item = make_candidate(
+        mask,
+        logit,
+        0.75,
+        np.array([3.0, 3.0], dtype=np.float32),
+        (0, 0, 8, 8),
+        1,
+        0,
+        (8, 8),
+    )
+
+    assert item is not None
+    assert make_objects([item]) == []
+
+
+def test_make_candidate_keeps_full_low_res_logit_and_scales_box_area():
     mask = np.zeros((4, 4), dtype=bool)
     mask[1:3, 1:3] = True
     logit = np.where(mask, 2.0, -2.0).astype(np.float32)
@@ -207,7 +301,8 @@ def test_make_candidate_keeps_low_res_roi_and_scales_box_area():
     assert item["bbox"] == (12, 22, 16, 26)
     assert item["area"] == 16
     assert "segmentation" not in item
-    assert item["logit"].shape == (2, 2)
+    assert item["logit"].shape == (4, 4)
+    assert item["logit"].dtype == np.float16
     assert item["low_box"] == (1, 1, 3, 3)
     assert item["low_shape"] == (4, 4)
     assert item["stability_score"] == 1.0
@@ -312,6 +407,7 @@ def test_image_nms_has_no_count_limit():
 def test_grid_predictor_filters_by_stability_threshold():
     predictor = GridPredictor(FakeSingle(), stability_thr=0.8)
     item = {
+        "score": 1.0,
         "area": 100,
         "stability_score": 0.75,
         "low_box": (2, 2, 4, 4),
@@ -342,8 +438,43 @@ def test_grid_predictor_filters_by_stability_threshold():
         {"nms_thr": 1.1},
         {"stability_thr": -0.1},
         {"stability_thr": 1.1},
+        {"iou_thr": -0.1},
+        {"iou_thr": 1.1},
+        {"presence_thr": -0.1},
+        {"presence_thr": 1.1},
     ],
 )
 def test_grid_predictor_rejects_invalid_options(kwargs):
     with pytest.raises(ValueError):
         GridPredictor(FakeSingle(), **kwargs)
+
+
+def test_grid_predictor_from_finetune_delegates_and_keeps_grid_options(monkeypatch):
+    calls = []
+    single = FakeSingle()
+
+    def make_single(cls, base_path, checkpoint_path, device="cuda", cond=0):
+        calls.append((base_path, checkpoint_path, device, cond))
+        return single
+
+    monkeypatch.setattr(
+        "src.predict.grid.SinglePredictor.from_finetune",
+        classmethod(make_single),
+    )
+
+    predictor = GridPredictor.from_finetune(
+        "base.pt",
+        "last.pt",
+        device="cpu",
+        cond=2,
+        tiles=(1,),
+        points_per_side=3,
+        iou_thr=0.2,
+        presence_thr=0.7,
+    )
+
+    assert calls == [("base.pt", "last.pt", "cpu", 2)]
+    assert predictor.single is single
+    assert predictor.points_per_side == (3,)
+    assert predictor.iou_thr == 0.2
+    assert predictor.presence_thr == 0.7

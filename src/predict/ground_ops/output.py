@@ -1,4 +1,3 @@
-import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -24,15 +23,7 @@ def candidates(
             continue
 
         logits = out["pred_masks"][batch, keep].float()
-        masks = (
-            F.interpolate(
-                logits[:, None],
-                orig_hw,
-                mode="bilinear",
-                align_corners=False,
-            )[:, 0]
-            > 0
-        )
+        masks = logits > 0
         valid = masks.flatten(1).any(1)
         if not valid.any():
             continue
@@ -49,41 +40,92 @@ def candidates(
         vectors = sim.mask_vectors(image, masks)
         similarities = sim.max_scores(bank[int(class_id)], vectors)
         valid = similarities >= sim_thr
-        for index in torch.nonzero(valid).flatten().tolist():
+        keep = keep[valid]
+        logits = logits[valid]
+        boxes = boxes[valid]
+        similarities = similarities[valid]
+        scores = scores[keep].detach().cpu()
+        boxes = boxes.detach().cpu()
+        logits = logits.detach().cpu()
+        similarities = similarities.detach().cpu()
+        for index in range(len(keep)):
             items.append(
                 {
                     "class_id": int(class_id),
-                    "nms_box": tuple(float(value) for value in boxes[index]),
-                    "mask": masks[index].detach().cpu().numpy(),
-                    "logit": logits[index].detach().cpu().numpy(),
+                    "nms_box": boxes[index],
+                    "logit": logits[index],
                     "metrics": {
-                        "score": float(scores[keep[index]].item()),
-                        "similarity": float(similarities[index].item()),
+                        "score": scores[index],
+                        "similarity": similarities[index],
                     },
                 }
             )
     return items
 
 
-def finish(items, nms_thr, top_k):
+def finish(items, nms_thr, top_k, orig_hw, mask_batch_size, device):
     selected = []
     for class_id in sorted({item["class_id"] for item in items}):
         group = [item for item in items if item["class_id"] == class_id]
         keep = nms_indices(
-            np.asarray([item["nms_box"] for item in group]),
-            np.asarray([item["metrics"]["score"] for item in group]),
+            torch.stack([item["nms_box"] for item in group]).cpu(),
+            torch.stack([item["metrics"]["score"] for item in group]).cpu(),
             nms_thr,
         )
         if top_k is not None:
             keep = keep[:top_k]
         selected.extend(group[index] for index in keep)
 
+    if not selected:
+        return []
+
     out = []
-    for object_id, item in enumerate(selected, start=1):
-        item = dict(item)
-        item.pop("nms_box")
-        item["box"], roi = pack.box_roi(item.pop("mask"))
-        item["roi"] = roi.astype(bool)
-        item["object_id"] = object_id
-        out.append(item)
+    for start in range(0, len(selected), mask_batch_size):
+        chunk = selected[start : start + mask_batch_size]
+        logits = torch.stack([item["logit"] for item in chunk]).float().cpu()
+        masks = (
+            F.interpolate(
+                logits.to(device)[:, None],
+                orig_hw,
+                mode="bilinear",
+                align_corners=False,
+            )[:, 0]
+            > 0
+        ).cpu()
+        valid = torch.nonzero(masks.flatten(1).any(1)).flatten().tolist()
+        chunk = [chunk[index] for index in valid]
+        if not chunk:
+            continue
+
+        logits = logits[valid].numpy()
+        masks = masks[valid].numpy()
+        scores = (
+            torch.stack([item["metrics"]["score"] for item in chunk])
+            .float()
+            .cpu()
+            .tolist()
+        )
+        similarities = (
+            torch.stack([item["metrics"]["similarity"] for item in chunk])
+            .float()
+            .cpu()
+            .tolist()
+        )
+        for index, (item, mask, logit) in enumerate(
+            zip(chunk, masks, logits, strict=True)
+        ):
+            box, roi = pack.box_roi(mask)
+            out.append(
+                {
+                    "class_id": item["class_id"],
+                    "box": box,
+                    "roi": roi.astype(bool),
+                    "logit": logit,
+                    "metrics": {
+                        "score": float(scores[index]),
+                        "similarity": float(similarities[index]),
+                    },
+                    "object_id": len(out) + 1,
+                }
+            )
     return out

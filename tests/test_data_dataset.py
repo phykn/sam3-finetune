@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 import src.data.dataset as dataset_mod
 from src.data.augment.image import crop as image_crop
@@ -305,6 +306,37 @@ def test_base_dataset_adds_condition_and_label_from_sample_index(tmp_path):
     assert second["cond"] == 5
     assert second["label_target"].tolist() == [0.0, 0.0, 0.0]
     assert second["label_weight"].tolist() == [1.0, 0.0, 0.0]
+
+
+@pytest.mark.parametrize("cond", [1.5, True])
+def test_base_dataset_rejects_non_integer_condition(cond):
+    with pytest.raises(ValueError, match="cond must be an integer"):
+        BaseDataset(["sample.json"], conds=[cond])
+
+
+def test_base_dataset_rejects_negative_condition_without_upper_bound():
+    with pytest.raises(ValueError, match="non-negative"):
+        BaseDataset(["sample.json"], conds=[-1])
+
+
+@pytest.mark.parametrize("cond", [-1, 2])
+def test_base_dataset_checks_condition_range(cond):
+    with pytest.raises(ValueError, match="cond"):
+        BaseDataset(["sample.json"], conds=[cond], num_conditions=2)
+
+
+@pytest.mark.parametrize(
+    ("label", "message"),
+    [
+        ({"target": [2], "weight": [1]}, "target must be in"),
+        ({"target": [float("nan")], "weight": [1]}, "target must be finite"),
+        ({"target": [1], "weight": [-1]}, "weight must be non-negative"),
+        ({"target": [1], "weight": [float("inf")]}, "weight must be finite"),
+    ],
+)
+def test_base_dataset_checks_label_values(label, message):
+    with pytest.raises(ValueError, match=message):
+        BaseDataset(["sample.json"], labels=[label])
 
 
 def test_base_dataset_marks_object_sample_for_mask_and_full_label_loss(tmp_path):

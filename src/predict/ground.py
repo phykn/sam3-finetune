@@ -1,4 +1,5 @@
 from contextlib import AbstractContextManager, nullcontext
+from numbers import Integral
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +21,7 @@ class GroundPredictor:
         nms_thr: float = 0.7,
         top_k: int | None = None,
         sim_thr: float = 0.0,
+        prompt_batch_size: int = 4,
     ) -> None:
         if not 0 <= score_thr <= 1:
             raise ValueError("score_thr must be between zero and one")
@@ -29,12 +31,19 @@ class GroundPredictor:
             raise ValueError("sim_thr must be between minus one and one")
         if top_k is not None and top_k <= 0:
             raise ValueError("top_k must be positive or None")
+        if (
+            isinstance(prompt_batch_size, bool)
+            or not isinstance(prompt_batch_size, Integral)
+            or prompt_batch_size <= 0
+        ):
+            raise ValueError("prompt_batch_size must be a positive integer")
         self.device = torch.device(device)
         self.image_size = 1008
         self.score_thr = float(score_thr)
         self.nms_thr = float(nms_thr)
         self.top_k = None if top_k is None else int(top_k)
         self.sim_thr = float(sim_thr)
+        self.prompt_batch_size = int(prompt_batch_size)
         self.model = model.to(self.device).eval()
 
     @classmethod
@@ -47,6 +56,7 @@ class GroundPredictor:
         nms_thr: float = 0.7,
         top_k: int | None = None,
         sim_thr: float = 0.0,
+        prompt_batch_size: int = 4,
     ) -> "GroundPredictor":
         model = Sam3GroundingModel(path=path, visual_path=visual_path)
         return cls(
@@ -56,6 +66,7 @@ class GroundPredictor:
             nms_thr=nms_thr,
             top_k=top_k,
             sim_thr=sim_thr,
+            prompt_batch_size=prompt_batch_size,
         )
 
     def autocast(self) -> AbstractContextManager:
@@ -63,6 +74,7 @@ class GroundPredictor:
             return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
         return nullcontext()
 
+    @torch.inference_mode()
     def encode(self, image: Image.Image | np.ndarray) -> dict[str, object]:
         tensor, orig_hw = image_data.make_tensor(image, self.image_size, self.device)
         with self.autocast():
@@ -112,17 +124,22 @@ class GroundPredictor:
         image: Image.Image | np.ndarray,
         references: list[dict[str, object]],
     ) -> list[dict[str, object]]:
-        if not isinstance(references, list):
-            raise TypeError("references must be a list")
-        if not references:
-            raise ValueError("references list is empty")
+        self._check_references(references)
+        return self.predict_embed(self.encode(image), references)
+
+    @torch.inference_mode()
+    def predict_embed(
+        self,
+        target: dict[str, object],
+        references: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        self._check_references(references)
 
         bank = reference.feature_bank(references)
         prompts, class_ids = reference.prompt_groups(references)
-        target = self.encode(image)
         items = []
-        for start in range(len(class_ids)):
-            end = start + 1
+        for start in range(0, len(class_ids), self.prompt_batch_size):
+            end = start + self.prompt_batch_size
             prompt = {
                 "features": prompts["features"][:, start:end],
                 "mask": prompts["mask"][start:end],
@@ -140,4 +157,18 @@ class GroundPredictor:
                     self.sim_thr,
                 )
             )
-        return output.finish(items, self.nms_thr, self.top_k)
+        return output.finish(
+            items,
+            self.nms_thr,
+            self.top_k,
+            target["orig_hw"],
+            self.prompt_batch_size,
+            self.device,
+        )
+
+    @staticmethod
+    def _check_references(references: object) -> None:
+        if not isinstance(references, list):
+            raise TypeError("references must be a list")
+        if not references:
+            raise ValueError("references list is empty")

@@ -20,10 +20,7 @@ def make_candidate(
     crop_x, crop_y, _crop_x1, _crop_y1 = crop
     bbox = scale_box(local_box, mask.shape, crop)
     return {
-        "logit": logit[
-            local_box[1] : local_box[3],
-            local_box[0] : local_box[2],
-        ].copy(),
+        "logit": logit.astype(np.float16, copy=True),
         "bbox": bbox,
         "low_box": local_box,
         "low_shape": mask.shape,
@@ -41,8 +38,20 @@ def make_candidate(
 def make_objects(items: list[dict[str, object]]) -> list[dict[str, object]]:
     out = []
     for item in items:
-        x0, y0, x1, y1 = item["bbox"]
-        roi = resize_logit(item["logit"], (x1 - x0, y1 - y0)) > 0
+        crop_x0, crop_y0, crop_x1, crop_y1 = item["crop"]
+        mask = (
+            resize_logit(
+                item["logit"],
+                (crop_x1 - crop_x0, crop_y1 - crop_y0),
+            )
+            > 0
+        )
+        local_box = find_box(mask)
+        if local_box is None:
+            continue
+        x0, y0, x1, y1 = local_box
+        box = (crop_x0 + x0, crop_y0 + y0, crop_x0 + x1, crop_y0 + y1)
+        roi = mask[y0:y1, x0:x1]
         metrics = {
             "score": float(item["score"]),
             "stability": float(item["stability_score"]),
@@ -54,7 +63,7 @@ def make_objects(items: list[dict[str, object]]) -> list[dict[str, object]]:
             {
                 "object_id": len(out) + 1,
                 "class_id": None,
-                "box": item["bbox"],
+                "box": box,
                 "roi": roi,
                 "points": [[float(item["point"][0]), float(item["point"][1]), 1]],
                 "metrics": metrics,

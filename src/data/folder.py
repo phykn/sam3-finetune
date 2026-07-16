@@ -9,6 +9,6 @@ def expand(items: list[dict]) -> tuple[list[str], list[int], list[dict]]:
         files = sorted(Path(item["path"]).glob("*.json"))
         label = {"target": item["target"], "weight": item["weight"]}
         paths.extend(str(path) for path in files)
-        conds.extend([int(item.get("cond", 0))] * len(files))
+        conds.extend([item["cond"]] * len(files))
         labels.extend([label] * len(files))
     return paths, conds, labels
