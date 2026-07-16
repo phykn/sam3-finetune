@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 import torch
 from PIL import Image
+import src.predict.grid as grid_module
 from src.predict.grid import GridPredictor
 from src.predict.grid_ops.boxes import filter_crop, filter_image, find_box, is_edge_cut
 from src.predict.grid_ops.candidates import make_candidate, make_objects
@@ -224,6 +225,68 @@ def test_grid_predictor_skips_presence_filter_for_base_model():
     )
 
     assert len(predictor.predict(Image.new("RGB", (64, 64)))) == 1
+
+
+def test_grid_largest_component_changes_final_boxes_and_nms(monkeypatch):
+    class ArtifactSingle(FakeSingle):
+        def predict_low(
+            self,
+            embed,
+            point_coords,
+            point_labels,
+            mask=None,
+            multimask=False,
+        ):
+            count = len(point_coords)
+            masks = np.zeros((count, 1, 8, 8), dtype=bool)
+            for index, point in enumerate(point_coords[:, 0]):
+                if point[0] < 4:
+                    masks[index, 0, 0:2, 0:2] = True
+                    if mask is not None:
+                        masks[index, 0, 0, 5] = True
+                else:
+                    masks[index, 0, 0:2, 5:7] = True
+            return {
+                "masks": masks,
+                "scores": np.ones((count, 1), dtype=np.float32),
+                "logits": np.where(masks, 2.0, -2.0).astype(np.float32),
+            }
+
+    predictor = GridPredictor(
+        ArtifactSingle(),
+        tiles=(1,),
+        points_per_side=1,
+        min_area=1,
+        nms_thr=0.1,
+    )
+    points = np.array([[1.0, 1.0], [6.0, 1.0]], dtype=np.float32)
+    monkeypatch.setattr(
+        predictor,
+        "iter_points",
+        lambda _size: iter([(1, 0, (0, 0, 8, 8), points)]),
+    )
+
+    original = predictor.predict(Image.new("RGB", (8, 8)))
+    calls = []
+    component = grid_module.largest
+
+    def record(mask):
+        calls.append(mask.shape)
+        return component(mask)
+
+    monkeypatch.setattr(grid_module, "largest", record)
+    filtered = predictor.predict(
+        Image.new("RGB", (8, 8)),
+        largest_component=True,
+    )
+
+    assert len(original) == 1
+    assert original[0]["box"] == (0, 0, 6, 2)
+    assert calls == [(8, 8), (8, 8)]
+    assert [value["box"] for value in filtered] == [
+        (0, 0, 2, 2),
+        (5, 0, 7, 2),
+    ]
 
 
 def test_make_objects_resizes_logit_to_compact_roi():

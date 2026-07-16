@@ -16,6 +16,7 @@ from .grid_ops.candidates import (
 )
 from .grid_ops.points import filter_points, make_points
 from .grid_ops.tiles import make_crops
+from .mask.component import largest
 from .single import SinglePredictor
 
 
@@ -78,6 +79,13 @@ def _local_points(items: list[dict[str, object]]) -> np.ndarray:
         ],
         dtype=np.float32,
     )[:, None, :]
+
+
+def _keep_largest(mask: np.ndarray, logit: np.ndarray):
+    mask = largest(mask)
+    logit = np.asarray(logit).copy()
+    logit[~mask] = np.minimum(logit[~mask], -1.0)
+    return mask, logit
 
 
 class GridPredictor:
@@ -297,6 +305,7 @@ class GridPredictor:
         self,
         items: list[dict[str, object]],
         embed: dict[str, object],
+        largest_component: bool,
     ) -> list[dict[str, object]]:
         refined = []
         for start in range(0, len(items), self.batch_size):
@@ -317,6 +326,8 @@ class GridPredictor:
                 strict=True,
             ):
                 mask, logit, score, class_values = prediction
+                if largest_component:
+                    mask, logit = _keep_largest(mask, logit)
                 new_item = make_candidate(
                     mask,
                     logit,
@@ -341,6 +352,7 @@ class GridPredictor:
         tile: int,
         crop_index: int,
         points: np.ndarray,
+        largest_component: bool,
     ) -> list[dict[str, object]]:
         embed = self.single.encode(image.crop(crop))
         items = self._generate(
@@ -352,10 +364,17 @@ class GridPredictor:
             image.size,
         )
         items = filter_crop(items, self.nms_thr)
-        return filter_crop(self._refine_crop(items, embed), self.nms_thr)
+        return filter_crop(
+            self._refine_crop(items, embed, largest_component),
+            self.nms_thr,
+        )
 
     @torch.inference_mode()
-    def predict(self, image: Image.Image | np.ndarray) -> list[dict[str, object]]:
+    def predict(
+        self,
+        image: Image.Image | np.ndarray,
+        largest_component: bool = False,
+    ) -> list[dict[str, object]]:
         image = image_data.convert_rgb(image)
         items = []
         for tile, crop_index, crop, points in self.iter_points(image.size):
@@ -366,6 +385,7 @@ class GridPredictor:
                     tile,
                     crop_index,
                     points,
+                    largest_component,
                 )
             )
         return make_objects(filter_image(items, self.nms_thr))
