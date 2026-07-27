@@ -172,8 +172,6 @@ class FinetuneModel(nn.Module):
             return cond
         if cond.numel() == 1:
             return cond.repeat(batch)
-        if batch == 1:
-            return cond[:1]
         raise ValueError("cond length must match image batch")
 
     def _make_prompt_type(
@@ -191,8 +189,6 @@ class FinetuneModel(nn.Module):
                 return prompt_type
             if prompt_type.numel() == 1:
                 return prompt_type.repeat(batch)
-            if batch == 1:
-                return prompt_type[:1]
             raise ValueError("prompt_type length must match image batch")
 
         prompt_type = list(prompt_type)
@@ -200,8 +196,6 @@ class FinetuneModel(nn.Module):
             return prompt_type
         if len(prompt_type) == 1:
             return prompt_type * batch
-        if batch == 1:
-            return prompt_type[:1]
         raise ValueError("prompt_type length must match image batch")
 
     def _decode_prompts(

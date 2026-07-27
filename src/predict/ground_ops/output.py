@@ -14,6 +14,8 @@ def candidates(
     orig_hw,
     score_thr,
     sim_thr,
+    negative_bank=None,
+    negative_margin=0.0,
 ):
     items = []
     for batch, class_id in enumerate(class_ids):
@@ -40,24 +42,36 @@ def candidates(
         vectors = sim.mask_vectors(image, masks)
         similarities = sim.max_scores(bank[int(class_id)], vectors)
         valid = similarities >= sim_thr
+        negative = None if negative_bank is None else negative_bank.get(int(class_id))
+        negative_similarities = None
+        if negative is not None:
+            negative_similarities = sim.max_scores(negative, vectors)
+            valid &= similarities > negative_similarities + negative_margin
         keep = keep[valid]
         logits = logits[valid]
         boxes = boxes[valid]
         similarities = similarities[valid]
+        if negative_similarities is not None:
+            negative_similarities = negative_similarities[valid]
         scores = scores[keep].detach().cpu()
         boxes = boxes.detach().cpu()
         logits = logits.detach().cpu()
         similarities = similarities.detach().cpu()
+        if negative_similarities is not None:
+            negative_similarities = negative_similarities.detach().cpu()
         for index in range(len(keep)):
+            metrics = {
+                "score": scores[index],
+                "similarity": similarities[index],
+            }
+            if negative_similarities is not None:
+                metrics["negative_similarity"] = negative_similarities[index]
             items.append(
                 {
                     "class_id": int(class_id),
                     "nms_box": boxes[index],
                     "logit": logits[index],
-                    "metrics": {
-                        "score": scores[index],
-                        "similarity": similarities[index],
-                    },
+                    "metrics": metrics,
                 }
             )
     return items
@@ -99,18 +113,6 @@ def finish(items, nms_thr, top_k, orig_hw, mask_batch_size, device):
 
         logits = logits[valid].numpy()
         masks = masks[valid].numpy()
-        scores = (
-            torch.stack([item["metrics"]["score"] for item in chunk])
-            .float()
-            .cpu()
-            .tolist()
-        )
-        similarities = (
-            torch.stack([item["metrics"]["similarity"] for item in chunk])
-            .float()
-            .cpu()
-            .tolist()
-        )
         for index, (item, mask, logit) in enumerate(
             zip(chunk, masks, logits, strict=True)
         ):
@@ -122,8 +124,7 @@ def finish(items, nms_thr, top_k, orig_hw, mask_batch_size, device):
                     "roi": roi.astype(bool),
                     "logit": logit,
                     "metrics": {
-                        "score": float(scores[index]),
-                        "similarity": float(similarities[index]),
+                        key: float(value) for key, value in item["metrics"].items()
                     },
                     "object_id": len(out) + 1,
                 }

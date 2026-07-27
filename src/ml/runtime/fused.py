@@ -7,6 +7,14 @@ def apply_addmm_activation(activation, linear, tensor):
     if torch.is_grad_enabled():
         raise ValueError("Expected grad to be disabled.")
 
+    if tensor.device.type != "cuda":
+        output = linear(tensor)
+        if activation in [torch.nn.functional.relu, torch.nn.ReLU]:
+            return torch.nn.functional.relu(output)
+        if activation in [torch.nn.functional.gelu, torch.nn.GELU]:
+            return torch.nn.functional.gelu(output)
+        raise ValueError(f"Unexpected activation {activation}")
+
     bias = linear.bias.detach()
     weight = linear.weight.detach()
 

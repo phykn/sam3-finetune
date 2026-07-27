@@ -74,7 +74,7 @@ def load_checkpoint(
     optimizer: torch.optim.Optimizer,
     config: dict[str, Any],
 ) -> tuple[int, dict[str, Any]]:
-    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    checkpoint = torch.load(path, map_location="cpu", weights_only=True)
     required = {"format", "step", "model", "optimizer", "config"}
     if not required.issubset(checkpoint):
         raise ValueError("checkpoint fields are incomplete")

@@ -1,7 +1,6 @@
 import numpy as np
 import pytest
 import torch
-
 from src.predict.ground_ops import reference, sim
 
 
@@ -48,6 +47,19 @@ def test_groups_boxes_by_sorted_class():
     np.testing.assert_array_equal(grouped[1], boxes[[0, 2]])
 
 
+@pytest.mark.parametrize(
+    "labels,message",
+    [
+        ([1], "length"),
+        ([1, 2], "zero or one"),
+        ([1.0, 0.0], "zero or one"),
+    ],
+)
+def test_validate_labels_rejects_invalid_values(labels, message):
+    with pytest.raises(ValueError, match=message):
+        reference.validate_labels(labels, 2)
+
+
 def test_box_vectors_match_explicit_feature_grid_means():
     features = torch.tensor(
         [
@@ -63,6 +75,17 @@ def test_box_vectors_match_explicit_feature_grid_means():
     out = sim.box_vectors(image, boxes, (4, 4))
 
     torch.testing.assert_close(out, torch.tensor([[1.0, 0.0], [0.0, 1.0]]))
+
+
+def test_box_vectors_combine_all_feature_resolutions():
+    high = torch.tensor([[[[1.0]], [[0.0]]]])
+    low = torch.tensor([[[[0.0]], [[1.0]]]])
+    image = {"backbone_fpn": (high, low)}
+
+    out = sim.box_vectors(image, [[0, 0, 4, 4]], (4, 4))
+
+    scale = 2**-0.5
+    torch.testing.assert_close(out, torch.tensor([[scale, 0.0, 0.0, scale]]))
 
 
 def test_max_scores_uses_best_exemplar():
@@ -93,6 +116,22 @@ def test_feature_bank_concatenates_classes_across_references():
         bank[1],
         torch.tensor([[1.0, 0.0], [0.5, 0.5]]),
     )
+
+
+def test_feature_bank_selects_positive_or_negative_exemplars():
+    references = [
+        {
+            "features": torch.tensor([[1.0, 0.0], [0.0, 1.0]]),
+            "feature_classes": np.array([3, 3]),
+            "feature_labels": np.array([1, 0]),
+        }
+    ]
+
+    positive = reference.feature_bank(references)
+    negative = reference.feature_bank(references, label=0)
+
+    torch.testing.assert_close(positive[3], torch.tensor([[1.0, 0.0]]))
+    torch.testing.assert_close(negative[3], torch.tensor([[0.0, 1.0]]))
 
 
 def test_prompt_groups_preserve_reference_order():

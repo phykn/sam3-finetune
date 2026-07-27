@@ -1,13 +1,12 @@
 import numpy as np
 import pytest
 import torch
-from torch import nn
-
 from src.data import ground
 from src.ml.blocks.grounding.decoder import GroundingDecoder
 from src.ml.blocks.grounding.image import GroundingImage
 from src.ml.model import Sam3GroundingModel
 from src.ml.structures import NestedTensor
+from torch import nn
 
 
 def make_image(batch=1):
@@ -39,6 +38,20 @@ def test_build_box_batch_pads_class_prompts():
     assert box_mask.tolist() == [[False, True], [False, False]]
     torch.testing.assert_close(boxes[0, 0], torch.tensor([0.25, 0.25, 0.5, 0.5]))
     torch.testing.assert_close(boxes[1, 1], torch.tensor([0.75, 0.75, 0.5, 0.5]))
+
+
+def test_build_box_batch_preserves_positive_and_negative_labels():
+    groups = [np.array([[0, 0, 2, 2], [2, 2, 4, 4]], dtype=np.float32)]
+    label_groups = [np.array([1, 0], dtype=np.int64)]
+
+    _boxes, labels, _mask = ground.build_box_batch(
+        groups,
+        (4, 4),
+        "cpu",
+        label_groups,
+    )
+
+    assert labels[:, 0].tolist() == [1, 0]
 
 
 def test_grounding_image_expands_encoded_batch():

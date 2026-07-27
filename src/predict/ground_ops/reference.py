@@ -39,9 +39,37 @@ def groups(boxes, class_ids):
     return classes, [boxes[class_ids == value] for value in classes]
 
 
-def feature_bank(references):
+def validate_labels(labels, length):
+    if labels is None:
+        return np.ones(length, dtype=np.int64)
+    labels = np.asarray(labels)
+    if labels.ndim != 1 or len(labels) != length:
+        raise ValueError("box_labels length must match boxes")
+    if not (
+        np.issubdtype(labels.dtype, np.integer) or np.issubdtype(labels.dtype, np.bool_)
+    ):
+        raise ValueError("box_labels must contain zero or one")
+    labels = labels.astype(np.int64, copy=False)
+    if not np.isin(labels, (0, 1)).all():
+        raise ValueError("box_labels must contain zero or one")
+    return labels
+
+
+def feature_bank(references, label=1):
     classes = np.concatenate([item["feature_classes"] for item in references])
     features = torch.cat([item["features"] for item in references])
+    labels = np.concatenate(
+        [
+            item.get(
+                "feature_labels",
+                np.ones(len(item["feature_classes"]), dtype=np.int64),
+            )
+            for item in references
+        ]
+    )
+    selected = labels == label
+    classes = classes[selected]
+    features = features[torch.as_tensor(selected, device=features.device)]
     return {
         int(value): features[torch.as_tensor(classes == value, device=features.device)]
         for value in np.unique(classes)

@@ -58,6 +58,10 @@ data:
         cond: 0
         target: [0, 0, 0]
         weight: [1, 0, 0]
+      - path: finetune_dataset/train/0_background
+        cond: 1
+        target: [0, 0, 0]
+        weight: [1, 0, 0]
       - path: finetune_dataset/train/1_frog
         cond: 0
         target: [1, 1, 0]
@@ -69,6 +73,9 @@ data:
     batch_size: 2
     num_workers: 0
 ```
+
+`config/finetune.yaml` contains this two-condition frog/leaf mapping for both
+training and validation. Set its local checkpoint path before running it.
 
 Class-head outputs are independent sigmoid attributes per mask. Index `0` is
 object presence. Later indices are task-defined attributes; in the included
@@ -231,6 +238,25 @@ Public predictor entry points are exported from `src.predict`:
 - `GridPredictor`: automatic grid proposals with refinement and NMS
 - `GroundPredictor`: reference-box visual grounding
 - `VideoPredictor`: forward video-mask propagation with explicit add/remove APIs
+
+`GroundPredictor` also supports iterative same-image search. Boxes use pixel
+`(x0, y0, x1, y1)` coordinates. The image is encoded once; positive boxes add
+missed examples, while negative boxes suppress candidates unless a positive
+example is their closer visual match:
+
+```python
+state = predictor.start(image)
+objects = predictor.add_prompt(state, first_box)
+objects = predictor.add_prompt(state, missed_box)
+objects = predictor.add_prompt(state, wrong_box, positive=False)
+```
+
+Video frames in one predictor state must keep the first frame's resolution.
+For long videos, pass `offload_video_to_cpu=True` to keep only the latest frame
+features on the accelerator and recompute older features when editing a past
+frame. Also use `offload_state_to_cpu=True` to keep tracker history from growing
+on the accelerator. Both options can be passed to `VideoPredictor` or in the
+`config` dictionary of `VideoPredictor.from_path()`.
 
 Model builders are exported from `src.build`:
 

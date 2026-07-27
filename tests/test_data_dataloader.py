@@ -1,8 +1,5 @@
 import numpy as np
 import pytest
-
-from torch.utils.data.distributed import DistributedSampler
-
 from src.data.dataloader import (
     collate,
     make_finetune_loader,
@@ -10,6 +7,7 @@ from src.data.dataloader import (
 )
 from src.data.dataset import ValidDataset
 from src.data.sample import Image, Object, Sample, save
+from torch.utils.data.distributed import DistributedSampler
 
 
 def write_sample(path):
@@ -153,6 +151,53 @@ def test_make_finetune_loader_expands_folder_labels(tmp_path):
         {"target": [1, 0, 1], "weight": [1, 1, 0]},
         {"target": [1, 0, 1], "weight": [1, 1, 0]},
     )
+
+
+def test_make_finetune_loader_rejects_missing_folder(tmp_path):
+    folder = tmp_path / "missing"
+
+    with pytest.raises(ValueError, match="finetune folder is not a directory"):
+        make_finetune_loader(
+            {
+                "folders": [
+                    {
+                        "path": str(folder),
+                        "cond": 0,
+                        "target": [1],
+                        "weight": [1],
+                    }
+                ],
+                "batch_size": 1,
+                "num_workers": 0,
+            },
+            num_classes=1,
+            num_conditions=1,
+            train=False,
+        )
+
+
+def test_make_finetune_loader_rejects_folder_without_json(tmp_path):
+    folder = tmp_path / "empty"
+    folder.mkdir()
+
+    with pytest.raises(ValueError, match="finetune folder contains no JSON files"):
+        make_finetune_loader(
+            {
+                "folders": [
+                    {
+                        "path": str(folder),
+                        "cond": 0,
+                        "target": [1],
+                        "weight": [1],
+                    }
+                ],
+                "batch_size": 1,
+                "num_workers": 0,
+            },
+            num_classes=1,
+            num_conditions=1,
+            train=False,
+        )
 
 
 @pytest.mark.parametrize("train", [True, False])

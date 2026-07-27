@@ -1,16 +1,21 @@
 import torch
 from torch import nn
 
-from ...blocks.video.tracking import NUM_MULTIMASK_OUTPUTS
+from ...blocks.video.features import VideoFeatures
+from ...blocks.video.memory import VideoMemory
+from ...blocks.video.tracking import NUM_MULTIMASK_OUTPUTS, VideoTracking
 from ...components.video.tracker.decoder import heads as decoder_heads
-from ...components.video.tracker.frame import features as frame_features
-from ...components.video.tracker.frame import inference as frame_inference
-from ...components.video.tracker.frame import memory as frame_memory
-from ...components.video.tracker.frame import output as frame_output
-from ...components.video.tracker.interaction import dynamic_masks
-from ...components.video.tracker.interaction import mask_as_output
-from ...components.video.tracker.memory import conditioning as memory_conditioning
-from ...components.video.tracker.memory import encoding as memory_encoding
+from ...components.video.tracker.frame import (
+    features as frame_features,
+    inference as frame_inference,
+    memory as frame_memory,
+    output as frame_output,
+)
+from ...components.video.tracker.interaction import dynamic_masks, mask_as_output
+from ...components.video.tracker.memory import (
+    conditioning as memory_conditioning,
+    encoding as memory_encoding,
+)
 from ...components.video.tracker.multiplex.state import MultiplexController
 from ...components.video.tracker.runtime import step as runtime_step
 from . import masks, objects, propagate
@@ -308,6 +313,9 @@ class VideoRuntime(nn.Module):
         return objects.clear_non_cond_mem_around_input(self, *args, **kwargs)
 
 
-def create_runtime(features, memory, tracking):
+def create_runtime():
+    features = VideoFeatures()
+    memory = VideoMemory()
+    tracking = VideoTracking()
     controller = MultiplexController(16, eval_multiplex_count=16)
     return VideoRuntime(features, memory, tracking, controller)

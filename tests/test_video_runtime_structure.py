@@ -1,13 +1,14 @@
 from inspect import signature
 from pathlib import Path
 
-from src.ml.model.video.runtime import VideoRuntime
+from src.ml import structures
 from src.ml.components.video.tracker.frame.inference import run_single_frame_inference
 from src.ml.components.video.tracker.memory.conditioning import (
     prepare_memory_conditioned_features,
 )
 from src.ml.components.video.tracker.memory.context import collect_memory_context
-from src.ml import structures
+from src.ml.model import Sam3VideoModel
+from src.ml.model.video.runtime import VideoRuntime
 from src.predict.video import VideoPredictor
 
 ROOT = Path(__file__).resolve().parents[1] / "src" / "ml"
@@ -23,6 +24,44 @@ def test_video_runtime_has_only_inference_dependencies():
     ]
     assert not hasattr(VideoRuntime, "forward_tracking")
     assert not hasattr(VideoRuntime, "prepare_prompt_inputs")
+
+
+def test_video_model_exposes_explicit_runtime_api():
+    assert list(signature(Sam3VideoModel.init_state).parameters) == [
+        "self",
+        "video_height",
+        "video_width",
+        "num_frames",
+        "cached_features",
+        "device",
+        "offload_video_to_cpu",
+        "offload_state_to_cpu",
+    ]
+    assert list(signature(Sam3VideoModel.add_masks).parameters) == [
+        "self",
+        "state",
+        "frame_idx",
+        "obj_ids",
+        "masks",
+        "add_mask_to_memory",
+        "reconditioning",
+    ]
+    assert list(signature(Sam3VideoModel.remove_objects).parameters) == [
+        "self",
+        "state",
+        "obj_ids",
+        "strict",
+        "need_output",
+        "clear_user_refined_map",
+    ]
+    assert list(signature(Sam3VideoModel.propagate_in_video).parameters) == [
+        "self",
+        "state",
+        "start_frame_idx",
+        "max_frame_num_to_track",
+        "tqdm_disable",
+        "run_mem_encoder",
+    ]
 
 
 def test_video_runtime_call_stack_has_no_point_or_reverse_parameters():

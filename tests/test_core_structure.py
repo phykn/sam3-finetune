@@ -64,3 +64,13 @@ def test_video_assembly_lives_with_blocks_and_model():
     assert not (video_components / "tracker" / "runtime" / "init.py").exists()
     assert (root / "model" / "video" / "heads.py").is_file()
     assert (root / "model" / "video" / "init.py").is_file()
+
+
+def test_video_assembly_blocks_have_no_unused_forward_facades():
+    assert "forward" not in VideoMemory.__dict__
+    assert "pix" not in VideoMemory.__dict__
+    assert "memory_mask" not in VideoMemory.__dict__
+    assert "forward" not in VideoTracking.__dict__
+    assert "encode" not in VideoTracking.__dict__
+    assert "output_embed" not in VideoTracking.__dict__
+    assert "high_res" not in VideoTracking.__dict__

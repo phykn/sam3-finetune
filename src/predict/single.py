@@ -50,7 +50,7 @@ class SinglePredictor:
         checkpoint = torch.load(
             checkpoint_path,
             map_location="cpu",
-            weights_only=False,
+            weights_only=True,
         )
         if not isinstance(checkpoint, dict) or checkpoint.get("format") != FORMAT:
             raise ValueError("unsupported finetune checkpoint format")

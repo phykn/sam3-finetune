@@ -2,10 +2,9 @@ import copy
 
 import pytest
 import torch
-from torch import nn
-
 from src.finetune.loss import finetune_loss
 from src.finetune.model import FinetuneModel
+from torch import nn
 
 
 class FakeImageModel(nn.Module):
@@ -260,3 +259,43 @@ def test_forward_batches_prompts_by_type():
     for key in out:
         expected = torch.cat([item[key] for item in single])
         assert torch.allclose(out[key], expected)
+
+
+def test_decode_rejects_multiple_conditions_for_one_image():
+    model, base = make_model(num_classes=2)
+    prompt = (
+        torch.zeros(2, 1, 256),
+        torch.zeros(2, 256, 2, 2),
+    )
+
+    with pytest.raises(ValueError, match="cond length"):
+        model.decode_masks(
+            torch.ones(1, 256, 2, 2),
+            (torch.ones(1, 32, 8, 8), torch.ones(1, 64, 4, 4)),
+            prompt,
+            base.get_image_position_encoding(),
+            multimask=False,
+            repeat_image=True,
+            cond=torch.tensor([0, 1]),
+            prompt_type="point",
+        )
+
+
+def test_decode_rejects_multiple_prompt_types_for_one_image():
+    model, base = make_model(num_classes=2)
+    prompt = (
+        torch.zeros(2, 1, 256),
+        torch.zeros(2, 256, 2, 2),
+    )
+
+    with pytest.raises(ValueError, match="prompt_type length"):
+        model.decode_masks(
+            torch.ones(1, 256, 2, 2),
+            (torch.ones(1, 32, 8, 8), torch.ones(1, 64, 4, 4)),
+            prompt,
+            base.get_image_position_encoding(),
+            multimask=False,
+            repeat_image=True,
+            cond=0,
+            prompt_type=["point", "box"],
+        )

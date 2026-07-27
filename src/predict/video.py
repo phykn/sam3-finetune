@@ -15,8 +15,12 @@ class VideoPredictor:
         self,
         model: nn.Module,
         device: str | torch.device = "cuda",
+        offload_video_to_cpu: bool = False,
+        offload_state_to_cpu: bool = False,
     ) -> None:
         self.device = torch.device(device)
+        self.offload_video_to_cpu = bool(offload_video_to_cpu)
+        self.offload_state_to_cpu = bool(offload_state_to_cpu)
         self.model = model.to(self.device).eval()
 
     @classmethod
@@ -26,7 +30,12 @@ class VideoPredictor:
         config: dict | None = None,
     ) -> "VideoPredictor":
         config = {} if config is None else config
-        return cls(Sam3VideoModel(path=path), device=config.get("device", "cuda"))
+        return cls(
+            Sam3VideoModel(path=path),
+            device=config.get("device", "cuda"),
+            offload_video_to_cpu=config.get("offload_video_to_cpu", False),
+            offload_state_to_cpu=config.get("offload_state_to_cpu", False),
+        )
 
     def autocast(self) -> AbstractContextManager:
         if self.device.type == "cuda":
@@ -41,7 +50,15 @@ class VideoPredictor:
         obj_id: int = 0,
     ) -> dict[str, object]:
         with self.autocast():
-            return session.start(self.model, image, mask, obj_id, self.device)
+            return session.start(
+                self.model,
+                image,
+                mask,
+                obj_id,
+                self.device,
+                self.offload_video_to_cpu,
+                self.offload_state_to_cpu,
+            )
 
     @torch.inference_mode()
     def predict(

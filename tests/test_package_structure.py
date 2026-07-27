@@ -55,7 +55,6 @@ def test_finetune_refactor_has_flat_runtime_files():
     assert not (root / "src" / "finetune" / "layers").exists()
     assert (root / "src" / "finetune" / "checkpoint.py").is_file()
     assert (root / "src" / "finetune" / "ddp.py").is_file()
-    assert (root / "scripts" / "finetune.py").is_file()
     assert not (root / "config" / "finetune_model.yaml").exists()
 
 

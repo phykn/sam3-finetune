@@ -8,23 +8,26 @@ def box_vectors(
     boxes: object,
     orig_hw: tuple[int, int],
 ) -> torch.Tensor:
-    feat = tensor(image["backbone_fpn"][-1]).float()
-    boxes = torch.as_tensor(boxes, dtype=torch.float32, device=feat.device)
-    feat_h, feat_w = feat.shape[-2:]
-    orig_h, orig_w = orig_hw
-    scale = boxes.new_tensor([feat_w / orig_w, feat_h / orig_h] * 2)
-    boxes = boxes * scale
-    start = boxes[:, :2].floor()
-    end = boxes[:, 2:].ceil()
-    x = torch.arange(feat_w, device=feat.device)[None, None]
-    y = torch.arange(feat_h, device=feat.device)[None, :, None]
-    masks = (
-        (x >= start[:, 0, None, None])
-        & (x < end[:, 0, None, None])
-        & (y >= start[:, 1, None, None])
-        & (y < end[:, 1, None, None])
-    ).float()
-    return _vectors(feat, masks)
+    out = []
+    for value in image["backbone_fpn"]:
+        feat = tensor(value).float()
+        box = torch.as_tensor(boxes, dtype=torch.float32, device=feat.device)
+        feat_h, feat_w = feat.shape[-2:]
+        orig_h, orig_w = orig_hw
+        scale = box.new_tensor([feat_w / orig_w, feat_h / orig_h] * 2)
+        box = box * scale
+        start = box[:, :2].floor()
+        end = box[:, 2:].ceil()
+        x = torch.arange(feat_w, device=feat.device)[None, None]
+        y = torch.arange(feat_h, device=feat.device)[None, :, None]
+        masks = (
+            (x >= start[:, 0, None, None])
+            & (x < end[:, 0, None, None])
+            & (y >= start[:, 1, None, None])
+            & (y < end[:, 1, None, None])
+        ).float()
+        out.append(_vectors(feat, masks))
+    return F.normalize(torch.cat(out, dim=-1), dim=-1)
 
 
 def mask_vectors(image: dict[str, object], masks: object) -> torch.Tensor:
@@ -42,13 +45,17 @@ def mask_vectors(image: dict[str, object], masks: object) -> torch.Tensor:
     if masks.ndim == 3:
         masks = masks[:, None]
 
-    masks = F.interpolate(
-        masks,
-        feat.shape[-2:],
-        mode="bilinear",
-        align_corners=False,
-    ).clamp(0, 1)
-    return _vectors(feat, masks[:, 0])
+    out = []
+    for value in image["backbone_fpn"]:
+        feat = tensor(value).float()
+        scaled = F.interpolate(
+            masks,
+            feat.shape[-2:],
+            mode="bilinear",
+            align_corners=False,
+        ).clamp(0, 1)
+        out.append(_vectors(feat, scaled[:, 0]))
+    return F.normalize(torch.cat(out, dim=-1), dim=-1)
 
 
 def _vectors(feat: torch.Tensor, masks: torch.Tensor) -> torch.Tensor:

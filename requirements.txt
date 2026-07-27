@@ -11,3 +11,6 @@ tqdm
 pytest
 tensorboard
 pyyaml
+fastapi
+python-multipart
+uvicorn

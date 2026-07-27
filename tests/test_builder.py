@@ -1,5 +1,5 @@
 import torch
-from src.build import build_finetune_loader, build_image_model, build_finetune_model
+from src.build import build_finetune_loader, build_finetune_model, build_image_model
 from src.finetune.adapter import LoraLinear
 from src.finetune.model import FinetuneModel
 from src.ml.model import Sam3GroundingModel, Sam3ImageModel, Sam3VideoModel
@@ -340,6 +340,7 @@ class FakeCond(nn.Module):
 def test_grounding_model_connects_blocks():
     model = Sam3GroundingModel.__new__(Sam3GroundingModel)
     nn.Module.__init__(model)
+    model.use_sam_masks = False
     model.vision = FakeVision()
     model.cond = FakeCond()
     model.ground_image = FakeGroundingImage()
@@ -372,48 +373,109 @@ def test_video_model_connects_blocks():
     model.runtime = FakeVideo()
 
     assert model.image_size == 16
-    assert model.init_state(device="cpu") == {"state": "video"}
-    assert model.add_masks("state", masks="mask") == {"masks": "added"}
+    assert model.init_state(5, 4, 1, device="cpu") == {"state": "video"}
+    assert model.add_masks("state", 0, [2], "mask") == {"masks": "added"}
     assert model.remove_objects("state", [2]) == ([1], [])
     assert model.propagate_in_video_preflight("state") == {"preflight": True}
     assert list(model.propagate_in_video("state")) == ["frame_out"]
     assert model.forward_image("image") == {"image": "features"}
     assert model.runtime.calls == [
-        ("init_state", (), {"device": "cpu"}),
-        ("add_masks", ("state",), {"masks": "mask"}),
-        ("remove_objects", ("state", [2]), {}),
-        ("preflight", ("state",), {}),
-        ("propagate", ("state",), {}),
-        ("forward_image", ("image",), {}),
+        (
+            "init_state",
+            (),
+            {
+                "video_height": 5,
+                "video_width": 4,
+                "num_frames": 1,
+                "cached_features": None,
+                "device": "cpu",
+                "offload_video_to_cpu": False,
+                "offload_state_to_cpu": False,
+            },
+        ),
+        (
+            "add_masks",
+            ("state", 0, [2], "mask"),
+            {"add_mask_to_memory": False, "reconditioning": False},
+        ),
+        (
+            "remove_objects",
+            ("state", [2]),
+            {
+                "strict": False,
+                "need_output": True,
+                "clear_user_refined_map": True,
+            },
+        ),
+        ("preflight", ("state",), {"run_mem_encoder": True}),
+        (
+            "propagate",
+            ("state",),
+            {
+                "start_frame_idx": None,
+                "max_frame_num_to_track": None,
+                "tqdm_disable": False,
+                "run_mem_encoder": True,
+            },
+        ),
+        (
+            "forward_image",
+            ("image",),
+            {
+                "need_sam3_out": True,
+                "need_interactive_out": True,
+                "need_propagation_out": True,
+            },
+        ),
     ]
 
 
-def test_video_model_assembles_video_blocks(monkeypatch):
+def test_video_model_registers_only_runtime(monkeypatch):
     import src.ml.model.video.model as model_module
 
     calls = []
 
-    def create_runtime(features, memory, tracking):
-        calls.append((features, memory, tracking))
+    def create_runtime():
+        calls.append("create_runtime")
         return FakeVideo()
 
-    monkeypatch.setattr(model_module, "VideoFeatures", FakeVideoFeaturesBlock)
-    monkeypatch.setattr(model_module, "VideoMemory", FakeVideoMemoryBlock)
-    monkeypatch.setattr(model_module, "VideoTracking", FakeVideoTrackingBlock)
     monkeypatch.setattr(model_module, "create_runtime", create_runtime)
     model = Sam3VideoModel()
 
-    assert isinstance(model.video_feat, FakeVideoFeaturesBlock)
-    assert isinstance(model.video_mem, FakeVideoMemoryBlock)
-    assert isinstance(model.video_track, FakeVideoTrackingBlock)
     assert isinstance(model.runtime, FakeVideo)
-    assert calls == [
-        (
-            model.video_feat,
-            model.video_mem,
-            model.video_track,
-        )
-    ]
+    assert list(model._modules) == ["runtime"]
+    assert not hasattr(model, "video_feat")
+    assert not hasattr(model, "video_mem")
+    assert not hasattr(model, "video_track")
+    assert calls == ["create_runtime"]
+
+
+def test_video_runtime_factory_assembles_video_blocks(monkeypatch):
+    import src.ml.model.video.runtime as runtime_module
+
+    calls = []
+
+    def video_runtime(features, memory, tracking, controller):
+        calls.append((features, memory, tracking, controller))
+        return "runtime"
+
+    monkeypatch.setattr(runtime_module, "VideoFeatures", FakeVideoFeaturesBlock)
+    monkeypatch.setattr(runtime_module, "VideoMemory", FakeVideoMemoryBlock)
+    monkeypatch.setattr(runtime_module, "VideoTracking", FakeVideoTrackingBlock)
+    monkeypatch.setattr(
+        runtime_module, "MultiplexController", lambda *args, **kwargs: "mux"
+    )
+    monkeypatch.setattr(runtime_module, "VideoRuntime", video_runtime)
+
+    runtime = runtime_module.create_runtime()
+
+    assert runtime == "runtime"
+    assert len(calls) == 1
+    features, memory, tracking, controller = calls[0]
+    assert isinstance(features, FakeVideoFeaturesBlock)
+    assert isinstance(memory, FakeVideoMemoryBlock)
+    assert isinstance(tracking, FakeVideoTrackingBlock)
+    assert controller == "mux"
 
 
 def test_grounding_model_skips_visual_token_when_path_is_none(monkeypatch):
@@ -564,6 +626,59 @@ def test_grounding_model_loads_path_with_strict_blocks(monkeypatch):
     ]
 
 
+def test_grounding_model_loads_sam_mask_blocks_when_enabled(monkeypatch):
+    import src.ml.model.grounding as model_module
+
+    calls = []
+
+    class Block(nn.Module):
+        def __init__(self, name):
+            super().__init__()
+            self.name = name
+
+        def load_weights(self, ckpt, strict=False):
+            calls.append((self.name, ckpt, strict))
+            return self
+
+    class Empty(nn.Module):
+        pass
+
+    class LoadCond(nn.Module):
+        def load_weights(self, ckpt):
+            return self
+
+    class FakeCheckpoint:
+        @classmethod
+        def load(cls, path):
+            calls.append(("load", path))
+            return "ckpt"
+
+    monkeypatch.setattr(model_module, "Checkpoint", FakeCheckpoint)
+    monkeypatch.setattr(model_module, "load_visual", lambda path: {})
+    monkeypatch.setattr(model_module, "VisualTokens", LoadCond)
+    monkeypatch.setattr(model_module, "VisionEncoder", lambda: Block("vision"))
+    monkeypatch.setattr(model_module, "GroundingImage", Empty)
+    monkeypatch.setattr(
+        model_module, "GroundingPromptEncoder", lambda: Block("ground_prompt")
+    )
+    monkeypatch.setattr(model_module, "GroundingDecoder", lambda: Block("ground_dec"))
+    monkeypatch.setattr(model_module, "ImageFeatures", lambda: Block("sam_image"))
+    monkeypatch.setattr(model_module, "ImagePromptEncoder", lambda: Block("sam_prompt"))
+    monkeypatch.setattr(model_module, "ImageMaskDecoder", lambda: Block("sam_mask"))
+
+    Sam3GroundingModel("model.pt", use_sam_masks=True)
+
+    assert calls == [
+        ("load", "model.pt"),
+        ("vision", "ckpt", False),
+        ("ground_prompt", "ckpt", False),
+        ("ground_dec", "ckpt", False),
+        ("sam_image", "ckpt", False),
+        ("sam_prompt", "ckpt", False),
+        ("sam_mask", "ckpt", False),
+    ]
+
+
 def test_video_model_loads_path_with_strict_block(monkeypatch):
     import src.ml.model.video.model as model_module
 
@@ -573,8 +688,8 @@ def test_video_model_loads_path_with_strict_block(monkeypatch):
         def load_state_dict(self, state, strict=False):
             calls.append(("load_state_dict", state, strict))
 
-    def create_runtime(features, memory, tracking):
-        calls.append(("create_runtime", features, memory, tracking))
+    def create_runtime():
+        calls.append(("create_runtime",))
         return FakeRuntime()
 
     class FakeCheckpoint:
@@ -587,9 +702,6 @@ def test_video_model_loads_path_with_strict_block(monkeypatch):
             return cls()
 
     monkeypatch.setattr(model_module, "Checkpoint", FakeCheckpoint)
-    monkeypatch.setattr(model_module, "VideoFeatures", FakeVideoFeaturesBlock)
-    monkeypatch.setattr(model_module, "VideoMemory", FakeVideoMemoryBlock)
-    monkeypatch.setattr(model_module, "VideoTracking", FakeVideoTrackingBlock)
     monkeypatch.setattr(model_module, "create_runtime", create_runtime)
 
     model = Sam3VideoModel("model.pt")

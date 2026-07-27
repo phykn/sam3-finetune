@@ -48,6 +48,7 @@ def build_box_batch(
     groups: list[np.ndarray],
     orig_hw: tuple[int, int],
     device: str | torch.device,
+    label_groups: list[np.ndarray] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     if not groups:
         raise ValueError("box groups are empty")
@@ -68,6 +69,9 @@ def build_box_batch(
         dim=-1,
     )
     labels = torch.ones(length, count, dtype=torch.long, device=device)
+    if label_groups is not None:
+        for index, group in enumerate(label_groups):
+            labels[: len(group), index] = torch.as_tensor(group, device=device)
     return boxes, labels, box_mask
 
 

@@ -1,17 +1,49 @@
 model:
   path: null
-  num_conditions: 1
+  num_conditions: 2
   num_experts: 4
   num_classes: 3
   lora_rank: 8
   feature_rank: 16
 data:
   train:
-    folders: []
+    folders:
+      - path: finetune_dataset/train/0_background
+        cond: 0
+        target: [0, 0, 0]
+        weight: [1, 0, 0]
+      - path: finetune_dataset/train/0_background
+        cond: 1
+        target: [0, 0, 0]
+        weight: [1, 0, 0]
+      - path: finetune_dataset/train/1_frog
+        cond: 0
+        target: [1, 1, 0]
+        weight: [1, 1, 1]
+      - path: finetune_dataset/train/2_leaf
+        cond: 1
+        target: [1, 0, 1]
+        weight: [1, 1, 1]
     batch_size: 4
     num_workers: 4
   valid:
-    folders: []
+    folders:
+      - path: finetune_dataset/valid/0_background
+        cond: 0
+        target: [0, 0, 0]
+        weight: [1, 0, 0]
+      - path: finetune_dataset/valid/0_background
+        cond: 1
+        target: [0, 0, 0]
+        weight: [1, 0, 0]
+      - path: finetune_dataset/valid/1_frog
+        cond: 0
+        target: [1, 1, 0]
+        weight: [1, 1, 1]
+      - path: finetune_dataset/valid/2_leaf
+        cond: 1
+        target: [1, 0, 1]
+        weight: [1, 1, 1]
     batch_size: 4
     num_workers: 4
 train:

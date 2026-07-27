@@ -1,8 +1,8 @@
 import pytest
 import torch
-from torch import nn
-
 from src.io.checkpoint import Checkpoint, remap_model
+from src.ml.model.video.runtime import create_runtime
+from torch import nn
 
 
 def test_remap_model_maps_official_keys_to_logical_blocks():
@@ -66,6 +66,24 @@ def test_checkpoint_load_block_is_strict_and_names_the_block():
     assert module.weight.item() == 1
     with pytest.raises(RuntimeError, match="image.features"):
         Checkpoint(state={}, ignored=[]).load_block("image.features", module)
+
+
+def test_video_runtime_retains_official_checkpoint_surface(monkeypatch):
+    linspace = torch.linspace
+
+    def cpu_linspace(*args, **kwargs):
+        kwargs["device"] = "cpu"
+        return linspace(*args, **kwargs)
+
+    monkeypatch.setattr(torch, "linspace", cpu_linspace)
+    with torch.device("meta"):
+        runtime = create_runtime()
+
+    state = runtime.state_dict()
+    assert len(state) == 931
+    result = runtime.load_state_dict(state, strict=True)
+    assert result.missing_keys == []
+    assert result.unexpected_keys == []
 
 
 def test_lora_keys_are_not_mapped_into_base_blocks():

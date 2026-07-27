@@ -2,7 +2,6 @@ import numpy as np
 import pytest
 import torch
 from PIL import Image
-
 from src.predict.ground import GroundPredictor
 
 
@@ -38,6 +37,60 @@ class FakeGroundModel(torch.nn.Module):
             "pred_masks": torch.full((batch, 1, 2, 2), 2.0),
             "raw": {"unused": torch.ones(10)},
         }
+
+
+class FakeSamMaskGroundModel(FakeGroundModel):
+    def __init__(self):
+        super().__init__()
+        self.refine_images = []
+        self.mask_prompts = []
+        self.sam_prompts = []
+        self.stability_values = []
+
+    @property
+    def mask_input_size(self):
+        return (2, 2)
+
+    def encode_image(self, image):
+        out = super().encode_image(image)
+        out["mask_image_embed"] = torch.zeros(1, 2, 2, 2)
+        out["mask_high_res"] = ()
+        return out
+
+    def encode_mask_prompts(self, points, masks=None):
+        self.mask_prompts.append(masks)
+        self.sam_prompts.append(points)
+        return points
+
+    def decode_sam_mask(self, image, prompt):
+        self.refine_images.append(image)
+        batch = prompt[0].shape[0]
+        return (
+            torch.full((batch, 1, 2, 2), 2.0),
+            torch.full((batch, 1), 0.95),
+        )
+
+    def mask_stability(self, masks):
+        value = self.stability_values.pop(0) if self.stability_values else 0.9
+        return torch.full(masks.shape[:2], value)
+
+    def decode_point(self, image, prompt):
+        self.refine_images.append(image)
+        batch = prompt[0].shape[0]
+        masks = torch.full((batch, 3, 4, 4), -2.0)
+        masks[:, 1, 1:3, 1:3] = 2.0
+        scores = torch.tensor([[0.1, 0.9, 0.2]]).repeat(batch, 1)
+        return masks, scores
+
+
+class FakeDisconnectedSamMaskModel(FakeSamMaskGroundModel):
+    def decode_sam_mask(self, image, prompt):
+        self.refine_images.append(image)
+        batch = prompt[0].shape[0]
+        masks = torch.full((batch, 1, 4, 4), -2.0)
+        masks[:, :, 0, :2] = 2.0
+        masks[:, :, 3, 3] = 2.0
+        return masks, torch.full((batch, 1), 0.95)
 
 
 def test_encode_reference_groups_boxes_by_class_and_encodes_image_once():
@@ -105,6 +158,299 @@ def test_predict_embed_reuses_encoded_target():
     assert first[0]["class_id"] == second[0]["class_id"] == 1
 
 
+def test_prompt_session_accumulates_feedback_without_reencoding_image():
+    model = FakeGroundModel()
+    predictor = GroundPredictor(model, device="cpu")
+    state = predictor.start(Image.new("RGB", (8, 8)))
+
+    first = predictor.add_prompt(state, [0, 0, 4, 4])
+    second = predictor.add_prompt(state, [4, 4, 8, 8])
+    third = predictor.add_prompt(state, [0, 0, 8, 8], positive=False)
+
+    assert model.image_calls == 1
+    assert [call[2][:, 0].tolist() for call in model.prompt_calls] == [
+        [1],
+        [1, 1],
+        [1, 1, 0],
+    ]
+    assert len(first) == len(second) == 1
+    assert third == []
+    assert state["box_labels"] == [1, 1, 0]
+
+
+def test_prompt_session_adds_sam_mask_to_every_candidate_without_a_count_limit():
+    model = FakeSamMaskGroundModel()
+    predictor = GroundPredictor(
+        model,
+        device="cpu",
+        top_k=None,
+        use_sam_masks=True,
+    )
+    state = predictor.start(Image.new("RGB", (8, 8)))
+
+    objects = predictor.add_prompt(state, [0, 0, 4, 4])
+
+    assert len(objects) == 1
+    assert objects[0]["box"] == (0, 0, 8, 8)
+    assert objects[0]["metrics"]["mask_score"] == pytest.approx(0.95)
+    assert objects[0]["metrics"]["stability_score"] == pytest.approx(0.9)
+    assert model.refine_images[0]["mask_image_embed"].shape == (1, 2, 2, 2)
+
+
+def test_refine_objects_feeds_current_logits_back_as_mask_prompts():
+    model = FakeSamMaskGroundModel()
+    predictor = GroundPredictor(
+        model,
+        device="cpu",
+        use_sam_masks=True,
+    )
+    state = predictor.start(Image.new("RGB", (8, 8)))
+    objects = predictor.add_prompt(state, [0, 0, 4, 4])
+    objects[0]["logit"] = np.array([[1.0, -1.0], [-2.0, 2.0]])
+    model.stability_values.append(0.900001)
+
+    refined = predictor.refine_objects(state, objects)
+
+    assert torch.equal(
+        model.mask_prompts[-1],
+        torch.tensor([[[[1.0, -1.0], [-2.0, 2.0]]]]),
+    )
+    assert model.sam_prompts[-1][1].tolist() == [[-1]]
+    assert refined[0]["metrics"]["refine_score"] == pytest.approx(0.95)
+    assert refined[0]["metrics"]["stability_score"] == pytest.approx(0.900001)
+
+    calls = len(model.mask_prompts)
+    repeated = predictor.refine_objects(state, refined)
+
+    assert len(repeated) == 1
+    assert len(model.mask_prompts) == calls + 1
+
+
+@pytest.mark.parametrize("stability", [0.8, 0.9])
+def test_refine_objects_keeps_previous_mask_when_stability_does_not_improve(
+    stability,
+):
+    model = FakeSamMaskGroundModel()
+    predictor = GroundPredictor(
+        model,
+        device="cpu",
+        use_sam_masks=True,
+    )
+    state = predictor.start(Image.new("RGB", (8, 8)))
+    objects = predictor.add_prompt(state, [0, 0, 4, 4])
+    objects[0]["logit"] = np.array([[1.0, -1.0], [-2.0, 2.0]])
+    previous = objects[0]["logit"].copy()
+    model.stability_values.append(stability)
+
+    refined = predictor.refine_objects(state, objects)
+
+    assert np.array_equal(refined[0]["logit"], previous)
+    assert refined[0]["metrics"]["stability_score"] == pytest.approx(0.9)
+    assert "refine_score" not in refined[0]["metrics"]
+
+
+def test_prompt_session_can_keep_only_largest_connected_mask_component():
+    predictor = GroundPredictor(
+        FakeDisconnectedSamMaskModel(),
+        device="cpu",
+        use_sam_masks=True,
+        largest_component=True,
+    )
+    state = predictor.start(Image.new("RGB", (8, 8)))
+
+    objects = predictor.add_prompt(state, [0, 0, 4, 4])
+
+    assert len(objects) == 1
+    assert objects[0]["box"][2] < 8
+    assert objects[0]["box"][3] < 8
+
+
+def test_point_session_uses_sam_mask_as_positive_and_negative_examples():
+    model = FakeSamMaskGroundModel()
+    predictor = GroundPredictor(
+        model,
+        device="cpu",
+        use_sam_masks=True,
+        largest_component=True,
+    )
+    state = predictor.start(Image.new("RGB", (8, 8)))
+
+    positive = predictor.add_point(state, [4, 4])
+    negative = predictor.add_point(state, [1, 1], positive=False)
+
+    assert len(positive) == 1
+    assert negative == []
+    assert model.image_calls == 1
+    assert [point.tolist() for point in state["points"]] == [[4, 4], [1, 1]]
+    assert state["box_labels"] == [1, 0]
+    assert all(box.shape == (4,) for box in state["boxes"])
+
+
+def test_point_session_moves_selected_point_and_recomputes_its_object_box():
+    predictor = GroundPredictor(
+        FakeSamMaskGroundModel(),
+        device="cpu",
+        use_sam_masks=True,
+    )
+    state = predictor.start(Image.new("RGB", (8, 8)))
+    predictor.add_point(state, [2, 2])
+
+    objects = predictor.update_point(state, 0, [6, 5])
+
+    assert len(objects) == 1
+    assert state["points"][0].tolist() == [6, 5]
+
+
+def test_point_session_requires_sam_masks_and_positive_point_first():
+    plain = GroundPredictor(FakeGroundModel(), device="cpu")
+    plain_state = plain.start(Image.new("RGB", (8, 8)))
+    with pytest.raises(RuntimeError, match="SAM masks"):
+        plain.add_point(plain_state, [2, 2])
+
+    refined = GroundPredictor(
+        FakeSamMaskGroundModel(),
+        device="cpu",
+        use_sam_masks=True,
+    )
+    refined_state = refined.start(Image.new("RGB", (8, 8)))
+    with pytest.raises(ValueError, match="positive point"):
+        refined.add_point(refined_state, [2, 2], positive=False)
+
+
+def test_prompt_session_requires_positive_box_first():
+    predictor = GroundPredictor(FakeGroundModel(), device="cpu")
+    state = predictor.start(Image.new("RGB", (8, 8)))
+
+    with pytest.raises(ValueError, match="positive"):
+        predictor.add_prompt(state, [0, 0, 4, 4], positive=False)
+
+    assert state["boxes"] == []
+    assert state["box_labels"] == []
+
+
+def test_prompt_session_removes_last_feedback_and_repredicts():
+    predictor = GroundPredictor(FakeGroundModel(), device="cpu")
+    state = predictor.start(Image.new("RGB", (8, 8)))
+    predictor.add_prompt(state, [0, 0, 4, 4])
+    predictor.add_prompt(state, [4, 4, 8, 8])
+
+    objects = predictor.remove_prompt(state)
+    empty = predictor.remove_prompt(state)
+
+    assert len(objects) == 1
+    assert empty == []
+    assert state["boxes"] == []
+    assert state["box_labels"] == []
+
+
+def test_prompt_session_updates_and_removes_selected_prompt():
+    predictor = GroundPredictor(FakeGroundModel(), device="cpu")
+    state = predictor.start(Image.new("RGB", (8, 8)))
+    predictor.add_prompt(state, [0, 0, 4, 4])
+    predictor.add_prompt(state, [4, 4, 8, 8])
+
+    updated = predictor.update_prompt(state, 0, [1, 1, 5, 5])
+    removed = predictor.remove_prompt_at(state, 0)
+
+    assert len(updated) == len(removed) == 1
+    assert state["boxes"][0].tolist() == [4, 4, 8, 8]
+    assert state["box_labels"] == [1]
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "add_prompt",
+        "add_point",
+        "remove_prompt",
+        "update_prompt",
+        "update_point",
+        "remove_prompt_at",
+        "remove_prompts_at",
+    ],
+)
+def test_prompt_mutation_rolls_back_when_prediction_fails(monkeypatch, operation):
+    predictor = GroundPredictor(
+        FakeSamMaskGroundModel(),
+        device="cpu",
+        use_sam_masks=True,
+    )
+    state = predictor.start(Image.new("RGB", (8, 8)))
+    predictor.add_prompt(state, [0, 0, 4, 4])
+    predictor.add_prompt(state, [4, 4, 8, 8])
+    previous_boxes = [box.copy() for box in state["boxes"]]
+    previous_labels = list(state["box_labels"])
+    previous_points = list(state["points"])
+
+    def fail(_state):
+        raise RuntimeError("decode failed")
+
+    monkeypatch.setattr(predictor, "predict_prompt", fail)
+
+    with pytest.raises(RuntimeError, match="decode failed"):
+        if operation == "add_prompt":
+            predictor.add_prompt(state, [1, 1, 7, 7])
+        elif operation == "add_point":
+            predictor.add_point(state, [2, 2])
+        elif operation == "remove_prompt":
+            predictor.remove_prompt(state)
+        elif operation == "update_prompt":
+            predictor.update_prompt(state, 0, [1, 1, 5, 5])
+        elif operation == "update_point":
+            predictor.update_point(state, 0, [2, 2])
+        elif operation == "remove_prompt_at":
+            predictor.remove_prompt_at(state, 0)
+        else:
+            predictor.remove_prompts_at(state, [0, 1])
+
+    assert state["box_labels"] == previous_labels
+    assert state["points"] == previous_points
+    assert all(
+        np.array_equal(box, previous)
+        for box, previous in zip(state["boxes"], previous_boxes, strict=True)
+    )
+
+
+def test_prompt_session_removes_multiple_selected_points_once():
+    predictor = GroundPredictor(FakeGroundModel(), device="cpu")
+    state = predictor.start(Image.new("RGB", (8, 8)))
+    predictor.add_prompt(state, [0, 0, 2, 2])
+    predictor.add_prompt(state, [2, 2, 4, 4])
+    predictor.add_prompt(state, [4, 4, 6, 6], positive=False)
+
+    objects = predictor.remove_prompts_at(state, [0, 2])
+
+    assert len(objects) == 1
+    assert len(state["boxes"]) == 1
+    assert state["box_labels"] == [1]
+
+
+def test_prompt_session_keeps_state_when_batch_delete_removes_all_positives():
+    predictor = GroundPredictor(FakeGroundModel(), device="cpu")
+    state = predictor.start(Image.new("RGB", (8, 8)))
+    predictor.add_prompt(state, [0, 0, 2, 2])
+    predictor.add_prompt(state, [2, 2, 4, 4], positive=False)
+
+    with pytest.raises(ValueError, match="positive point"):
+        predictor.remove_prompts_at(state, [0])
+
+    assert len(state["boxes"]) == 2
+    assert state["box_labels"] == [1, 0]
+
+
+@pytest.mark.parametrize("index", [-1, 1, True, 0.5])
+def test_prompt_session_rejects_invalid_selected_prompt(index):
+    predictor = GroundPredictor(FakeGroundModel(), device="cpu")
+    state = predictor.start(Image.new("RGB", (8, 8)))
+    predictor.add_prompt(state, [0, 0, 4, 4])
+
+    error = TypeError if isinstance(index, (bool, float)) else IndexError
+    with pytest.raises(error):
+        predictor.update_prompt(state, index, [1, 1, 5, 5])
+    with pytest.raises(error):
+        predictor.remove_prompt_at(state, index)
+
+
 def test_predict_merges_same_class_features_across_references():
     model = FakeGroundModel()
     predictor = GroundPredictor(model, device="cpu")
@@ -147,6 +493,8 @@ def test_predict_requires_non_empty_reference_list():
         {"nms_thr": 1.1},
         {"sim_thr": -1.1},
         {"sim_thr": 1.1},
+        {"negative_margin": -0.1},
+        {"negative_margin": 2.1},
         {"prompt_batch_size": 0},
         {"prompt_batch_size": -1},
         {"prompt_batch_size": 1.5},

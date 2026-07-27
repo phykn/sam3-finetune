@@ -1,21 +1,22 @@
 import numpy as np
 import pytest
-
 import src.data.dataset as dataset_mod
-from src.data.augment.image import crop as image_crop
-from src.data.augment.image import flip as image_flip
-from src.data.augment.image import rotate as image_rotate
-from src.data.augment.image import resize as image_resize
-from src.data.augment.image import zoom_out as image_zoom_out
+from src.data.augment.image import (
+    crop as image_crop,
+    flip as image_flip,
+    resize as image_resize,
+    rotate as image_rotate,
+    zoom_out as image_zoom_out,
+)
+from src.data.augment.prompt import box, mask, point
 from src.data.dataset import (
-    MASK_SIZE,
-    SIZE,
     BaseDataset,
     IMAGE_OPS,
+    MASK_SIZE,
+    SIZE,
     TrainDataset,
     ValidDataset,
 )
-from src.data.augment.prompt import box, mask, point
 from src.data.sample import Image, Object, Sample, save
 
 
@@ -458,7 +459,9 @@ def test_base_dataset_returns_background_point_item(tmp_path):
     assert item["target"].sum() == 0
     assert item["mask_valid"] is False
     assert item["is_auto_bg"] is True
-    assert obj.mask(item["image"].shape)[y, x] == 0
+    source = obj.mask((6, 8, 3))
+    resized = dataset_mod.image_data.resize_mask(source, 8)
+    assert resized[y, x] == 0
 
 
 def test_base_dataset_returns_mask_prompt_item(tmp_path, monkeypatch):
